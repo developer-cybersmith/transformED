@@ -396,6 +396,33 @@ Key design decisions:
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `GET /api/analytics/session/{id}/summary` call per request. Executes 3 Supabase queries: sessions (1 row), session_events (all event rows for the session), attention_events (all attention rows for the session). Typical session: ~50–200 session_events rows, ~0–360 attention_events rows (one per 5s window in a 30-min session). Largest observed: bounded by `.limit(10_000)` on both event tables.
+
+**Q2 — Fixed budgets vs variable input**
+- `session_events`: `.limit(10_000)` — past 10,000 events, older rows are excluded from `events_count`, `distraction_events`, and `page_views` aggregations. The response does NOT signal this cap is hit — a `signals_capped` flag should be added in a future story (process debt, documented in deferred findings). At MVP scale (≤200 events per session), the cap is unreachable.
+- `attention_events`: `.limit(10_000)` — past 10,000 attention windows (~13.9 hours of continuous 5s-window capture), averages are computed from a capped set. Same caveat applies. Also unreachable at MVP scale.
+- Both limits were added during code review (BLOCKER patch); they are explicit DoS guards, not silent truncations.
+
+**Q3 — Scope of limits**
+Per-session (both limits are keyed by `session_id`). A long session from one user does not affect other users' queries.
+
+**Q4 — Unbounded reads/writes**
+- `sessions`: `.maybe_single()` — always ≤1 row (primary key lookup). ✓ Bounded.
+- `session_events`: `.select("event_type").eq("session_id", ...).limit(10_000)` ✓ Bounded.
+- `attention_events`: `.select("gaze_score, head_pose_score, blink_rate").eq("session_id", ...).limit(10_000)` ✓ Bounded.
+No writes in this endpoint.
+
+**Q5 — Inherited caps**
+`.limit(10_000)` was introduced for this story (not inherited). The sessions query reuses `.maybe_single()` from the session report pattern (Story 3-19) — appropriate, no re-derivation needed.
+
+**Q6 — Concurrent TOCTOU safety**
+Read-only endpoint. No check-then-act sequences. No shared mutable state. Multiple concurrent calls for the same session_id return the same data independently.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-03

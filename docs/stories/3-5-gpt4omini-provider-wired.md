@@ -275,6 +275,28 @@ apps/api/
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One smoke test run per CI invocation (or manual test). Each run makes 2 real OpenAI API calls (`complete` + `complete_structured`) with tiny prompts (~20 tokens in, ~5 tokens out). No production endpoint is added by this story.
+
+**Q2 — Fixed budgets vs variable input**
+`@with_retry(max_attempts=3)` on the OpenAI provider means at most 3 HTTP calls per test per method. If all 3 fail, the smoke test fails with an explicit error (never silently succeeds). LangGraph pinned to `==1.2.6` prevents silent version drift.
+
+**Q3 — Scope of limits**
+Per CI run (not per user). OpenAI API key rate limit is shared across all concurrent CI runs — a burst of CI runs can exhaust the key's TPM. Rate limit is a per-deployment (key-level) cap, not per-instance.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries. The smoke test only calls the OpenAI provider directly.
+
+**Q5 — Inherited caps**
+`openai>=1.40.0` lower bound inherited from the existing `pyproject.toml`. Re-derived: LangGraph `1.2.6` requires `openai>=1.26.0`; actual minimum tested is `1.40.0`. The LangGraph pin `==1.2.6` is freshly derived, not inherited.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — read-only calls with no shared mutable state. The OpenAI client is stateless between calls.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used

@@ -333,6 +333,31 @@ Total: 19 tests.
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One teach-back submission per segment per student. One GPT-4o-mini call (via `score_teachback()`), one count query, one row insert. Typical: one submission per segment, 15 segments/lesson → 15 LLM calls per lesson-complete.
+
+**Q2 — Fixed budgets vs variable input**
+`response_text` has no length cap at the endpoint level — a student submitting a very long response (2,000+ words) incurs higher token cost proportionally. The $3.00 lesson-level cost ceiling fires after the call, not before (cannot prevent an oversized call). Gap: no per-call `response_text` length validation yet — planned hardening in story 3-11. `rubric_scores` always has exactly 3 keys (`accuracy`, `depth`, `clarity`) — bounded by `TeachbackScoreResult` schema.
+
+**Q3 — Scope of limits**
+Cost tracked per `lesson_id`. Circuit breaker state per deployment (Redis). No per-user rate limit at the teach-back endpoint — a student can hammer this endpoint within their own session.
+
+**Q4 — Unbounded reads/writes**
+- `sessions` lookup: `.maybe_single()` ✓ BOUNDED
+- `lessons` lookup: `.maybe_single()` ✓ BOUNDED
+- Attempt count: `.select("id", count="exact").eq(...).eq(...)` — count-only query ✓ BOUNDED
+- Insert: single row ✓ BOUNDED
+
+**Q5 — Inherited caps**
+No inherited caps. `response_text` length is newly unbounded (gap noted above).
+
+**Q6 — Concurrent TOCTOU safety**
+Concurrent teach-back submissions for the same session+segment: `attempt_number` is computed from a count query BEFORE the insert (same class of TOCTOU as story 3-8). Two concurrent submissions both read `count=0`, both compute `attempt_number=1`. No `UNIQUE(session_id, segment_id, attempt_number)` constraint on `teachback_attempts` exists yet. Low-risk in MVP (single submit button, disabled on click). Addressed by story 3-13 unique-constraint migration. Documented as deferred improvement I4.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Outcome:** APPROVE (post-audit fixes applied 2026-06-27)

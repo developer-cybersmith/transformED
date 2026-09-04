@@ -140,6 +140,28 @@ All five routes are reachable under `/api/assessment/...`.
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One HTTP request per stub endpoint. All five routes raise `HTTP 501 NOT_IMPLEMENTED` immediately with no business logic. Range: constant — every request takes the same path regardless of payload size.
+
+**Q2 — Fixed budgets vs variable input**
+No variable budgets — all endpoints raise before any processing. Pydantic validates request bodies (rejects malformed inputs with 422 before reaching the stub), but no processing budget is consumed.
+
+**Q3 — Scope of limits**
+N/A — no processing limits apply. Pydantic validation is per-request, no shared state.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries. All five routes raise HTTP 501 before any DB access.
+
+**Q5 — Inherited caps**
+N/A — this is a pure stub story. No caps to inherit or re-derive.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — stubs are stateless and idempotent. No shared mutable state is touched.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used

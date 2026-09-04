@@ -167,6 +167,26 @@ OR test at HTTP layer if Field validation is expected to return 422 from FastAPI
 4. 5-agent code review via /bmad-code-review
 5. PR → main after BLOCKER resolution
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One security check per quiz submission (runs inline with `grade_quiz` from story 3-8). No additional DB queries added by this story. Validation is pure Python — O(n) over `answers` list where n ≤ 50.
+
+**Q2 — Fixed budgets vs variable input**
+`answers.max_length=50` enforced via Pydantic → HTTP 422 on overflow (explicit error ✓). `response_index < len(options)` → HTTP 422 on out-of-range (explicit error ✓). Duplicate `question_id` detection → HTTP 422 (explicit error ✓). All three checks produce explicit, surfaced errors — no silent truncation or silent skipping.
+
+**Q3 — Scope of limits**
+All three checks are per-request, per-user. No shared state involved. The `max_length=50` cap is per-submission.
+
+**Q4 — Unbounded reads/writes**
+Same as story 3-8. No new queries added by this hardening story.
+
+**Q5 — Inherited caps**
+`max_length=50` is freshly derived in this story — not inherited. Derivation: typical segment has ≤20 questions; 50 gives 2.5× headroom. If lesson segment size grows beyond 50 questions, this cap must be re-derived.
+
+**Q6 — Concurrent TOCTOU safety**
+The session enumeration oracle fix (wrong-owner returns 404 instead of 403) is timing-safe: both "not found" and "wrong owner" return 404 with the same response body, so response-time differences cannot leak session existence to a timing oracle. The fix does not introduce any new TOCTOU gap.
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-01

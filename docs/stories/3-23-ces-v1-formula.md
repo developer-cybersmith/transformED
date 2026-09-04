@@ -333,6 +333,28 @@ RED → GREEN → REFACTOR cycle. Tests written first in `test_ces.py` (20 tests
 - 2026-07-03: Implementation complete — ces.py + test_ces.py; 17/17 tests pass; 0 regressions
 - 2026-07-03: Code review — 5-agent adversarial review; 2 BLOCKERs fixed; 20/20 tests pass
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `compute_ces()` call per `AttentionSignalMessage` received by Dev 4's WebSocket handler (one message every 5 seconds per active session). Input is always exactly 5 floats + a Settings object. Range: constant cost regardless of session length — no accumulation, no fan-out.
+
+**Q2 — Fixed budgets vs variable input**
+No fixed budgets. Pure synchronous arithmetic on a fixed 5-signal input. Output is always a single float in [0.0, 100.0]. The `min(100.0, ...)` output clamp is a correctness guard (weights allowed to sum to 1.001), not a capacity limit.
+
+**Q3 — Scope of limits**
+N/A — no state, no storage, no limits. Every call is fully independent.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries. No Redis reads or writes. No network I/O. `ces.py` imports only from Python stdlib and `app.config` (AC 17, verified by AST-based guard test).
+
+**Q5 — Inherited caps**
+N/A — no inherited caps. The 5-signal CES formula and weight defaults are defined fresh in this story and in `config.py`; nothing was carried over from a prior design with a different unit of work.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — pure synchronous function with no shared state, no DB writes, no Redis writes. Any number of concurrent calls for any number of users are fully independent.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Date:** 2026-07-03

@@ -139,6 +139,28 @@ This is intentional for DPDP Act 2023 compliance — a "right to erasure" reques
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One migration script applied once per database instance. Runtime unit is N/A — this story delivers DDL only, not a request-handling endpoint.
+
+**Q2 — Fixed budgets vs variable input**
+DB schema constraints are fixed per row: `NUMERIC(5,2)` enforces score range at the column level. No variable input budget is consumed at migration time. Index creation cost scales with existing row count, but tables are new (0 rows).
+
+**Q3 — Scope of limits**
+N/A at migration time. Runtime RLS policies scope each row to `auth.uid()` (per user). No per-instance or per-deployment limits set here.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries — this story is DDL only. Endpoint queries using these tables are bounded in stories 3-8 and 3-9 (`.maybe_single()`, `count="exact"`).
+
+**Q5 — Inherited caps**
+`NUMERIC(5,2)` precision for scores: inherited from PRD §11 (CES 0–100 scale, 2 decimal places). Re-derived: 0.00–100.00 fits in NUMERIC(5,2) (5 total digits, 2 after decimal → max 999.99 — adequate headroom).
+
+**Q6 — Concurrent TOCTOU safety**
+`UNIQUE(user_id)` on `learner_dna` prevents concurrent upsert races: a concurrent INSERT would get a unique-violation error and retry as UPDATE. `ON DELETE CASCADE` on quiz_attempts and teachback_attempts is atomic at the Postgres level — no TOCTOU gap.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used

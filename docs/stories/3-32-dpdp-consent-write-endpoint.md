@@ -191,6 +191,28 @@ async def record_consent_endpoint(
 - [x] 6.4 Update `docs/dev3-assessment-tracker.md`
 - [x] 6.5 Update `docs/DEFECT-REGISTER.md` — close D29
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one `POST /assessment/consent` request. Payload: `{consent_type: str, policy_version: str, consented: bool}`. One Supabase read (check for existing consent row) + one INSERT or UPDATE. Response: `{status: "accepted"|"already_recorded"}`. No LLM call, no Redis write.
+
+**Q2 — Fixed budgets vs variable input**
+Fixed-size operation regardless of input. The `user_consents` row is small (~100 bytes: user_id UUID, consent_type VARCHAR, policy_version VARCHAR, consented_at TIMESTAMP). No pagination, no accumulation. On `consented: false` (withdrawal), the row is updated (not deleted) to preserve audit trail — same cost as INSERT.
+
+**Q3 — Scope of limits**
+Per-user, per-`(consent_type, policy_version)` pair. The UNIQUE constraint on `(user_id, consent_type, policy_version)` enforces exactly one row per combination. A user who consents to 3 policy types × 2 policy versions has at most 6 rows — bounded by the product of distinct types and versions, which are finite and controlled by the application.
+
+**Q4 — Unbounded reads/writes**
+- **Read**: `SELECT` filtered by `(user_id, consent_type, policy_version)` — at most one row (UNIQUE constraint guarantees cardinality 0 or 1). No `.limit()` needed; `.maybe_single()` is the correct pattern.
+- **Write**: one INSERT or UPDATE — bounded.
+No unbounded scans.
+
+**Q5 — Inherited caps**
+No caps inherited from prior stories. The `user_consents` table is new (this story creates the migration). The UNIQUE constraint is the structural guard introduced here — it was not pre-existing.
+
+**Q6 — Concurrent TOCTOU safety**
+The UNIQUE constraint on `(user_id, consent_type, policy_version)` makes concurrent duplicate INSERTs safe: one succeeds, one gets a unique violation. AC 10 specifies that a duplicate re-consent returns HTTP 200 (idempotent). The implementation must catch the unique-violation exception and return 200 — not 409. This is the primary TOCTOU guard for this endpoint.
+
 ## Senior Developer Review (AI)
 
 *(populated after 5-agent review — Task 5)*

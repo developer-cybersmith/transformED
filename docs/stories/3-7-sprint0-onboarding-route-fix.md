@@ -82,6 +82,26 @@ can merge cleanly and Sprint 0 is fully closed.
   resolved by taking the concrete boolean values from main (`sharp: false`, `unrs-resolver: false`)
 - Do NOT manually edit `pnpm-lock.yaml` — always regenerate via `pnpm install`
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One-time build operation: move a Next.js route directory and regenerate the pnpm lockfile. No runtime endpoint is added. Post-deployment, every page load of `/onboarding` is a standard Next.js SSR request with no DB queries.
+
+**Q2 — Fixed budgets vs variable input**
+No variable budgets. `pnpm install` fetches from the registry once and locks versions. The page itself has no variable input that affects render cost.
+
+**Q3 — Scope of limits**
+N/A — build-time change. No per-user or per-deployment runtime limits.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries in the route file itself. Onboarding submission goes to `POST /api/assessment/onboarding/submit` (story 3-18), bounded there.
+
+**Q5 — Inherited caps**
+N/A — this story only moves an existing file and fixes package lock state.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — no state mutations in the route handler itself. No shared mutable state.
+
 ## Dev Agent Record
 
 ### Agent Model

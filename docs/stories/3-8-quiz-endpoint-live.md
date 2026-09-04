@@ -172,6 +172,30 @@ _QUESTION_1 = {
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One quiz submission per segment per student. Typical: 5 answers per submission (5 MCQ per segment). Range: 1 answer (minimum, per `min_length=1`) to 50 answers (maximum, enforced by `Field(max_length=50)` in story 3-10). One bulk insert per submission (1–50 rows).
+
+**Q2 — Fixed budgets vs variable input**
+`answers` list capped at 50 via `Field(max_length=50)` → HTTP 422 on overflow (explicit error ✓). `response_index` bounded by `ge=0` + runtime `< len(options)` check → HTTP 422 on out-of-range (explicit error ✓). `response_time_ms` bounded by `ge=0`. No LLM calls — quiz grading is pure Python logic. No silent truncation of answers list.
+
+**Q3 — Scope of limits**
+Per session (session_id scoped). Per user (user_id ownership check via session lookup). The `Field(max_length=50)` answer cap is per-request.
+
+**Q4 — Unbounded reads/writes**
+- `supabase.table("sessions").select(...).eq("session_id", ...).maybe_single().execute()` — BOUNDED by `.maybe_single()`
+- `supabase.table("lessons").select(...).eq("lesson_id", ...).maybe_single().execute()` — BOUNDED by `.maybe_single()`
+- `supabase.table("quiz_attempts").insert([...]).execute()` — INSERT of at most `len(answers)` rows (max 50 per Field constraint) — BOUNDED
+
+**Q5 — Inherited caps**
+Answer cap of 50 is freshly derived: typical lesson has ≤20 questions; 50 gives 2.5× headroom. Not inherited from an earlier design.
+
+**Q6 — Concurrent TOCTOU safety**
+Concurrent quiz submissions for the same session+segment: `attempt_number` is computed from a `count` query BEFORE the insert (TOCTOU gap). Two concurrent submissions both read `count=0`, both compute `attempt_number=1`, both insert. No `UNIQUE(session_id, segment_id, question_id, attempt_number)` constraint exists to reject the duplicate. Low-risk in MVP (single-page quiz, submit once pattern). Documented as deferred improvement I4 in the defect register; a future migration (story 3-13) adds the constraint.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used

@@ -123,6 +123,28 @@ This route uses the `(app)` route group which was present in the original Sprint
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One static page render per student visit. Contains exactly 20 questions with 4 options each — fixed content, never paginated or lazy-loaded.
+
+**Q2 — Fixed budgets vs variable input**
+Content is fully static — no variable input affects page size. Total page weight is bounded by the 20 question objects (each ~200 bytes JSON = ~4 KB total). No LLM calls, no DB reads at render time.
+
+**Q3 — Scope of limits**
+N/A — static content. No per-user, per-instance, or per-deployment limits apply.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries at content render time. The submission path (`POST /api/assessment/onboarding/submit`) is implemented in a separate story (3-18) and bounded there.
+
+**Q5 — Inherited caps**
+The 20-question count is derived from the PRD §9 Learner DNA three-dimension model (cognitive, emotional, self-direction), not inherited from an arbitrary earlier limit.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — read-only static content page. No state mutations, no shared mutable state.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used

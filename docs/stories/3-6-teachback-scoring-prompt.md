@@ -115,6 +115,28 @@ with patch("app.modules.assessment.prompts.get_settings", return_value=mock_sett
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One LLM call per teach-back submission via `score_teachback()`. Input: `response_text` (student answer, variable length) + `key_concepts` list (variable count). Typical: 50–500 chars response text, 3–8 key concepts. Max observed: ~2,000 char essay.
+
+**Q2 — Fixed budgets vs variable input**
+No explicit cap on `response_text` length — a student submitting a very long response (2,000+ words) incurs higher token cost proportionally but does NOT raise an explicit error. The $3.00 lesson-level cost ceiling (enforced by `cost_tracker`) is the only backstop; it fires after the call succeeds. Silent truncation does NOT occur (GPT-4o-mini context window is ~128k tokens); the full text is sent. Gap: no per-call `response_text` length validation — a future hardening story should add `max_length=2000` at the endpoint level.
+
+**Q3 — Scope of limits**
+Cost tracked per `lesson_id` (circuit breaker per deployment). No per-user rate limit at the prompt level — the lesson cost ceiling is per-lesson, shared across all segments.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries in `prompts.py`. The function is a pure computation layer — all DB access lives in the calling endpoint (story 3-9).
+
+**Q5 — Inherited caps**
+`TeachbackScoreResult` schema: `rubric_scores` has exactly 3 keys (`accuracy`, `depth`, `clarity`) — derived from the PRD §11 teach-back rubric, not inherited from an arbitrary earlier design.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — stateless function. Each call is independent; no shared mutable state is read or written.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used

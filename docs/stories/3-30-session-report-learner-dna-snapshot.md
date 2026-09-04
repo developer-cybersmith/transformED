@@ -536,6 +536,29 @@ Written by `record_dna_growth()` in `dna_growth.py`:
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one `GET /api/assessment/session/{id}/report` request that now also reads the `learner_dna` table. One additional Supabase read (`.maybe_single()` on `learner_dna` by `user_id`) appended to the existing session-report query chain. The returned `learner_dna_snapshot` field is the full `learner_dna` JSONB row for that user — typically ~2–5 KB (9 dimension scores + badge_labels + profile_text). Maximum size: profile_text is a paragraph (~500 chars), badge_labels ≤ ~20 strings — bounded.
+
+**Q2 — Fixed budgets vs variable input**
+No LLM call in this story. One Supabase read. Response payload grows by the size of `learner_dna_snapshot` (~2–5 KB). The `profile_text` string is bounded by the GPT-4o-mini output limit applied in Story 3-26 (~800 tokens max). `badge_labels` count grows with sessions but has no hard cap — a pathological user with 1,000 sessions could have many badges. In practice, badge earn rate is constrained by lesson throughput; at 1 lesson/day for 1 year, a user might earn ~50 badges. No explicit cap is enforced; the Supabase row-size limit (6MB) is the effective ceiling, which cannot be reached by this field. **Deferred cap decision**: add explicit `badge_labels[:100]` slice if needed post-launch.
+
+**Q3 — Scope of limits**
+Per-user, per-request. The `.maybe_single()` read is keyed by `user_id` extracted from the session row — no cross-user leakage. RLS on `learner_dna` ensures users can only read their own row.
+
+**Q4 — Unbounded reads/writes**
+All queries bounded:
+- `learner_dna` read: `.select("*").eq("user_id", user_id).maybe_single()` → at most one row.
+- All other session-report queries: inherited from Story 3-19 (bounded with `.limit()` and `.maybe_single()`).
+No unbounded scans.
+
+**Q5 — Inherited caps**
+Inherits all session-report query bounds from Story 3-19. The `learner_dna` `.maybe_single()` pattern is the same as Story 3-30's baseline design. No new inherited caps introduced.
+
+**Q6 — Concurrent TOCTOU safety**
+Read-only endpoint. The `learner_dna` snapshot read is a point-in-time read; a concurrent `dna_fusion` write could return a slightly stale snapshot, but this is a read-only display field and eventual consistency is acceptable. No check-then-act sequence.
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-21

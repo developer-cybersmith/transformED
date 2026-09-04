@@ -535,6 +535,29 @@ the caller decides frequency.
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one `refresh_dna_profile()` call, triggered at session end when `session_count % 10 == 0`. One LLM call (GPT-4o-mini via `settings.llm_mini`) + one Supabase read (badge_labels) + one Supabase upsert (profile_text). Typical input: 9 DNA dimension values + up to ~10 badge_label strings. The prompt is bounded by the number of DNA dimensions (always 9) and the number of badge labels (bounded by the quiz/teachback earn rate per session). LLM response is a single profile text string; no iteration over tokens or pages.
+
+**Q2 — Fixed budgets vs variable input**
+The `$3.00/lesson` ceiling applies indirectly: `refresh_dna_profile` is not called per-lesson but per session end. GPT-4o-mini cost for one profile-text call is negligible (~$0.001). Badge labels contribute to prompt length; a pathological user with hundreds of badges would increase token cost, but badge_labels is read via `.maybe_single()` on the learner_dna row — one row, bounded. The LLM call uses the circuit-breaker + retry logic from `OpenAILLMProvider`; on failure it returns `None` (non-fatal). No silent truncation.
+
+**Q3 — Scope of limits**
+Per-user, per-session-end-checkpoint. Triggered at most once per session (gated on `session_count % 10 == 0`). Redis has no separate TTL on this; it fires synchronously at session boundary. Each user is independently rate-limited by the session count gate.
+
+**Q4 — Unbounded reads/writes**
+All queries are bounded:
+- `supabase.table("learner_dna").select("badge_labels").eq("user_id", user_id)` uses `.maybe_single()` → at most one row returned.
+- Upsert to `learner_dna` on `user_id` conflict → one row affected.
+No unbounded scans.
+
+**Q5 — Inherited caps**
+The `OpenAILLMProvider` inherits the circuit-breaker (5 failures/2 min → open) and retry logic (3 attempts, exponential backoff) from `core/retry.py`. The `learner_dna` upsert inherits the Supabase 6MB row-size limit; a profile_text string is a few hundred characters — no concern.
+
+**Q6 — Concurrent TOCTOU safety**
+Two concurrent session-end events for the same user_id (unlikely but possible if a session is double-closed) would both call `refresh_dna_profile`. Both would upsert to `learner_dna` on conflict `user_id` — last writer wins. Both profile_text values are independently derived from the same learner_dna snapshot, so the final value is consistent. No read-then-write race on a counter: the upsert is a full replacement, not an increment.
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-06

@@ -109,6 +109,28 @@ The migration documents the relevant Redis key:
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One migration script applied once per database instance. Runtime unit is N/A — this story delivers DDL only.
+
+**Q2 — Fixed budgets vs variable input**
+`session_events.payload JSONB NOT NULL DEFAULT '{}'` is unbounded in size — individual rows can be arbitrarily large. No row-size enforcement is added at the DB level here. Risk: a single event with a huge JSONB payload (e.g., a serialised slide deck accidentally passed as event data) can balloon row size. Callers in stories 3-20 and 3-22 are responsible for bounding payload size before insert; this story documents the gap.
+
+**Q3 — Scope of limits**
+RLS `auth.uid()` scopes onboarding_responses and session_events to the owning user. No per-deployment or per-instance limits set here.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries — DDL only. Runtime queries using these tables are bounded in their respective stories (3-18, 3-20, 3-22) by `.limit()` or `count="exact"`.
+
+**Q5 — Inherited caps**
+`dimension_tag CHECK (...) IN ('cognitive', 'emotional', 'self_direction')` is a new constraint, not inherited. The allowed set is derived from the PRD §9 three-dimension Learner DNA model.
+
+**Q6 — Concurrent TOCTOU safety**
+No UNIQUE constraint on `(user_id, question_id)` in `onboarding_responses` — concurrent inserts for the same question can produce duplicates if the student submits twice simultaneously. Low risk in MVP (single-page form with disabled submit on first click). Documented gap for future UNIQUE migration.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used
