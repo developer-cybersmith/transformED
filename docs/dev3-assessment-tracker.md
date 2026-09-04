@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-04 (F2-4 voice teach-back STT done; F2-3 tier label verify done; F2-2 score_source flag done — Bug Resolution Sprint 3/3)
+**Last updated:** 2026-09-05 (F2-1 DNA internal API done — Bug Resolution Sprint 4/4)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -21,9 +21,9 @@
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 11 | 8 | 1 | 2 |
-| Bug Resolution Sprint | Sep 2026 | 3 | 3 | 0 | 0 |
+| Bug Resolution Sprint | Sep 2026 | 4 | 4 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **70** | **64** | **1** | **5** |
+| **Total** | | **71** | **65** | **1** | **5** |
 
 Update this table each time a task is checked off below.
 
@@ -1010,6 +1010,16 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 ## Bug Resolution Sprint — Sep 2026
 
 > **Goal:** Fix bugs and gaps found post-Sprint 4. Story-first BMAD process with 6-layer review gate.
+
+- [x] **F2-1 — Expose Learner DNA + behaviour-signal summary as internal service helper** — ✓ 2026-09-05
+  - New `get_dna_prompt_context()` async function in `service.py` — returns DNA labels, badge labels, profile snippet, session signals as a typed dict for LLM prompt injection
+  - Pure service-layer addition — no new HTTP route, no OpenAPI contract change (CLAUDE.md Interface Contracts §1)
+  - `format_dna_for_prompt()` companion helper renders the dict as a compact prompt-context string for caller convenience
+  - DNA reads from `user:{user_id}:dna` Redis cache → Supabase fallback (same pattern as `seed_personalized_ces_threshold`)
+  - Session signals (quiz accuracy, teachback average, intervention count) from `quiz_attempts`, `teachback_attempts`, `session_events` — scoped by `session_id`; IDOR-safe via RLS on `sessions.user_id`
+  - Story-first BMAD process followed; 6-layer adversarial review gate completed
+  - Branch: `feature2/f2-1-dna-api-prompt-injection` | PR: #194
+  - Story: `docs/stories/f2-1-dna-api-prompt-injection.md` — status: done
 
 - [x] **F2-2 — Teachback score_source flag: llm | fallback | skipped** — ✓ 2026-09-04
   - Added `score_source: Literal["llm", "fallback", "skipped"]` to `TeachbackResult` schema
