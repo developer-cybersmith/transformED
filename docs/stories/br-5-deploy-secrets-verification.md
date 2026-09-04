@@ -1,6 +1,6 @@
 # Story BR-5 — Deploy-time required-secrets verification (closes D146's residual gap)
 
-Status: draft
+Status: ready for review (implementation complete; 6-agent `/bmad-code-review` gate not yet run — see CLAUDE.md's BMAD Code Review Gate before merge)
 
 ## Story
 
@@ -121,49 +121,49 @@ two different, unverified claims currently conflated.
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — `scripts/check_fly_secrets_configured.py` (AC: #1, #2)**
-  - [ ] `required_settings_fields()` — introspects `app.config.Settings.model_fields`, returns the
+- [x] **Task 1 — `scripts/check_fly_secrets_configured.py` (AC: #1, #2)**
+  - [x] `required_settings_fields()` — introspects `app.config.Settings.model_fields`, returns the
     env var names (uppercased) of every field with no default.
-  - [ ] `_GUARD_ENFORCED_SECRETS` — hand-listed dict for `RATE_LIMIT_STORAGE_URL` only, citing
+  - [x] `_GUARD_ENFORCED_SECRETS` — hand-listed dict for `RATE_LIMIT_STORAGE_URL` only, citing
     D49/D146 in its value string.
-  - [ ] `required_secrets()` — merges both sources into one `{name: reason}` manifest.
-  - [ ] `list_missing_secrets(required, configured_names)` — pure diff, no I/O, directly testable.
-  - [ ] `_fetch_configured_secret_names(app)` — shells out to `flyctl secrets list --app <app>
+  - [x] `required_secrets()` — merges both sources into one `{name: reason}` manifest.
+  - [x] `list_missing_secrets(required, configured_names)` — pure diff, no I/O, directly testable.
+  - [x] `_fetch_configured_secret_names(app)` — shells out to `flyctl secrets list --app <app>
     --json`, returns the set of names; raises a distinguishable `RuntimeError` (not a silent
     empty set) on any non-zero exit or unparseable output.
-  - [ ] `main()` — wires the above, prints an actionable per-secret message on failure (cites
+  - [x] `main()` — wires the above, prints an actionable per-secret message on failure (cites
     D150, tells the operator the exact `flyctl secrets set` command), exit code `0`/`1` per AC2.
 
-- [ ] **Task 2 — Wire into the deploy workflow (AC: #3)**
-  - [ ] New step in `.github/workflows/deploy.yml`, before `flyctl deploy --remote-only`, running
+- [x] **Task 2 — Wire into the deploy workflow (AC: #3)**
+  - [x] New step in `.github/workflows/deploy.yml`, before `flyctl deploy --remote-only`, running
     `python scripts/check_fly_secrets_configured.py --app hie-api` with `FLY_API_TOKEN` in env
     (same secret the existing deploy step already uses).
-  - [ ] Confirm the step actually blocks the job on failure (`flyctl deploy` must not run if this
+  - [x] Confirm the step actually blocks the job on failure (`flyctl deploy` must not run if this
     step exits non-zero) — GitHub Actions' default sequential-step failure behavior, verify no
     `continue-on-error` is accidentally inherited from anywhere in the file.
 
-- [ ] **Task 3 — Tests (AC: #4, #5)**
-  - [ ] `apps/api/tests/test_check_fly_secrets_configured.py` (script lives under `scripts/`, not
+- [x] **Task 3 — Tests (AC: #4, #5)**
+  - [x] `apps/api/tests/test_check_fly_secrets_configured.py` (script lives under `scripts/`, not
     a package — load by `importlib` from file path, mirroring `test_ws_load_test.py`'s existing
     pattern for `scripts/ws_load_test.py`).
-  - [ ] `list_missing_secrets` — empty configured set (all required missing), full set (none
+  - [x] `list_missing_secrets` — empty configured set (all required missing), full set (none
     missing), partial overlap.
-  - [ ] Anti-drift test: call `required_settings_fields()` for real against the real
+  - [x] Anti-drift test: call `required_settings_fields()` for real against the real
     `app.config.Settings` and assert it's a non-empty set containing at minimum
     `SUPABASE_URL`/`OPENAI_API_KEY` (spot-checks the introspection actually walks real fields,
     not an empty/broken import) — not a fixed hand-typed list that could itself drift from
     `config.py`.
-  - [ ] Source-scan test: `RATE_LIMIT_STORAGE_URL` (the literal string) is present in
+  - [x] Source-scan test: `RATE_LIMIT_STORAGE_URL` (the literal string) is present in
     `apps/api/app/core/rate_limit.py`'s source — reddens if a future rename of that env var in
     the guard isn't mirrored in this script's `_GUARD_ENFORCED_SECRETS`.
-  - [ ] `_fetch_configured_secret_names` / `main()` — mock `subprocess.run` (never invoke a real
+  - [x] `_fetch_configured_secret_names` / `main()` — mock `subprocess.run` (never invoke a real
     `flyctl` in the unit suite); cover the non-zero-exit and unparseable-JSON paths explicitly,
     asserting each raises/exits loud rather than returning an empty "looks fine" set.
 
-- [ ] **Task 4 — Register + tracker close-out (AC: #6)**
-  - [ ] `docs/DEFECT-REGISTER.md` — new **D150** entry, citing D146/D145, this story's branch, and
+- [x] **Task 4 — Register + tracker close-out (AC: #6)**
+  - [x] `docs/DEFECT-REGISTER.md` — new **D150** entry, citing D146/D145, this story's branch, and
     the new CI step + test file per binding rule 7.
-  - [ ] `docs/dev4-tracker.md` — add this task under "Bug Resolution — Feature Sprint 2" as BR-5
+  - [x] `docs/dev4-tracker.md` — add this task under "Bug Resolution — Feature Sprint 2" as BR-5
     (next available local number; distinct from the differently-prefixed `bug-resolution/br-5-*`
     branch namespace another dev is using independently — no collision, confirmed via
     `git ls-remote` before choosing this number), flip to `[Completed]` on close, update the
@@ -210,6 +210,74 @@ two different, unverified claims currently conflated.
 - `.github/workflows/deploy.yml` — one new step only; no change to the existing
   `flyctl deploy --remote-only` step or its `FLY_API_TOKEN` env wiring.
 - No Supabase migration, no `packages/shared` contract, no frontend change — backend/CI-only.
+
+## Dev Agent Record
+
+### Agent Model Used
+
+Claude Sonnet 5 (claude-sonnet-5), 2026-09-04.
+
+### Debug Log References
+
+- RED confirmed before GREEN: `test_check_fly_secrets_configured.py` collection failed with
+  `FileNotFoundError` (script didn't exist yet) before `scripts/check_fly_secrets_configured.py`
+  was written.
+- **Real bug found live, not in review:** dev-verifying the script by running it directly
+  (`python scripts/check_fly_secrets_configured.py --app hie-api`) — `flyctl` isn't installed on
+  this dev machine, and `subprocess.run` raises `FileNotFoundError` directly rather than returning
+  a non-zero exit code. The original `_fetch_configured_secret_names` only caught
+  `returncode != 0` and bad JSON, so this propagated as a raw, uncaught traceback past `main()`'s
+  `except RuntimeError` — the same "silent-unclean-failure" class AC2 exists to rule out, just via
+  a crash instead of a false OK. Fixed (catch `FileNotFoundError` + `subprocess.TimeoutExpired`,
+  re-raise as the same clean `RuntimeError`) and regression-locked with 2 new tests before moving
+  on — confirmed the fix live: re-running the script now prints a clean `ERROR: flyctl executable
+  not found on PATH...` and exits 1, not a traceback.
+- Mutation check on `list_missing_secrets`: replaced with `return []`, confirmed exactly 3 of 14
+  tests reddened (the ones depending on it), restored, confirmed 14/14 green again.
+- `ruff check`/`ruff format --check` clean on both touched files (one `PLW1510` finding — missing
+  explicit `check=` on `subprocess.run` — fixed by adding `check=False`, since the non-zero-exit
+  case is deliberately handled explicitly just below, not left to `CalledProcessError`).
+- Full `apps/api/tests` unit suite: this dev sandbox was missing several packages entirely
+  (`python-multipart`, `tinytag`, `fpdf`, `fakeredis`) — confirmed via `git stash` that this
+  predates this branch and is unrelated to any file this story touches. After installing them:
+  **35 failed / 2243 passed / 32 skipped.** All 35 pre-existing and outside this story's changed
+  files — 3 are the already-registered **D143** (`test_tutor_graph.py` fatigue tests, import-order
+  binding bug), the rest are stale/absent eval-PDF fixture files and other onboarding/session/
+  posthog endpoint failures untouched by this branch. Confirmed directly (not assumed): neither
+  `test_check_fly_secrets_configured.py` nor D49's own `test_rate_limit_storage_guard.py` appear
+  anywhere in the failure list.
+- `dev4/master-bug-resolution` (this story's base integration branch) was cut from `main` on
+  2026-08-27, before PR #159 (D49's guard) and D146 existed — merged current `main` into this
+  branch first (`f26a3b7`) so the code this story extends was actually present to build against.
+
+### Completion Notes List
+
+- AC1–AC6 all met. `scripts/check_fly_secrets_configured.py` + 14 tests in
+  `apps/api/tests/test_check_fly_secrets_configured.py`, mutation-checked.
+- `.github/workflows/deploy.yml`: added `actions/setup-python@v5` (this job never ran Python
+  before — pinned "3.12" to match `ci.yml`), a minimal `pip install "pydantic>=2.7.0"
+  "pydantic-settings>=2.2.0"` step (deliberately not the full `uv sync --locked` `apps/api` tree,
+  which pulls in `docling`'s heavy ML/torch install path — disproportionate for a script that only
+  needs `Settings.model_fields`'s shape, no instance, no real secret values), and the verification
+  step itself, all before the existing `flyctl deploy --remote-only` step. No `continue-on-error`
+  anywhere — a non-zero exit from the new step blocks the job by GitHub Actions' default behavior.
+- `docs/DEFECT-REGISTER.md`: new **D150** entry, re-verified against a freshly-fetched `origin/main`
+  immediately before writing it (per the register's own binding collision-avoidance rule) —
+  highest allocated id was D148 at write time.
+- `docs/dev4-tracker.md`: added BR-5 under "Bug Resolution — Feature Sprint 2"; dashboard row
+  (4→5 tasks, 0→1 Completed) and header (36/48 Completed, last-updated date) reconciled.
+- **Not done in this branch:** the 6-agent `/bmad-code-review` gate CLAUDE.md requires before
+  merge. Implementation, tests, and register/tracker close-out are complete; the adversarial
+  review is the explicit next step, not silently skipped.
+
+### File List
+
+- `scripts/check_fly_secrets_configured.py` — new
+- `apps/api/tests/test_check_fly_secrets_configured.py` — new, 14 tests
+- `.github/workflows/deploy.yml` — 3 new steps (setup-python, minimal pip install, the check)
+- `docs/DEFECT-REGISTER.md` — new D150 entry
+- `docs/dev4-tracker.md` — new BR-5 task entry
+- `docs/stories/br-5-deploy-secrets-verification.md` — this file
 
 ### References
 

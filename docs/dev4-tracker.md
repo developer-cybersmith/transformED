@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-29 (dashboard count corrected — Sprint 4 was showing 4/5, actual per-task labels are 3 Completed/6 Partial; Bug Resolution — Feature Sprint 2 added: BR-1..BR-4)
-**Overall status:** 35/47 Completed · 6 Partial · 6 Not Started
+**Last updated:** 2026-09-04 (BR-5 added and completed — deploy-time required-secrets verification, D150, closing D146's residual gap)
+**Overall status:** 36/48 Completed · 6 Partial · 6 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -23,8 +23,8 @@
 | Sprint 4 | Weeks 8–9 | 9 | 3 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| Bug Resolution | Feature Sprint 2 | 4 | 0 | 0 | 4 |
-| **Total** | | **47** | **35** | **6** | **6** |
+| Bug Resolution | Feature Sprint 2 | 5 | 1 | 0 | 4 |
+| **Total** | | **48** | **36** | **6** | **6** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -784,6 +784,30 @@ MAX_DISTRACTION_PER_SESSION=3
     (no session issued) below the configured trust-score threshold.
   - Story: `docs/stories/br-4-turnstile-verification.md` (to be created)
   - **AC:** TBD in story file.
+
+<!-- CHECK:br5_deploy_secrets_verification -->
+- [Completed] **Deploy-time required-secrets verification — closes D146's residual gap** ✅ 2026-09-04
+  - Picked up opportunistically, not squarely WS/JWT/tutor-FSM domain: surfaced directly out of
+    D146's investigation (a 3-hour production crash-loop, 2026-09-03, after D49's correct startup
+    guard fired on every boot because `RATE_LIMIT_STORAGE_URL` was never set as a live Fly secret).
+    Local branch/story numbering only — distinct from the differently-prefixed `bug-resolution/br-5-*`
+    branch namespace another dev is using independently (no collision, confirmed via `git ls-remote`
+    before choosing this number).
+  - `scripts/check_fly_secrets_configured.py` — anti-drift required-secrets manifest (every
+    `app.config.Settings` field with no default, introspected live via `Settings.model_fields`, plus
+    `RATE_LIMIT_STORAGE_URL` hand-listed and source-scan-tested against D49's own guard) diffed
+    against `flyctl secrets list --app hie-api --json`
+  - Wired into `.github/workflows/deploy.yml` as its own step, before `flyctl deploy --remote-only`
+  - Registered as **D150** in `docs/DEFECT-REGISTER.md`, citing D146 (the incident) and D145 (the
+    sibling live-Fly-config-drift class)
+  - Story: `docs/stories/br-5-deploy-secrets-verification.md`
+  - **AC MET:** AC1–AC6 all satisfied — 14 tests in `apps/api/tests/test_check_fly_secrets_configured.py`
+    (pure diff logic, live anti-drift introspection, every subprocess failure mode incl. a real bug
+    found live while dev-verifying — `flyctl` not installed on the dev machine raises `FileNotFoundError`
+    directly, which the original implementation didn't catch — fixed and regression-locked), mutation-checked.
+    Full `apps/api/tests` unit suite re-run: 35 failed / 2243 passed / 32 skipped — all 35 pre-existing
+    (3 already-registered D143, rest stale eval-PDF fixtures/other pre-existing gaps), confirmed neither
+    this story's new test file nor D49's own guard tests appear in the failure list. `ruff` clean.
 
 ---
 
