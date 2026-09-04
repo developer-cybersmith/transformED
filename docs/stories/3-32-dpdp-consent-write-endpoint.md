@@ -241,3 +241,11 @@ The UNIQUE constraint on `(user_id, consent_type, policy_version)` makes concurr
 ### Change Log
 
 *(populated on completion)*
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | DPDP consent write is a single INSERT per consent event (per `user_consents` schema). UNIQUE constraint on `(user_id, consent_type)` (or insert-append pattern) guards duplicate writes. No unbounded SELECT: consent read uses `.maybe_single()` (≤1 row per user per consent_type). Per-user scope, per-deployment enforcement. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.
