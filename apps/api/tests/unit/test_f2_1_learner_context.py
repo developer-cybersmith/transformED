@@ -8,7 +8,8 @@ Covers:
   AC2  — IDOR: 404 unified message for wrong-user sessions
   AC3  — DNA block populated when learner_dna row exists
   AC4  — DNA block is null when no learner_dna row exists
-  AC5  — current_session block: quiz_accuracy, quiz_total, teachback_score, teachback_count, ces_score
+  AC5  — current_session block: quiz_accuracy, quiz_total, teachback_score,
+          teachback_count, ces_score
   AC6  — prompt_text is LLM-ready (no raw numeric dimension values)
   AC7  — prompt_text is "" when no context exists
   AC8  — bounded queries (source scan, test_unbounded_queries.py is authoritative guard)
@@ -19,9 +20,8 @@ Covers:
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -182,9 +182,7 @@ def test_learner_context_in_schemas_all():
     assert "LearnerContext" in schemas.__all__, (
         "LearnerContext missing from schemas.__all__ — add it so imports work across modules"
     )
-    assert "LearnerContextDNA" in schemas.__all__, (
-        "LearnerContextDNA missing from schemas.__all__"
-    )
+    assert "LearnerContextDNA" in schemas.__all__, "LearnerContextDNA missing from schemas.__all__"
     assert "LearnerContextSession" in schemas.__all__, (
         "LearnerContextSession missing from schemas.__all__"
     )
@@ -263,12 +261,12 @@ def test_learner_context_missing_session_returns_404(mock_single_row, mock_to_th
 @patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn())
 @patch("app.modules.assessment.service.single_row")
 def test_dna_block_populated_when_row_exists(mock_single_row, mock_to_thread):
-    """AC3: When learner_dna row exists, dna block has badges, profile_text, session_count, dimension_labels."""
+    """AC3: dna block has badges, profile_text, session_count, dimension_labels when row exists."""
     mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
 
-    from app.modules.assessment.service import get_learner_context
-
     import asyncio
+
+    from app.modules.assessment.service import get_learner_context
 
     result = asyncio.run(
         get_learner_context(
@@ -290,9 +288,15 @@ def test_dna_block_populated_when_row_exists(mock_single_row, mock_to_thread):
     labels = result.dna.dimension_labels
     assert isinstance(labels, dict)
     assert set(labels.keys()) == {
-        "pattern_recognition", "logical_deduction", "processing_speed",
-        "frustration_tolerance", "persistence", "help_seeking",
-        "goal_orientation", "curiosity_index", "study_independence",
+        "pattern_recognition",
+        "logical_deduction",
+        "processing_speed",
+        "frustration_tolerance",
+        "persistence",
+        "help_seeking",
+        "goal_orientation",
+        "curiosity_index",
+        "study_independence",
     }
     for key, band in labels.items():
         assert band in ("strong", "developing", "building", "emerging"), (
@@ -336,11 +340,12 @@ def test_dna_block_null_when_no_onboarding(mock_single_row, mock_to_thread):
 @patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn())
 @patch("app.modules.assessment.service.single_row")
 def test_current_session_block_computed_correctly(mock_single_row, mock_to_thread):
-    """AC5: quiz_accuracy, quiz_total, teachback_score, teachback_count, ces_score computed correctly."""
+    """AC5: quiz_accuracy, teachback_score, ces_score, and totals computed correctly."""
     mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
 
-    from app.modules.assessment.service import get_learner_context
     import asyncio
+
+    from app.modules.assessment.service import get_learner_context
 
     result = asyncio.run(
         get_learner_context(
@@ -367,8 +372,9 @@ def test_current_session_none_when_no_attempts(mock_single_row, mock_to_thread):
 
     session_no_ces = {**_SESSION_ROW, "ces_final": None}
 
-    from app.modules.assessment.service import get_learner_context
     import asyncio
+
+    from app.modules.assessment.service import get_learner_context
 
     result = asyncio.run(
         get_learner_context(
@@ -402,8 +408,9 @@ def test_prompt_text_contains_no_raw_floats(mock_single_row, mock_to_thread):
     """AC6: prompt_text never contains bare float literals (e.g., '78.0', '62.5')."""
     mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
 
-    from app.modules.assessment.service import get_learner_context
     import asyncio
+
+    from app.modules.assessment.service import get_learner_context
 
     result = asyncio.run(
         get_learner_context(
@@ -415,7 +422,15 @@ def test_prompt_text_contains_no_raw_floats(mock_single_row, mock_to_thread):
 
     # Raw dimension values from _DNA_ROW (e.g. 78.0, 62.5) must not appear
     raw_dim_values = [
-        "78.0", "62.5", "55.0", "48.0", "80.0", "43.0", "70.0", "88.0", "66.0",
+        "78.0",
+        "62.5",
+        "55.0",
+        "48.0",
+        "80.0",
+        "43.0",
+        "70.0",
+        "88.0",
+        "66.0",
     ]
     for val in raw_dim_values:
         assert val not in result.prompt_text, (
@@ -431,8 +446,9 @@ def test_prompt_text_is_non_empty_when_context_exists(mock_single_row, mock_to_t
     """AC6: prompt_text is a non-empty string when dna or session data is present."""
     mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
 
-    from app.modules.assessment.service import get_learner_context
     import asyncio
+
+    from app.modules.assessment.service import get_learner_context
 
     result = asyncio.run(
         get_learner_context(
@@ -460,8 +476,9 @@ def test_prompt_text_empty_string_when_no_context(mock_single_row, mock_to_threa
 
     session_no_ces = {**_SESSION_ROW, "ces_final": None}
 
-    from app.modules.assessment.service import get_learner_context
     import asyncio
+
+    from app.modules.assessment.service import get_learner_context
 
     result = asyncio.run(
         get_learner_context(
@@ -508,19 +525,25 @@ def test_get_learner_context_makes_no_llm_calls():
 @pytest.mark.unit
 def test_learner_context_schema_has_no_banned_fields():
     """AC11: LearnerContext schema has no transcript, duration_seconds, or iq/eq/sq fields."""
-    from app.modules.assessment.schemas import LearnerContext, LearnerContextDNA, LearnerContextSession
+    from app.modules.assessment.schemas import (
+        LearnerContext,
+        LearnerContextDNA,
+        LearnerContextSession,
+    )
 
     for model in (LearnerContext, LearnerContextDNA, LearnerContextSession):
         fields = model.model_fields
         assert "transcript" not in fields, f"{model.__name__} must not have 'transcript'"
-        assert "duration_seconds" not in fields, f"{model.__name__} must not have 'duration_seconds'"
+        assert "duration_seconds" not in fields, (
+            f"{model.__name__} must not have 'duration_seconds'"
+        )
         for banned in ("iq_score", "eq_score", "sq_score"):
             assert banned not in fields, f"{model.__name__} must not have {banned!r}"
 
 
 @pytest.mark.unit
 def test_learner_context_dna_uses_no_raw_float_field():
-    """AC11: LearnerContextDNA exposes only descriptive bands (dimension_labels: dict[str, str]), not raw floats."""
+    """AC11: LearnerContextDNA exposes only descriptive bands (dimension_labels: dict[str, str])."""
     from app.modules.assessment.schemas import LearnerContextDNA
 
     fields = LearnerContextDNA.model_fields

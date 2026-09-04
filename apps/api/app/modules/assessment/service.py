@@ -32,6 +32,9 @@ from app.modules.assessment.prompts import (
     score_teachback,
 )
 from app.modules.assessment.schemas import (
+    LearnerContext,
+    LearnerContextDNA,
+    LearnerContextSession,
     OnboardingAnswer,
     OnboardingResult,
     QuizAnswer,
@@ -1880,8 +1883,8 @@ def _dim_band(value: float | None) -> str:
 
 
 def _build_learner_prompt_text(
-    dna: Any,  # LearnerContextDNA | None — avoid circular import at call site
-    session: Any,  # LearnerContextSession
+    dna: LearnerContextDNA | None,
+    session: LearnerContextSession,
 ) -> str:
     """Build a pre-formatted string ready to inject into an LLM system prompt.
 
@@ -1894,10 +1897,7 @@ def _build_learner_prompt_text(
         # Allowlist filter — only hardcoded badge strings from BADGE_THRESHOLDS reach the prompt
         safe_badges = [b for b in dna.badge_labels if b in _VALID_BADGE_LABELS]
         badge_str = ", ".join(safe_badges) if safe_badges else "none yet"
-        dim_lines = [
-            f"  - {_DIM_LABELS.get(k, k)}: {v}"
-            for k, v in dna.dimension_labels.items()
-        ]
+        dim_lines = [f"  - {_DIM_LABELS.get(k, k)}: {v}" for k, v in dna.dimension_labels.items()]
         dims_str = "\n".join(dim_lines)
         parts.append(
             f"**Student Learning Profile:**\n"
@@ -1931,8 +1931,8 @@ async def get_learner_context(
     *,
     session_id: str,
     user_id: str,
-    supabase: "Client",
-) -> "LearnerContext":
+    supabase: Client,
+) -> LearnerContext:
     """Return historical Learner DNA + current session signals for tutor prompt injection.
 
     Story F2-1. Called by Dev 4's tutor state machine with the student's own JWT.
@@ -1942,13 +1942,7 @@ async def get_learner_context(
         HTTPException 404: session_id not found OR belongs to a different user.
             Unified message prevents session-id enumeration (same as grade_quiz pattern).
     """
-    from app.modules.assessment.schemas import (
-        LearnerContext,
-        LearnerContextDNA,
-        LearnerContextSession,
-    )
-
-    _NOT_FOUND = "Session not found or access denied."
+    _not_found = "Session not found or access denied."
 
     # Step 1 — session ownership check (bounded: .maybe_single())
     sess_resp = await asyncio.to_thread(
@@ -1962,7 +1956,7 @@ async def get_learner_context(
     )
     sess_row = single_row(sess_resp)
     if sess_row is None or str(sess_row["user_id"]) != str(user_id):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_NOT_FOUND)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_not_found)
 
     ces_final = sess_row.get("ces_final")
 
@@ -1985,10 +1979,7 @@ async def get_learner_context(
 
     learner_dna: LearnerContextDNA | None = None
     if dna_row is not None:
-        dim_labels = {
-            dim: _dim_band(dna_row.get(dim))
-            for dim in ALL_NINE_DIMENSIONS
-        }
+        dim_labels = {dim: _dim_band(dna_row.get(dim)) for dim in ALL_NINE_DIMENSIONS}
         learner_dna = LearnerContextDNA(
             badge_labels=dna_row.get("badge_labels") or [],
             profile_text=dna_row.get("profile_text"),
@@ -2008,7 +1999,7 @@ async def get_learner_context(
             .execute()
         )
     )
-    quiz_rows: list[dict[str, Any]] = quiz_resp.data or []
+    quiz_rows = rows(quiz_resp)
     quiz_total = len(quiz_rows)
     quiz_accuracy: float | None = None
     if quiz_total > 0:
@@ -2027,7 +2018,7 @@ async def get_learner_context(
             .execute()
         )
     )
-    tb_rows: list[dict[str, Any]] = tb_resp.data or []
+    tb_rows = rows(tb_resp)
     tb_count = len(tb_rows)
     tb_score: float | None = None
     if tb_count > 0:

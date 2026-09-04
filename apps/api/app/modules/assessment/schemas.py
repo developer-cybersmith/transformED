@@ -221,13 +221,16 @@ class LearnerContextDNA(BaseModel):
 
 
 class LearnerContextSession(BaseModel):
-    """Current session engagement signals — derived from quiz_attempts, teachback_attempts, ces_final."""
+    """Current session engagement signals.
 
-    quiz_accuracy: float | None = None   # correct / total; None when no attempts
+    Derived from quiz_attempts, teachback_attempts, and ces_final.
+    """
+
+    quiz_accuracy: float | None = None  # correct / total; None when no attempts
     quiz_total: int = 0
     teachback_score: float | None = None  # avg score 0-100; None when no attempts
     teachback_count: int = 0
-    ces_score: float | None = None        # from sessions.ces_final; None if session still in progress
+    ces_score: float | None = None  # from sessions.ces_final; None when still in progress
 
 
 class LearnerContext(BaseModel):
