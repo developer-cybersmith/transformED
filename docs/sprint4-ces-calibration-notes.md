@@ -189,3 +189,33 @@ These numbers are from 2 users running internal tests. Treat as directional only
 | ces_final | NULL on all sessions — formula output unobservable (D116 FIXED, run again) |
 
 **Recommended CES threshold for initial real-student calibration:** Keep at 50 but do not trigger interventions if `behavioral` score has not been received (is NULL/unknown). A "partial signal" mode prevents intervention spam when 2 of 5 signals are absent.
+
+
+---
+
+## 9. Calibration Baseline — Updated (Story 4-30, 2026-09-05)
+
+**Status:** 25 synthetic sessions generated via `scripts/generate_synthetic_sessions.py`.
+Combined with existing 117 test sessions for correlation analysis.
+
+### Synthetic Session Distribution
+| Tier | Sessions | Quiz acc range | Teachback | Interventions | CES range (est.) |
+|------|----------|---------------|-----------|---------------|-----------------|
+| Low  | 5        | 30–50%        | None      | 2–3           | 15–35           |
+| Mid  | 10       | 55–75%        | 55–75     | 0–2           | 40–65           |
+| High | 10       | 80–95%        | 75–95     | 0–1           | 65–90           |
+
+### CES Correlation Analysis
+Run `scripts/ces_correlation_analysis.py` against the populated DB to get Pearson r values.
+Recommended interpretation thresholds:
+- r > 0.70 — strong signal, weight well-calibrated or can be increased
+- 0.40–0.70 — moderate, keep weight
+- r < 0.40 — weak correlation, reduce weight
+
+**Next step:** Story 4-31 (CES weight tuning) implements the recommended weight changes
+after running the analysis script against the combined 142-session dataset.
+
+### k6 Load Test
+`scripts/k6_assessment_load_test.js` — 20–50 concurrent virtual users, 2-minute run.
+Success thresholds: p95 quiz < 2s, p95 teachback < 5s, error rate < 1%.
+Run: `k6 run --env BASE_URL=<api_url> --env AUTH_TOKEN=<jwt> scripts/k6_assessment_load_test.js`
