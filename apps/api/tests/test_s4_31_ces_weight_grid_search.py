@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import csv
 import importlib.util
-import io
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -109,12 +108,14 @@ class TestComputeCesRow:
         assert ces_with != ces_without
 
     def test_zero_quiz_gives_low_ces(self, gs_mod: ModuleType) -> None:
-        result = gs_mod.compute_ces_row(self._row(0.0, teachback_avg=0.0, interventions=3), self._weights)
+        row = self._row(0.0, teachback_avg=0.0, interventions=3)
+        result = gs_mod.compute_ces_row(row, self._weights)
         assert result is not None
         assert result < 50.0
 
     def test_perfect_quiz_gives_high_ces(self, gs_mod: ModuleType) -> None:
-        result = gs_mod.compute_ces_row(self._row(100.0, teachback_avg=100.0, interventions=0), self._weights)
+        row = self._row(100.0, teachback_avg=100.0, interventions=0)
+        result = gs_mod.compute_ces_row(row, self._weights)
         assert result is not None
         assert result > 60.0
 

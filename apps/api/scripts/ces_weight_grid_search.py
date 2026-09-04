@@ -205,7 +205,7 @@ def run_grid_search(rows: list[dict[str, Any]]) -> tuple[tuple[float, float, flo
     q, t, b, hp, bl = best_combo
     print(f"\nBEST: quiz={q} teachback={t} behavioral={b} head_pose={hp} blink={bl}")
     print(f"Pearson r = {best_r:.4f}  {'(meets > 0.6 target)' if best_r > 0.6 else '(below 0.6 target -- more data needed)'}")
-    print(f"\nApply to apps/api/app/config.py:")
+    print("\nApply to apps/api/app/config.py:")
     print(f"  ces_weight_quiz:       Field(default={q})")
     print(f"  ces_weight_teachback:  Field(default={t})")
     print(f"  ces_weight_behavioral: Field(default={b})")
