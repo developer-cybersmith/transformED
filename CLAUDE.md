@@ -20,7 +20,7 @@
 | LangGraph checkpointing | **Custom lesson_jobs table + MemorySaver** | PostgresSaver BANNED |
 | Primary LLM | **OpenAI GPT-4o + GPT-4o-mini** (defaults — see model table) | Per-task allocation below |
 | Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A, evaluation candidate) | |
-| TTS | **Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. |
+| TTS | **Sarvam AI Bulbul v3 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. Was v2 until D148 (2026-09-04) — Sarvam deprecated v2 server-side. |
 | Avatar | **No active vendor (D144, 2026-09-02)** | HeyGen was never wired into the pipeline (no node ever called it) — removed as dead code, not replaced. `LessonPackage.avatar_intro_url/avatar_static_url/avatar_outro_url` remain (nullable, vendor-agnostic) for a future implementation. |
 | Image | **Gemini "Nano Banana" → GPT Image 2 → text-only** | DALL-E 3 DEAD (shut down May 2026). GPT Image 1 Mini migrated to GPT Image 2 2026-08-18 (D122) — 1 Mini itself retires 2026-12-01. **Imagen 4 Fast was DEAD as of 2026-08-17 (D121, FIXED-GUARDED) — replaced, not patched: Gemini 2.5/3.1 Flash Image ("Nano Banana") is now PRIMARY (Story 5-8b), GPT Image 2 is FALLBACK, `ImagenProvider` deleted.** Nano Banana costs more per image (~$0.067 vs GPT Image 2's ~$0.05) — a deliberate quality-over-cost choice, not an oversight. |
 | Embeddings | **text-embedding-3-small** | Chunk content: embed at ingestion only, never regenerate. Phase 2 RAG tutor embeds student questions at query time — this is permitted. |
@@ -177,7 +177,7 @@ CES = quiz_accuracy×0.467 + behavioral×0.267 + head_pose×0.160 + blink×0.107
 - Retry on: 429, 500, 502, 503, 504. Never retry: 400, 401
 - Circuit breaker: 5 failures/2min → open; 10min → half-open probe (state in Redis)
 - Cost ceiling: $3.00/lesson — downshift to cheapest providers on breach, complete lesson, flag in admin
-- TTS fallback chain: Sarvam Bulbul v2 → Azure TTS → Browser Speech — NEVER hard-fails
+- TTS fallback chain: Sarvam Bulbul v3 → Azure TTS → Browser Speech — NEVER hard-fails
 
 ## Interface Contracts (frozen Week 1, §16)
 
