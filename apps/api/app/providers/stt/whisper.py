@@ -33,7 +33,7 @@ class WhisperProvider:
         self._client = AsyncOpenAI(
             api_key=settings.openai_api_key,
             max_retries=0,
-            timeout=httpx.Timeout(120.0, connect=5.0),
+            timeout=httpx.Timeout(120.0, connect=5.0),  # type: ignore[arg-type]
         )
 
     async def transcribe(self, audio_bytes: bytes, filename: str) -> tuple[str, float]:
@@ -49,6 +49,8 @@ class WhisperProvider:
         Raises:
             Exception: Any OpenAI API error, timeout, or circuit-breaker open.
         """
+
+        @with_retry(max_attempts=3)
         async def _call() -> tuple[str, float]:
             if await is_circuit_open(_PROVIDER_KEY):
                 raise CircuitOpenError(f"Circuit breaker open for {_PROVIDER_KEY!r}")
@@ -65,8 +67,4 @@ class WhisperProvider:
             duration: float = float(getattr(response, "duration", 0.0) or 0.0)
             return text, duration
 
-        return await guard_breaker(_PROVIDER_KEY, lambda: with_retry(
-            _call,
-            max_attempts=3,
-            provider_key=_PROVIDER_KEY,
-        ))
+        return await guard_breaker(_PROVIDER_KEY, _call)

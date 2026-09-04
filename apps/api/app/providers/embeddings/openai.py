@@ -58,7 +58,7 @@ class OpenAIEmbeddingsProvider(EmbeddingsProvider):
         self._client = AsyncOpenAI(
             api_key=settings.openai_api_key,
             max_retries=0,
-            timeout=httpx.Timeout(settings.openai_request_timeout_s, connect=5.0),
+            timeout=httpx.Timeout(settings.openai_request_timeout_s, connect=5.0),  # type: ignore[arg-type]
         )
         self._model = settings.embedding_model
         # AC-3 never-fail clause: a bad LANGFUSE_* env must degrade to

@@ -131,7 +131,7 @@ class OpenAIImageProvider(ImageProvider):
         self._client = AsyncOpenAI(
             api_key=settings.openai_api_key,
             max_retries=0,
-            timeout=httpx.Timeout(settings.openai_image_request_timeout_s, connect=5.0),
+            timeout=httpx.Timeout(settings.openai_image_request_timeout_s, connect=5.0),  # type: ignore[arg-type]
         )
         self._lesson_id = lesson_id
         self._langfuse: Langfuse | None

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -216,16 +216,12 @@ def test_accumulate_cost_called_with_lesson_id() -> None:
     for the $3.00/lesson ceiling. This scan guards against the session_id/lesson_id swap.
     """
     service_path = (
-        Path(__file__).parent.parent.parent
-        / "app"
-        / "modules"
-        / "assessment"
-        / "service.py"
+        Path(__file__).parent.parent.parent / "app" / "modules" / "assessment" / "service.py"
     )
     source = service_path.read_text(encoding="utf-8")
     fn_start = source.index("async def transcribe_and_score_audio(")
     next_fn_idx = source.find("\nasync def ", fn_start + 1)
-    fn_body = source[fn_start : next_fn_idx] if next_fn_idx != -1 else source[fn_start:]
+    fn_body = source[fn_start:next_fn_idx] if next_fn_idx != -1 else source[fn_start:]
     assert "accumulate_cost(lesson_id" in fn_body, (
         "transcribe_and_score_audio must call accumulate_cost(lesson_id, ...) not session_id. "
         "Cost tracker keys by lesson_id to enforce the $3.00/lesson ceiling."
@@ -248,17 +244,13 @@ def test_raw_audio_not_stored() -> None:
     via a runtime spy.
     """
     service_path = (
-        Path(__file__).parent.parent.parent
-        / "app"
-        / "modules"
-        / "assessment"
-        / "service.py"
+        Path(__file__).parent.parent.parent / "app" / "modules" / "assessment" / "service.py"
     )
     source = service_path.read_text(encoding="utf-8")
     fn_start = source.index("async def transcribe_and_score_audio(")
     # Find the next top-level async def after transcribe_and_score_audio
     next_fn_idx = source.find("\nasync def ", fn_start + 1)
-    fn_body = source[fn_start : next_fn_idx] if next_fn_idx != -1 else source[fn_start:]
+    fn_body = source[fn_start:next_fn_idx] if next_fn_idx != -1 else source[fn_start:]
     assert ".storage" not in fn_body, (
         "transcribe_and_score_audio references '.storage' — raw audio must never be "
         "uploaded to Supabase Storage. Audio bytes must be discarded after transcription."
@@ -302,5 +294,5 @@ def test_whisper_provider_no_hardcoded_model() -> None:
             f"Hardcoded model 'whisper-1' found in {path.name} — use settings.stt_model instead"
         )
         assert "'whisper-1'" not in source, (
-            f"Hardcoded model 'whisper-1' (single-quoted) found in {path.name} — use settings.stt_model"
+            f"Hardcoded 'whisper-1' in {path.name} — use settings.stt_model"
         )

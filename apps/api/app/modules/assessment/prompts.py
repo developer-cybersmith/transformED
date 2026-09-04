@@ -306,7 +306,8 @@ async def score_teachback(
     ----------
     topic:         Segment topic the student was taught.
     key_concepts:  Key concepts from the lesson plan for this segment.
-    response_text: Student's explanation (typed directly, or Whisper transcript from audio endpoint).
+    response_text: Student's explanation (typed directly, or Whisper transcript from
+        audio endpoint).
     provider:      OpenAILLMProvider instance already constructed with lesson_id.
                    Cost tracking is handled by the provider via its lesson_id
                    constructor argument — pass it there, not here.

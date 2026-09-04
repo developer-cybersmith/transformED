@@ -618,7 +618,8 @@ async def grade_teachback(
         session_id: UUID of the live session.
         lesson_id: UUID of the lesson whose JSONB content contains the segment.
         segment_id: ID of the segment the student just completed.
-        response_text: Student's teach-back text (typed, or Whisper transcript from F2-4 audio path).
+        response_text: Student's teach-back text (typed, or Whisper transcript from
+            F2-4 audio path).
         user_id: User UUID from the decoded JWT (for ownership check).
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
 
@@ -882,7 +883,7 @@ async def transcribe_and_score_audio(
             await accumulate_cost(lesson_id, cost)
         elif duration_seconds == 0.0:
             logger.warning(
-                "Voice teach-back: Whisper returned duration=0 for session=%s — STT cost not tracked",
+                "Voice teach-back: Whisper returned duration=0 for session=%s — cost not tracked",
                 session_id,
             )
 
