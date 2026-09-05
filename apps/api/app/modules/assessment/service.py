@@ -106,6 +106,10 @@ _TIER_LABELS: dict[str, str] = {
     "T3": "Refresher",
 }
 
+# Story F2-3 — explicit minute mapping so the 15/30/45 values are machine-checkable,
+# not just implied by the English label names.
+_TIER_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}
+
 
 def _quiz_accuracy_label(accuracy: float, total: int) -> str | None:
     """Map quiz accuracy to a descriptive label (no raw floats to students).
