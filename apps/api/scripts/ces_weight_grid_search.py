@@ -44,9 +44,9 @@ WEIGHT_COMBINATIONS: list[tuple[float, float, float, float, float]] = [
     (0.40, 0.25, 0.18, 0.10, 0.07),  # balanced adjustment
 ]
 
-assert all(
-    abs(sum(c) - 1.0) < 1e-9 for c in WEIGHT_COMBINATIONS
-), "All weight combinations must sum to 1.0"
+assert all(abs(sum(c) - 1.0) < 1e-9 for c in WEIGHT_COMBINATIONS), (
+    "All weight combinations must sum to 1.0"
+)
 
 _MIN_USABLE = 5  # minimum sessions needed for a meaningful Pearson r
 
@@ -119,13 +119,7 @@ def compute_ces_row(
             + blink * wbl * scale
         )
     else:
-        ces = (
-            quiz_norm * wq
-            + tb_norm * wt
-            + behavioral * wb
-            + head_pose * whp
-            + blink * wbl
-        )
+        ces = quiz_norm * wq + tb_norm * wt + behavioral * wb + head_pose * whp + blink * wbl
 
     return _clamp(ces * 100.0, 0.0, 100.0)
 
@@ -142,14 +136,24 @@ def load_csv(path: str) -> list[dict[str, Any]]:
 
 def write_results_csv(results: list[dict[str, Any]], path: str) -> None:
     """Write grid search results to a CSV file."""
-    fieldnames = ["quiz", "teachback", "behavioral", "head_pose", "blink", "pearson_r", "n_sessions"]
+    fieldnames = [
+        "quiz",
+        "teachback",
+        "behavioral",
+        "head_pose",
+        "blink",
+        "pearson_r",
+        "n_sessions",
+    ]
     with open(path, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(results)
 
 
-def run_grid_search(rows: list[dict[str, Any]]) -> tuple[tuple[float, float, float, float, float], float, list[dict[str, Any]]]:
+def run_grid_search(
+    rows: list[dict[str, Any]],
+) -> tuple[tuple[float, float, float, float, float], float, list[dict[str, Any]]]:
     """Run the grid search. Returns (best_combo, best_r, all_results)."""
     # Use quiz_accuracy_pct as ground truth (proxy for learning outcome)
     ground_truth: list[float] = []
@@ -195,16 +199,24 @@ def run_grid_search(rows: list[dict[str, Any]]) -> tuple[tuple[float, float, flo
 
         q, t, b, hp, bl = combo
         print(f"{q:>6.2f} {t:>6.2f} {b:>6.2f} {hp:>6.2f} {bl:>6.2f} | {r:>10.4f} | {verdict}")
-        all_results.append({
-            "quiz": q, "teachback": t, "behavioral": b,
-            "head_pose": hp, "blink": bl,
-            "pearson_r": round(r, 6), "n_sessions": n_usable,
-        })
+        all_results.append(
+            {
+                "quiz": q,
+                "teachback": t,
+                "behavioral": b,
+                "head_pose": hp,
+                "blink": bl,
+                "pearson_r": round(r, 6),
+                "n_sessions": n_usable,
+            }
+        )
 
     print("-" * 60)
     q, t, b, hp, bl = best_combo
     print(f"\nBEST: quiz={q} teachback={t} behavioral={b} head_pose={hp} blink={bl}")
-    print(f"Pearson r = {best_r:.4f}  {'(meets > 0.6 target)' if best_r > 0.6 else '(below 0.6 target -- more data needed)'}")
+    print(
+        f"Pearson r = {best_r:.4f}  {'(meets > 0.6 target)' if best_r > 0.6 else '(below 0.6 target -- more data needed)'}"
+    )
     print("\nApply to apps/api/app/config.py:")
     print(f"  ces_weight_quiz:       Field(default={q})")
     print(f"  ces_weight_teachback:  Field(default={t})")

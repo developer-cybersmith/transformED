@@ -35,6 +35,7 @@ def gs_mod() -> ModuleType:
 # Weight combination invariants
 # ---------------------------------------------------------------------------
 
+
 class TestWeightCombinations:
     def test_all_combinations_sum_to_1(self, gs_mod: ModuleType) -> None:
         for combo in gs_mod.WEIGHT_COMBINATIONS:
@@ -51,6 +52,7 @@ class TestWeightCombinations:
 # ---------------------------------------------------------------------------
 # pearson_r
 # ---------------------------------------------------------------------------
+
 
 class TestPearsonR:
     def test_perfect_positive_correlation(self, gs_mod: ModuleType) -> None:
@@ -77,6 +79,7 @@ class TestPearsonR:
 # ---------------------------------------------------------------------------
 # compute_ces_row
 # ---------------------------------------------------------------------------
+
 
 class TestComputeCesRow:
     _weights = (0.35, 0.25, 0.20, 0.12, 0.08)  # baseline
@@ -124,17 +127,20 @@ class TestComputeCesRow:
 # run_grid_search — smoke test with synthetic data
 # ---------------------------------------------------------------------------
 
+
 class TestRunGridSearch:
     def _make_rows(self, n: int = 10) -> list[dict]:
         """Generate n sessions with varying quiz accuracy."""
         rows = []
         for i in range(n):
-            rows.append({
-                "quiz_accuracy_pct": 50.0 + i * 4.0,
-                "teachback_avg": None,
-                "interventions": i % 3,
-                "ces_final": 40.0 + i * 3.0,
-            })
+            rows.append(
+                {
+                    "quiz_accuracy_pct": 50.0 + i * 4.0,
+                    "teachback_avg": None,
+                    "interventions": i % 3,
+                    "ces_final": 40.0 + i * 3.0,
+                }
+            )
         return rows
 
     def test_returns_best_combo_and_r(self, gs_mod: ModuleType) -> None:
@@ -164,11 +170,19 @@ class TestRunGridSearch:
 # write_results_csv
 # ---------------------------------------------------------------------------
 
+
 class TestWriteResultsCsv:
     def test_csv_has_correct_columns(self, gs_mod: ModuleType, tmp_path) -> None:
         results = [
-            {"quiz": 0.35, "teachback": 0.25, "behavioral": 0.20,
-             "head_pose": 0.12, "blink": 0.08, "pearson_r": 0.72, "n_sessions": 20},
+            {
+                "quiz": 0.35,
+                "teachback": 0.25,
+                "behavioral": 0.20,
+                "head_pose": 0.12,
+                "blink": 0.08,
+                "pearson_r": 0.72,
+                "n_sessions": 20,
+            },
         ]
         out = str(tmp_path / "results.csv")
         gs_mod.write_results_csv(results, out)
