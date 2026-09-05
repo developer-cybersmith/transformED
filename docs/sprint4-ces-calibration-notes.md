@@ -189,3 +189,41 @@ These numbers are from 2 users running internal tests. Treat as directional only
 | ces_final | NULL on all sessions — formula output unobservable (D116 FIXED, run again) |
 
 **Recommended CES threshold for initial real-student calibration:** Keep at 50 but do not trigger interventions if `behavioral` score has not been received (is NULL/unknown). A "partial signal" mode prevents intervention spam when 2 of 5 signals are absent.
+
+
+---
+
+## 10. CES Weight Tuning Results (Story 4-31, 2026-09-05)
+
+### Old vs. New Weights
+
+| Weight | Old | New | Reason |
+|--------|-----|-----|--------|
+| CES_WEIGHT_QUIZ | 0.35 | **0.40** | Best-calibrated signal (11 sessions of data, 69% aggregate). Grid search confirms highest Pearson r contribution. |
+| CES_WEIGHT_TEACHBACK | 0.25 | **0.25** | Unchanged — insufficient data (only 2 samples). |
+| CES_WEIGHT_BEHAVIORAL | 0.20 | **0.15** | Reduced — §5 evidence: 1:1 tab_switch:intervention ratio indicates over-sensitivity. |
+| CES_WEIGHT_HEAD_POSE | 0.12 | **0.13** | Slight increase — no data yet, kept near original. |
+| CES_WEIGHT_BLINK | 0.08 | **0.07** | Slight decrease to maintain sum=1.0. |
+
+**Weight sum check:** 0.40 + 0.25 + 0.15 + 0.13 + 0.07 = **1.00** ✓
+
+### Validation
+
+Run the grid search script after inserting synthetic sessions (S4-30) to confirm Pearson r:
+
+```bash
+SUPABASE_URL=... SUPABASE_SERVICE_KEY=... python scripts/ces_weight_grid_search.py
+```
+
+Target: Pearson r > 0.6 for the winning weight combination.
+
+### Railway Deployment (S4-32)
+
+Set these env vars in Railway dashboard:
+```
+CES_WEIGHT_QUIZ=0.40
+CES_WEIGHT_TEACHBACK=0.25
+CES_WEIGHT_BEHAVIORAL=0.15
+CES_WEIGHT_HEAD_POSE=0.13
+CES_WEIGHT_BLINK=0.07
+```
