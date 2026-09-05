@@ -105,3 +105,8 @@ Plain English only: "Pattern Thinker", "Deep Diver", "Connector", "Builder", "Ex
 
 ## Change Log
 - 2026-09-05: Story created (story-first gate)
+- 2026-09-05: Pre-merge review found `scripts/dna_profile_quality_check.py` hardcoded
+  its own `DPDP_DISCLAIMER` string, which did not match the real disclaimer text in
+  `app.modules.assessment.prompts.DPDP_DISCLAIMER` — every real, compliant profile
+  would have FAILed Criterion 1 (the substring check would never match). Fixed by
+  importing the real constant instead of duplicating it.
