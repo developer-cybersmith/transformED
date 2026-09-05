@@ -521,15 +521,15 @@ class Settings(BaseSettings):
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
     learner_tier_t1_qa_seconds: int = Field(
         default=600,
-        description="Q&A phase duration in seconds for T1 (beginner) tier",
+        description="Q&A phase duration in seconds for T1 (Full-Depth, 45-min) tier",
     )
     learner_tier_t2_qa_seconds: int = Field(
         default=300,
-        description="Q&A phase duration in seconds for T2 (intermediate) tier",
+        description="Q&A phase duration in seconds for T2 (Standard, 30-min) tier",
     )
     learner_tier_t3_qa_seconds: int = Field(
         default=150,
-        description="Q&A phase duration in seconds for T3 (advanced) tier",
+        description="Q&A phase duration in seconds for T3 (Refresher, 15-min) tier",
     )
     learner_tier_default_qa_seconds: int = Field(
         default=300,

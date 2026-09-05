@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-05 (Story 4-31 done — CES weight grid search script + provisional weights applied; Sprint 4 now 9/11)
+**Last updated:** 2026-09-05 (S4-31 CES weight tuning done; F2-1 Learner Context API + F2-2 Teachback score_source + F2-3 tier label verify done — Sprint 4 now 10/13)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,9 +20,10 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 11 | 9 | 1 | 1 |
+| Sprint 4 | Weeks 8–9 | 13 | 10 | 1 | 2 |
+| Bug Resolution Sprint | Sep 2026 | 1 | 1 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **67** | **62** | **1** | **4** |
+| **Total** | | **70** | **64** | **1** | **5** |
 
 Update this table each time a task is checked off below.
 
@@ -1004,6 +1005,53 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `tutor/service.py:process_attention_signal` reads `session:{sid}:ces_threshold` from Redis (O(1) hot path)
   - 14 unit tests, all GREEN; zero regressions (978 passing vs 965 before)
   - Branch: `sprint4/s4-13-dna-ces-threshold` | Story: `docs/stories/4-13-dna-personalized-ces-threshold.md`
+
+- [x] **Learner Mode tier label verify (Story F2-3)** — ✓ 2026-09-04
+  - Verified T1="Full-Depth" (45 min), T2="Standard" (30 min), T3="Refresher" (15 min) — labels were correct
+  - Added `_TIER_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}` in `service.py` — makes mapping machine-checkable
+  - Fixed inverted descriptions in `config.py`: "beginner/intermediate/advanced" → "Full-Depth 45-min / Standard 30-min / Refresher 15-min"
+  - No API surface change (SessionReport unchanged — confirmed internal-only per user decision)
+  - 9/9 unit tests GREEN; 6-layer BMAD review passed (2 patches: unused import + AC8 int-type test)
+  - Branch: `feature2/f2-3-tier-label-verify` | Story: `docs/stories/f2-3-tier-label-verify.md`
+- [x] **Teachback score source flag (Story F2-2)** — ✓ 2026-09-03
+  - DB migration `20260903000000_teachback_score_source.sql`: `score_source TEXT NOT NULL DEFAULT 'llm' CHECK IN ('llm','fallback','skipped')` added to `teachback_attempts`
+  - `TeachbackSubmission.is_skip: bool = Field(default=False)` — backward-compatible; `@model_validator` enforces non-blank only when `is_skip=False`
+  - `grade_teachback()` restructured: count query now first (before lesson load); skip path exits before Steps 3–7 (no lesson JSONB read, no LLM call); fallback path traps all non-HTTPException LLM failures → HTTP 200 not 502
+  - All 3 paths write `score_source` to DB; skip/fallback write `score=None`; insert errors are checked and raise HTTP 500 (not silently discarded)
+  - `get_session_report`: avg excludes `score=None` rows; `.limit(200)` (was 50, F2-2 breaks 1-row-per-segment assumption); `avg_teachback` UnboundLocalError fixed (was critical bug on all-skip sessions)
+  - `TeachbackDetail.score_source` + `TeachbackResult.score_source` added to frozen schema
+  - D152 (ces_contribution=0.0 on skip vs CES redistribution) and D153 (HTTPException bypasses fallback) registered in defect register (renumbered from D150/D151 — Dev 4's BR-5 merged and claimed those IDs)
+  - 25/25 unit tests GREEN; all 7 BMAD review patches applied; story: `docs/stories/f2-2-teachback-source-flag.md`
+  - Branch: `feature2/f2-2-teachback-source-flag` — pushed; ready for PR
+
+- [x] **Learner DNA + behaviour-signal prompt context helper (Story F2-1)** — ✓ 2026-09-03
+  - Pure service-layer addition: `get_dna_prompt_context()` + `format_dna_for_prompt()` in `service.py`
+  - No new HTTP route; no frozen contract change
+  - **Two-path Supabase query:** on Redis cache hit → SELECT only `badge_labels, profile_text, session_count` (`_METADATA_SELECT`); on miss → SELECT all 9 dims + metadata (`_DNA_SELECT`). Fixes silent empty badge_labels for all returning students with a warm Redis cache (SCALE-CONTRACT §2 silent-wrong-result, caught by 6-layer BMAD review)
+  - **`signals_capped: bool`** added to session_signals return dict — `True` when any session query hit its `.limit()` boundary; explicit surfaced degradation per SCALE-CONTRACT §2 (not silent truncation)
+  - D149 registered: session_id-only filter is intentional (matches `get_session_report` pattern, relies on RLS)
+  - 25 unit tests GREEN in `tests/unit/test_f2_1_dna_prompt_context.py`; guard tests 47/48 (pre-existing tinytag absence on this machine — not a code regression); ruff clean
+  - Branch: `feature2/f2-1-dna-api-prompt-injection` | Story: `docs/stories/f2-1-dna-api-prompt-injection.md`
+
+---
+
+## Bug Resolution Sprint — Feature 2 (Sep 2026)
+
+> **Goal:** Resolve remaining bugs + deliver learner context API for tutor personalisation.
+
+- [x] **F2-1 — Learner Context API for tutor prompt injection** — ✓ 2026-09-05
+  - Story: `docs/stories/f2-1-dna-prompt-context-api.md` — 11 ACs, Scale & Load section ✓
+  - Branch: `feature2/f2-1-dna-prompt-context-api` — story-first commit (3d5ad00) before implementation (778888f) ✓
+  - New endpoint: `GET /api/assessment/session/{session_id}/learner-context` returns `LearnerContext` ✓
+  - IDOR-protected: 404 unified message for wrong-user or missing session (AC2) ✓
+  - `LearnerContextDNA`, `LearnerContextSession`, `LearnerContext` added to `schemas.py` + `__all__` (AC10) ✓
+  - `get_learner_context()` + `_build_learner_prompt_text()` in `service.py` — pure data aggregation, zero LLM calls (AC9) ✓
+  - `dimension_labels` uses descriptive bands (strong/developing/building/emerging) — no raw floats to callers (AC3/AC11) ✓
+  - `prompt_text` allowlist-filtered via `BADGE_THRESHOLDS.values()` — prompt injection defence ✓
+  - All DB reads bounded: `.maybe_single()` for sessions/dna; `.eq().limit(500)` for quiz_attempts; `.eq().limit(50)` for teachback_attempts (AC8) ✓
+  - 6-layer adversarial BMAD review run + R1–R3 patches applied (import dedup, asyncio.run(), .limit() mocks, DPDP endswith) ✓
+  - 14/14 unit tests GREEN; guard tests `test_unbounded_queries.py` + `test_node_return_shape.py` pass (21/22 — 1 pre-existing tinytag failure unrelated to F2-1) ✓
+  - Commits: story-first (3d5ad00), impl (778888f), R1 import (prev session), R1-R3 patches (4ae32b7) ✓
 
 ---
 
