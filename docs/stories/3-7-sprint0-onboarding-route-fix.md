@@ -82,6 +82,26 @@ can merge cleanly and Sprint 0 is fully closed.
   resolved by taking the concrete boolean values from main (`sharp: false`, `unrs-resolver: false`)
 - Do NOT manually edit `pnpm-lock.yaml` — always regenerate via `pnpm install`
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One-time build operation: move a Next.js route directory and regenerate the pnpm lockfile. No runtime endpoint is added. Post-deployment, every page load of `/onboarding` is a standard Next.js SSR request with no DB queries.
+
+**Q2 — Fixed budgets vs variable input**
+No variable budgets. `pnpm install` fetches from the registry once and locks versions. The page itself has no variable input that affects render cost.
+
+**Q3 — Scope of limits**
+N/A — build-time change. No per-user or per-deployment runtime limits.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries in the route file itself. Onboarding submission goes to `POST /api/assessment/onboarding/submit` (story 3-18), bounded there.
+
+**Q5 — Inherited caps**
+N/A — this story only moves an existing file and fixes package lock state.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — no state mutations in the route handler itself. No shared mutable state.
+
 ## Dev Agent Record
 
 ### Agent Model
@@ -132,3 +152,5 @@ All 10 ACs verified in filesystem and git log. Route move confirmed — `apps/we
 **Critical catch:** Story draft Dev Notes incorrectly said "default export" — implementation correctly used named export. This correction is documented above and must not be reverted. The `dev2-assessment-api-handoff.md` doc also shows the wrong default import syntax in one code example; flag for Sprint 2 cleanup.
 
 **No action items.** Story 3.7 is complete.
+
+**Scale & Load Hunter (added 2026-09-05):** PASS — Frontend route fix (file move + import update). No backend changes, no DB reads/writes, no LLM calls, no Redis. All 6 SCALE-CONTRACT.md questions N/A (frontend-only routing change).

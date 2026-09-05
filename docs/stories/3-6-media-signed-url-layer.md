@@ -60,6 +60,28 @@ so that the bare storage paths `package_builder_node` stores in `audio_url`/`ima
 | 2026-07-23 | Implemented (RED→GREEN): ownership check + real signing call, replacing the 501 stub. 8 new tests, 553/553+1 skipped full suite green, ruff+mypy clean, zero `apps/web` touches. | Dev 1 |
 | 2026-07-23 | Addressed 5-agent code review (Blind Hunter, Edge Case Hunter, Acceptance Auditor): fixed signed-URL key extraction to match the codebase's established single-key pattern (`heygen.py`'s `result["signedURL"]`) instead of guessing 3 key spellings, and closed the uncaught-`AttributeError`/`KeyError` gap on a malformed storage response. 1 new regression test (9 total). Path-traversal and non-lesson-bucket concerns investigated and either refuted (traversal — object-key store, not filesystem) or disclosed as a pre-existing, non-regressing gap (bucket/path-convention mismatch) in Dev Notes. | Dev 1 |
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One signed URL request per asset per player load. A lesson with 15 segments × ~2 assets each = ~30 requests per session. Range: 1 request (minimum, skipping audio or image) to ~60 (maximum, large lesson, both audio and image per segment).
+
+**Q2 — Fixed budgets vs variable input**
+`expires_in` bounded at API level: `ge=60, le=86400` (60s min, 24h max). Supabase Storage `create_signed_url` is a single remote call with no retry here — failure returns 404 immediately (explicit error, not silent). Signed URL TTL is fixed at `expires_in` seconds (Supabase platform constraint, not re-derivable without API docs).
+
+**Q3 — Scope of limits**
+Ownership check is per-user (scoped by `lessons.user_id = auth.uid()`). Supabase connection pool is per-deployment. No per-user rate limit on this endpoint — a malicious authenticated user can enumerate signed URLs at will within their own lesson set.
+
+**Q4 — Unbounded reads/writes**
+`supabase.table("lessons").select("user_id").eq("lesson_id", ...).maybe_single().execute()` — BOUNDED by `.maybe_single()` (returns 0 or 1 row). Single `create_signed_url` call — bounded by definition.
+
+**Q5 — Inherited caps**
+Supabase Storage signed URL max TTL (86400s) is a platform constraint. Explicitly bounded via `le=86400` at the API level — re-derived from the platform docs, not silently assumed.
+
+**Q6 — Concurrent TOCTOU safety**
+Read-only check then sign — no write. The ownership check and signing are separate calls but neither modifies state, so concurrent requests cannot race to a wrong outcome. The lesson row is not mutated between check and sign.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -106,3 +128,11 @@ Claude Opus 4.8 (Sonnet 5 session default)
 **Action items:** none outstanding — all findings from layers 2–4 were fixed in commit `8cc5c6f` and this follow-up test-rigor pass; layer 1 and 5 raised no findings.
 - `docs/stories/3-6-media-signed-url-layer.md` (this file).
 - `docs/dev1-tracker.md` (UPDATE, story-first commit) — added S3-6 entry + dashboard totals.
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 4 | Scale & Load Hunter | **PASS** | Signed-URL generation uses a Storage path key (not a table SELECT) — no unbounded read. Signed URL TTL (`settings.media_signed_url_ttl_seconds`) is per-deployment; scope is documented in config.py. Storage `create_signed_url` is idempotent — no check-then-act. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

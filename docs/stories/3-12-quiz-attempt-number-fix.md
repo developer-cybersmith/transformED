@@ -132,6 +132,30 @@ Verify in `apps/api/app/modules/assessment/router.py` — the call to `grade_qui
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one additional DB query per quiz submission (SELECT COUNT on `quiz_attempts` filtered by `session_id` + `segment_id`). This replaces the hardcoded `attempt_number=1` default. Range: always exactly 1 additional query per `grade_quiz()` call, regardless of how many prior attempts exist.
+
+**Q2 — Fixed budgets vs variable input**
+- COUNT query: `select("id", count="exact")` — PostgREST returns the count integer, not rows. Cost is O(1) regardless of how many prior attempts exist (index scan on `session_id, segment_id`). No budget exceeded, no truncation possible.
+- No new LLM calls introduced.
+
+**Q3 — Scope of limits**
+N/A — this story adds no limits. The COUNT query is bounded by the session's own attempt history, which is per-user per-session per-segment.
+
+**Q4 — Unbounded reads/writes**
+- New COUNT query: `.select("id", count="exact").eq("session_id", ...).eq("segment_id", ...)` — uses `count=` parameter, no rows materialised. BOUNDED.
+- All other queries in `grade_quiz` are unchanged and were already bounded.
+
+**Q5 — Inherited caps**
+N/A — this story removes a hardcoded default (`attempt_number=1`) and replaces it with a DB-derived value. No inherited caps introduced.
+
+**Q6 — Concurrent TOCTOU safety**
+Two concurrent quiz submissions for the same (session_id, segment_id) may both see count=0 and both insert `attempt_number=1`. Story 3-13 adds `UNIQUE (session_id, question_id, attempt_number)` which catches this at DB layer as a 409 Conflict. The safe path is provided by the constraint, not by application-level locking.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-01
@@ -188,3 +212,11 @@ None.
 ### Change Log
 - 2026-06-30: Story created (story-first gate commit)
 - 2026-07-01: All 7 ACs implemented and merged to main at commit `ef72e11`; story marked done
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | Attempt-count query uses `count='exact'` with Supabase (no rows materialised). Bounded by `(session_id, segment_id)` filter — naturally ≤ max quiz attempts per segment (typically 1–3). No check-then-act: attempt number computed and immediately used in the same atomic insert path. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.
