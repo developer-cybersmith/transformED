@@ -34,13 +34,17 @@ this module's real HTTP-response handling:
    Fixed to decode `response.json()["audios"][i]` per item.
 
 A third constraint (found while designing the fix, not assumed from docs):
-`inputs[]` also caps at 3 items per request (a real 400 names "List should
-have at most 3 items"). A long segment therefore needs multiple BATCHED
-requests, each ≤3 chunks, all within one logical `synthesize()` call --
-still exactly one circuit-breaker outcome (Story 2-32 AC-3 unchanged).
-Every batch's decoded WAV clips are concatenated via the `wave` module
-(real PCM-frame concatenation under one header, not naive byte concatenation
-of multiple complete WAV files, which produces an invalid multi-header file).
+`inputs[]` also capped at 3 items per request under `bulbul:v2` (a real 400
+named "List should have at most 3 items"). A long segment therefore needed
+multiple BATCHED requests, each <=3 chunks, all within one logical
+`synthesize()` call -- still exactly one circuit-breaker outcome (Story 2-32
+AC-3 unchanged). D149 (2026-09-04): under `bulbul:v3` this cap is now 1, not
+3 -- `v3` batches multiple inputs into ONE combined clip per request rather
+than one clip per input, so sending more than 1 at a time silently mismatches
+clip count against input count. Every request's decoded WAV clip is
+concatenated (one request per chunk now, still via the `wave` module -- real
+PCM-frame concatenation under one header, not naive byte concatenation of
+multiple complete WAV files, which produces an invalid multi-header file).
 
 D89 (Story 3-52): a real stakeholder reported narration speed as "very fast"
 in real generated-lesson playback. Sarvam's real `pace` request parameter
@@ -77,7 +81,15 @@ _SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
 # own 400 error bodies, not assumed from docs. Neither is documented in
 # Sarvam's public API reference at the time these were found.
 _SARVAM_MAX_CHARS_PER_INPUT = 500
-_SARVAM_MAX_INPUTS_PER_REQUEST = 3
+# D149 (2026-09-04): was 3 (a real, documented v2 cap: "List should have at
+# most 3 items"). Dropped to 1 after confirming live that `bulbul:v3` (D148)
+# batches multiple `inputs[]` into ONE combined audio clip per request, not
+# one clip per input like v2 did -- every real request with >1 input now
+# raises "returned 1 audio clips for N inputs". Sending exactly one input
+# per request sidesteps the mismatch entirely; the real 3-per-request cap
+# above may or may not still apply to v3, but there is no reason to batch
+# again unless a per-request-count cost/latency need reappears.
+_SARVAM_MAX_INPUTS_PER_REQUEST = 1
 
 # Sarvam Bulbul v3 pricing (USD per character) — same figure tts_node's own
 # cost-tracking uses (graph.py's _synthesize_with_fallback imports this

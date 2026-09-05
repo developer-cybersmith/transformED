@@ -12,9 +12,11 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
+from redis.asyncio import Redis
 
 from app.config import Settings
 from app.core.posthog_client import capture_event
+from app.core.redis import get_redis
 from app.dependencies import ApprovedUser, CurrentUser, get_settings
 
 # All request/response models live in schemas.py so service.py can import them
@@ -33,6 +35,8 @@ from app.modules.assessment.schemas import (
     SessionCreated,
     TeachbackResult,
     TeachbackSubmission,
+    TutorQuestionResult,
+    TutorQuestionSubmission,
 )
 
 logger = logging.getLogger(__name__)
@@ -186,6 +190,36 @@ async def complete_session_endpoint(
         supabase=get_supabase(),
     )
     return SessionCompleted(**completed)
+
+
+@router.post(
+    "/session/{session_id}/questions",
+    response_model=TutorQuestionResult,
+    summary="Ask the tutor a question mid-lesson (Story 4-28, closes D149)",
+)
+async def submit_tutor_question(
+    session_id: str,
+    body: TutorQuestionSubmission,
+    current_user: CurrentUser,
+    redis: Annotated[Redis, Depends(get_redis)],
+) -> TutorQuestionResult:
+    """Real backend for the already-shipped "Ask Tutor" button (D149).
+
+    Path uses singular "session" to match this router's own existing
+    convention (`/session/{id}/complete`, `/session/{id}/report`) — D149's
+    originally-proposed contract used plural "sessions", never verified
+    against the real code (see Story 4-28's Background section).
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import answer_tutor_question
+
+    return await answer_tutor_question(
+        session_id=session_id,
+        payload=body,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+        redis=redis,
+    )
 
 
 @router.post(

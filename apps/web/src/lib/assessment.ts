@@ -124,6 +124,42 @@ export async function getSessionReport(sessionId: string): Promise<SessionReport
   return data;
 }
 
+// ── Tutor question capture (Story 2-57 / BR-5, D159) ────────────────────────
+
+export interface SubmitTutorQuestionPayload {
+  session_id: string;
+  segment_id: string;
+  question_text: string;
+  audio_position_ms: number;
+}
+
+// Matches apps/api/app/modules/assessment/schemas.py::TutorQuestionResult
+// exactly (Story 4-28 / D158). `answer` is null when declined (below-threshold
+// retrieval relevance or the per-session rate cap) -- `declined` distinguishes
+// that from "answered normally".
+export interface SubmitTutorQuestionResult {
+  received: boolean;
+  answer: string | null;
+  declined: boolean;
+}
+
+// D159 (docs/DEFECT-REGISTER.md, renumbered from this story's original D149,
+// which collided with an unrelated Sarvam fix merged in the meantime): wired
+// to the real backend (Story 4-28 / D158) in this same PR. `session_id` is a
+// path segment on the real endpoint, not a body field -- destructured out of
+// the payload before the request is built so the payload shape callers already
+// use (matching AskTutorPanel.tsx) doesn't need to change.
+export async function submitTutorQuestion(
+  payload: SubmitTutorQuestionPayload
+): Promise<SubmitTutorQuestionResult> {
+  const { session_id, ...body } = payload;
+  const { data } = await api.post<SubmitTutorQuestionResult>(
+    `/assessment/session/${encodeURIComponent(session_id)}/questions`,
+    body
+  );
+  return data;
+}
+
 // ── DPDP consent (Story 3-32 / D29) ─────────────────────────────────────────
 
 export interface RecordConsentPayload {
