@@ -33,6 +33,7 @@ from app.modules.assessment.schemas import (
     SessionCompleted,
     SessionCreate,
     SessionCreated,
+    SessionSummary,
     TeachbackResult,
     TeachbackSubmission,
     TutorQuestionResult,
@@ -164,6 +165,29 @@ async def create_session_endpoint(
         settings=get_settings(),
     )
     return SessionCreated(**created)
+
+
+@router.get(
+    "/sessions",
+    response_model=list[SessionSummary],
+    summary="List the current user's own sessions, most recent first (Story 2-58, BR-7)",
+)
+async def list_sessions_endpoint(
+    current_user: CurrentUser,
+) -> list[SessionSummary]:
+    """Backs the `/reports` index page — the "Reports" nav link has pointed at
+    `/reports` since the sidebar was first built, with no route or backend list
+    behind it (404 from the beginning). Returns at most the caller's own most
+    recent `_SESSION_LIST_LIMIT` sessions — see `list_sessions`'s docstring for
+    the bound and ownership scoping.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import list_sessions
+
+    return await list_sessions(
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(

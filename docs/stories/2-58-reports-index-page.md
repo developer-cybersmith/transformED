@@ -1,6 +1,6 @@
 ---
 title: "Story 2-58 — Reports Index Page (BR-7)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -104,6 +104,63 @@ frontend index page — full-stack scope, confirmed with the user (2026-09-05) r
   (`shouldRetryOnError: false` — a 404/empty list is a real answer, not a transient failure to
   retry).
 
+## Dev Agent Record
+
+### Completion Notes
+
+- **AC1 — DONE.** `GET /assessment/sessions` (`router.py::list_sessions_endpoint`) returns
+  `list[SessionSummary]`, most recent first — `session_id`, `lesson_id`, `lesson_title`, `tier`/
+  `tier_label`, `started_at`/`ended_at`, `completed`, `ces_score`.
+- **AC2 — DONE.** `service.py::list_sessions`'s query carries a real `.limit(_SESSION_LIST_LIMIT)`
+  (50) and an explicit `.eq("user_id", str(user_id))` — verified by running
+  `tests/unit/test_unbounded_queries.py` (11/11 passed, no new `_KNOWN_UNBOUNDED` entry needed) and
+  by a dedicated test asserting the exact `.eq()`/`.order()`/`.limit()` call args.
+- **AC3 — DONE.** `apps/web/src/app/reports/page.tsx` + `ReportsIndex.tsx` render loading/error/
+  empty/list states. Empty and error states both link to `/dashboard` (`data-testid`s:
+  `reports-index-loading`/`-error`/`-empty`/`-root`). Verified live, not just by test: temporarily
+  added `/reports` to `proxy.ts`'s `PUBLIC_PATHS` (local dev server only, reverted immediately
+  after — confirmed via `git status`/`git diff` showing zero diff on `proxy.ts` before committing),
+  hit `GET /reports` against the real running dev server, and confirmed a real `200` serving
+  `pagePath: "reports/page.tsx"` with the actual loading-skeleton markup — not the Next.js 404
+  boilerplate a genuinely-missing route would have returned once unauthenticated redirects were
+  bypassed. Re-confirmed the auth gate was restored (`/reports` → 307 → `/signin` again) before
+  stopping the dev server.
+- **AC4 — DONE (no change needed).** `Sidebar.tsx`'s nav entry was already correct; only the missing
+  route/backend it pointed at needed building.
+- **AC5 — DONE.** Backend: `tests/unit/test_list_sessions_endpoint.py` (11 tests — ownership
+  scoping, row cap, response-shape mapping including the embedded-lesson defensive fallbacks,
+  empty-list, row-order preservation, HTTP-layer wiring). Frontend:
+  `__tests__/components/reports/ReportsIndex.test.tsx` (5 tests) +
+  `__tests__/app/reports/page.test.tsx` (1 test, thin page-wiring test matching the existing
+  `sessionId-page.test.tsx` convention) + 2 new tests in `__tests__/lib/assessment.test.ts`
+  (`listSessions`) + 1 new type-shape test in `__tests__/types/assessment.test.ts`
+  (`SessionSummary`). Existing guard tests for `assessment/router.py` and `assessment/service.py`
+  (`test_unbounded_queries.py`, `test_tutor_question_endpoint.py`, `test_session_report_endpoint.py`,
+  `test_openapi_spec.py`) all still pass — 109/109 in the targeted backend run.
+- **AC6 — DONE.** `ruff check`/`ruff format --check` clean on all touched Python. `tsc --noEmit`
+  clean. Full backend targeted suite: 109/109 passed (the one collection-time failure seen in a
+  broader run, `test_tts_node_returns_only_its_own_keys` — `ModuleNotFoundError: No module named
+  'tinytag'` — is a pre-existing local-environment gap in the unrelated content-pipeline TTS node,
+  not touched by this story). Full frontend suite: 91 files / 1091 tests green, zero regressions.
+
+### File List
+
+- `apps/api/app/modules/assessment/schemas.py` — `SessionSummary` (new)
+- `apps/api/app/modules/assessment/service.py` — `_SESSION_LIST_LIMIT`, `_session_row_to_summary`,
+  `list_sessions` (new)
+- `apps/api/app/modules/assessment/router.py` — `GET /sessions` → `list_sessions_endpoint` (new)
+- `apps/api/tests/unit/test_list_sessions_endpoint.py` — new file, 11 tests
+- `apps/web/src/types/assessment.ts` — `SessionSummary` (new)
+- `apps/web/src/lib/assessment.ts` — `listSessions()` (new)
+- `apps/web/src/hooks/useSessionReports.ts` — new file, mirrors `useSessionReport.ts`
+- `apps/web/src/components/reports/ReportsIndex.tsx` — new file
+- `apps/web/src/app/reports/page.tsx` — new file (the route that was 404ing)
+- `apps/web/src/__tests__/components/reports/ReportsIndex.test.tsx` — new file, 5 tests
+- `apps/web/src/__tests__/app/reports/page.test.tsx` — new file, 1 test
+- `apps/web/src/__tests__/lib/assessment.test.ts` — 2 new tests (`listSessions`)
+- `apps/web/src/__tests__/types/assessment.test.ts` — 1 new test (`SessionSummary`)
+- `docs/dev2-sprint-tracker.md` — BR-7 added (Quick Status Dashboard + §13A)
+
 ## References
 
 - [Source: apps/web/src/components/dashboard/shell/Sidebar.tsx:16] — the pre-existing, previously
@@ -116,4 +173,6 @@ frontend index page — full-stack scope, confirmed with the user (2026-09-05) r
   select pattern this story's list query follows
 - [Source: apps/web/src/hooks/useSessionReport.ts] — the SWR hook pattern this story's list hook
   mirrors
+- [Source: apps/web/src/proxy.ts] — the deny-list auth gate that made unauthenticated route-existence
+  checks ambiguous, and was used (then reverted) to verify AC3 live
 - [Source: docs/SCALE-CONTRACT.md] — the six questions answered above

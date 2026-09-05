@@ -39,6 +39,7 @@ from app.modules.assessment.schemas import (
     OnboardingResult,
     QuizAnswer,
     QuizResult,
+    SessionSummary,
     TeachbackResult,
     TutorQuestionResult,
     TutorQuestionSubmission,
@@ -351,6 +352,68 @@ async def complete_session(
         )
 
     return {"session_id": session_id, "ended_at": ended_at}
+
+
+# Row cap for GET /sessions (Story 2-58 / BR-7). Chosen independently of
+# `content/lessons`'s own `limit=20` — see the story's Scale & Load §5: a
+# session (one per lesson attempt) is a different unit of work than a lesson.
+# Past this cap, older sessions simply age out of the *recent* list — an
+# explicit, surfaced degradation (every individual session's own report page
+# stays reachable regardless), not silent truncation.
+_SESSION_LIST_LIMIT = 50
+
+
+def _session_row_to_summary(row: dict[str, Any]) -> SessionSummary:
+    """Map one `sessions` row (with an embedded `lessons(title, tier)`) to a summary.
+
+    The `lessons(...)` embed comes back as a plain dict for a many-to-one FK
+    (one session -> exactly one lesson) — same shape `admin/router.py`'s
+    `_job_row_to_summary` already relies on for `lessons(user_id)`, not a new
+    assumption about PostgREST's embed shape.
+    """
+    lesson = row.get("lessons") or {}
+    tier = lesson.get("tier") if lesson.get("tier") in _TIER_LABELS else "T2"
+    ces_final = row.get("ces_final")
+    return SessionSummary(
+        session_id=str(row["session_id"]),
+        lesson_id=str(row["lesson_id"]),
+        lesson_title=lesson.get("title"),
+        tier=tier,
+        tier_label=_TIER_LABELS[tier],
+        started_at=str(row["started_at"]) if row.get("started_at") is not None else None,
+        ended_at=str(row["ended_at"]) if row.get("ended_at") is not None else None,
+        completed=row.get("ended_at") is not None,
+        ces_score=float(ces_final) if ces_final is not None else None,
+    )
+
+
+async def list_sessions(
+    *,
+    user_id: str,
+    supabase: Client,
+) -> list[SessionSummary]:
+    """Return *user_id*'s own sessions, most recent first (Story 2-58 / BR-7).
+
+    Backs `GET /sessions` — the "Reports" nav link has pointed at `/reports`
+    since the sidebar was first built, with no index page and no backend list
+    behind it; this is the read that closes that gap.
+
+    Bounded by `_SESSION_LIST_LIMIT` (Scale & Load Q2) and explicitly scoped to
+    `user_id` (Q3) — the server-side Supabase client uses the service-role key
+    and bypasses RLS, so ownership is enforced here, the same pattern
+    `get_session_report` already uses for a single session.
+    """
+    resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, lesson_id, ces_final, started_at, ended_at, lessons(title, tier)")
+            .eq("user_id", str(user_id))
+            .order("started_at", desc=True)
+            .limit(_SESSION_LIST_LIMIT)
+            .execute()
+        )
+    )
+    return [_session_row_to_summary(row) for row in rows(resp)]
 
 
 async def grade_quiz(

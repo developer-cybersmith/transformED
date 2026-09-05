@@ -13,6 +13,7 @@ import {
   completeSession,
   createSession,
   getSessionReport,
+  listSessions,
   submitQuiz,
   submitTeachBack,
 } from '@/lib/assessment';
@@ -72,6 +73,36 @@ describe('getSessionReport', () => {
     const result = await getSessionReport('sess_abc123');
 
     expect(result.teachback_details).toEqual(responseData.teachback_details);
+  });
+});
+
+describe('listSessions (Story 2-58/BR-7)', () => {
+  it('calls the real GET /assessment/sessions endpoint and returns the response data unchanged', async () => {
+    const responseData = [
+      {
+        session_id: 'sess_1',
+        lesson_id: 'lesson_1',
+        lesson_title: 'Photosynthesis',
+        tier: 'T1',
+        tier_label: 'Full-Depth',
+        started_at: '2026-09-01T10:00:00Z',
+        ended_at: '2026-09-01T10:20:00Z',
+        completed: true,
+        ces_score: 82,
+      },
+    ];
+    apiGetMock.mockResolvedValue({ data: responseData });
+
+    const result = await listSessions();
+
+    expect(apiGetMock).toHaveBeenCalledWith('/assessment/sessions');
+    expect(result).toEqual(responseData);
+  });
+
+  it('propagates a rejected request rather than swallowing it', async () => {
+    apiGetMock.mockRejectedValue(new Error('network down'));
+
+    await expect(listSessions()).rejects.toThrow('network down');
   });
 });
 

@@ -147,6 +147,23 @@ export interface SessionReport {
   teachback_details: TeachbackDetail[] | null;
 }
 
+// â”€â”€ GET /api/assessment/sessions (Story 2-58 / BR-7) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+// Matches apps/api/app/modules/assessment/schemas.py::SessionSummary exactly.
+// Deliberately lighter than SessionReport above -- enough to render a list
+// card and link to /reports/{session_id} for the full report.
+export interface SessionSummary {
+  session_id: string;
+  lesson_id: string;
+  lesson_title: string | null;
+  tier: 'T1' | 'T2' | 'T3';
+  tier_label: string;
+  started_at: string | null;
+  ended_at: string | null;
+  completed: boolean;
+  ces_score: number | null;
+}
+
 // â”€â”€ GET /api/assessment/user/dna â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export interface LearnerDNA {

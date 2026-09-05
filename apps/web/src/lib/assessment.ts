@@ -1,5 +1,5 @@
 import { api } from './api';
-import type { SessionReport } from '@/types/assessment';
+import type { SessionReport, SessionSummary } from '@/types/assessment';
 
 // ── Quiz ──────────────────────────────────────────────────────────────────────
 
@@ -121,6 +121,14 @@ export async function getSessionReport(sessionId: string): Promise<SessionReport
   const { data } = await api.get<SessionReport>(
     `/assessment/session/${encodeURIComponent(sessionId)}/report`
   );
+  return data;
+}
+
+// Backs the /reports index page (Story 2-58 / BR-7). The "Reports" nav link
+// (Sidebar.tsx) has pointed at /reports since it was first built, with no
+// route and no backend list behind it -- 404 from the beginning.
+export async function listSessions(): Promise<SessionSummary[]> {
+  const { data } = await api.get<SessionSummary[]>('/assessment/sessions');
   return data;
 }
 
