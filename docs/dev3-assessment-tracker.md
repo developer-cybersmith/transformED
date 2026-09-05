@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-05 (F2-1 Learner Context API, F2-2 Teachback score source flag, F2-3 tier label verify, F2-4 voice teach-back STT all done — Bug Resolution Sprint 4/4; process debt: Scale & Load sections + 6-agent Hunter rows added to all Sprint 2 & 3 Dev 3 stories)
+**Last updated:** 2026-09-05 (S4-31 CES weight tuning done; F2-1 Learner Context API, F2-2 Teachback score source flag, F2-3 tier label verify, F2-4 voice teach-back STT all done — Bug Resolution Sprint 4/4; process debt: Scale & Load sections + 6-agent Hunter rows added to all Sprint 2 & 3 Dev 3 stories)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -920,11 +920,12 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Fix: `route_entry` universal guard + `_finalize_session` owns only ces_final + `complete_session` dispatches lesson_complete.
   - 11 unit tests, ruff+mypy clean, 184 existing tests pass. Branch `sprint4/s4-6-d116-ces-final-wiring` merged to `master-sprint4-dev3`.
 
-- [ ] **CES weight tuning against post-session ground truth quiz scores**
+- [x] **CES weight tuning against post-session ground truth quiz scores (Story 4-31)** — ✓ 2026-09-05
   - Ground truth: final quiz score per session
   - Objective: tune weights so CES during session correlates with final quiz score (Pearson r > 0.6)
   - Method: try 5 weight combinations, compare correlation; pick best
   - **AC:** Chosen weights improve correlation; documented in calibration notes
+  - **Status (done 2026-09-05):** `apps/api/scripts/ces_weight_grid_search.py` implemented (standalone CLI, reads S4-30 CSV). Provisional weights applied to `config.py` (quiz 0.35→0.40, behavioral 0.20→0.15). 42/42 tests PASS (17 S4-31 + 20 test_ces.py + 5 existing). Calibration notes §10 added. Branch: `sprint4/s4-31-ces-weight-tuning`
 
 - [ ] **Update tuned weights in Railway env vars**
   - After weight selection: update `CES_WEIGHT_*` env vars in Railway dashboard (production)

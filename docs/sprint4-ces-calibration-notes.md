@@ -190,32 +190,48 @@ These numbers are from 2 users running internal tests. Treat as directional only
 
 **Recommended CES threshold for initial real-student calibration:** Keep at 50 but do not trigger interventions if `behavioral` score has not been received (is NULL/unknown). A "partial signal" mode prevents intervention spam when 2 of 5 signals are absent.
 
-
 ---
 
-## 10. CES Weight Tuning Results (Story 4-31, 2026-09-05)
+## 10. Provisional Weight Tuning (Story S4-31, 2026-09-05)
 
-### Old vs. New Weights
+**Data basis:** Developer-run internal sessions (117 sessions, 2 users, 2026-08-12 – 2026-08-19).
+Real 20-session calibration with consent + D116 fix not yet run. Weights below are provisional.
 
-| Weight | Old | New | Reason |
-|--------|-----|-----|--------|
-| CES_WEIGHT_QUIZ | 0.35 | **0.40** | Best-calibrated signal (11 sessions of data, 69% aggregate). Grid search confirms highest Pearson r contribution. |
-| CES_WEIGHT_TEACHBACK | 0.25 | **0.25** | Unchanged — insufficient data (only 2 samples). |
-| CES_WEIGHT_BEHAVIORAL | 0.20 | **0.15** | Reduced — §5 evidence: 1:1 tab_switch:intervention ratio indicates over-sensitivity. |
-| CES_WEIGHT_HEAD_POSE | 0.12 | **0.13** | Slight increase — no data yet, kept near original. |
-| CES_WEIGHT_BLINK | 0.08 | **0.07** | Slight decrease to maintain sum=1.0. |
+### Old weights (PRD §11 defaults)
 
-**Weight sum check:** 0.40 + 0.25 + 0.15 + 0.13 + 0.07 = **1.00** ✓
+| Signal | Old weight |
+|--------|-----------|
+| quiz_accuracy | 0.35 |
+| teachback_score | 0.25 |
+| behavioral | 0.20 |
+| head_pose | 0.12 |
+| blink | 0.08 |
 
-### Validation
+### New weights (S4-31 provisional)
 
-Run the grid search script after inserting synthetic sessions (S4-30) to confirm Pearson r:
+| Signal | New weight | Change | Rationale |
+|--------|-----------|--------|-----------|
+| quiz_accuracy | **0.40** | +0.05 | Strongest confirmed signal; 69% aggregate accuracy, consistent across 11 sessions |
+| teachback_score | 0.25 | — | Insufficient samples (2) to move |
+| behavioral | **0.15** | -0.05 | Over-triggering: 1:1 tab_switch:intervention ratio in §5; behavioral alone caused interventions on every tab switch |
+| head_pose | **0.13** | +0.01 | Minimal adjustment to keep sum=1.0 |
+| blink | **0.07** | -0.01 | Minimal adjustment to keep sum=1.0 |
+
+Sum: 0.40 + 0.25 + 0.15 + 0.13 + 0.07 = **1.00** ✓
+
+### Pearson r status
+
+Grid search tool (`apps/api/scripts/ces_weight_grid_search.py`) implemented in S4-31.
+Pearson r target: > 0.6 (CES vs final quiz accuracy). Not yet computable (ces_final was
+NULL on all 117 sessions — D116 fixed in S4-6). Once 20 real sessions run with confirmed
+D116 fix and attention consent, execute:
 
 ```bash
-SUPABASE_URL=... SUPABASE_SERVICE_KEY=... python scripts/ces_weight_grid_search.py
+python apps/api/scripts/export_calibration_data.py --output ces_calibration_export.csv
+python apps/api/scripts/ces_weight_grid_search.py --input ces_calibration_export.csv
 ```
 
-Target: Pearson r > 0.6 for the winning weight combination.
+Update Railway env vars to confirmed weights in S4-32.
 
 ### Railway Deployment (S4-32)
 

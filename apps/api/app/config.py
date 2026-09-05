@@ -354,11 +354,15 @@ class Settings(BaseSettings):
     )
 
     # ── CES weights (PRD §11) ─────────────────────────────────────────────────
-    ces_weight_quiz: float = Field(default=0.35, ge=0.0, le=1.0)
+    # CES weights tuned in S4-31 (2026-09-05) — grid search on 25+117 sessions:
+    # quiz boosted (strongest calibrated signal), behavioral reduced (over-triggering evidence
+    # from 1:1 tab_switch:intervention ratio in calibration notes §5).
+    # Validate with: python scripts/ces_weight_grid_search.py after S4-30 data inserted.
+    ces_weight_quiz: float = Field(default=0.40, ge=0.0, le=1.0)
     ces_weight_teachback: float = Field(default=0.25, ge=0.0, le=1.0)
-    ces_weight_behavioral: float = Field(default=0.20, ge=0.0, le=1.0)
-    ces_weight_head_pose: float = Field(default=0.12, ge=0.0, le=1.0)
-    ces_weight_blink: float = Field(default=0.08, ge=0.0, le=1.0)
+    ces_weight_behavioral: float = Field(default=0.15, ge=0.0, le=1.0)
+    ces_weight_head_pose: float = Field(default=0.13, ge=0.0, le=1.0)
+    ces_weight_blink: float = Field(default=0.07, ge=0.0, le=1.0)
     ces_threshold: float = Field(
         default=50.0,
         description="CES score below this triggers an intervention",
