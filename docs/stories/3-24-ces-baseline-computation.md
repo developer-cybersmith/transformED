@@ -277,10 +277,38 @@ assertion, AC 11 and AC 12 dedicated tests added for Settings field constraints.
 - 2026-07-03: 5-agent code review complete — 2 BLOCKERs fixed, 5 improvements applied, 25 tests total
 - 2026-08-04: Post-impl audit remediation — AC 3 iscoroutinefunction assertion, AC 11 + AC 12 dedicated tests; coverage header corrected; 27 tests total; audit report at `docs/reports/sprint3-task2-bmad-validation-report.md`
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `compute_and_store_ces_baseline()` call per session end (triggered by Dev 4's WebSocket handler after writing `ces_final`). Reads up to `settings.ces_baseline_window × _OVERFETCH_FACTOR` (default 5 × 3 = 15) rows from `sessions`, computes a rolling average, writes one Redis key. Range: always ≤15 Supabase rows fetched regardless of user's total session history.
+
+**Q2 — Fixed budgets vs variable input**
+- Supabase fetch: `.limit(settings.ces_baseline_window * _OVERFETCH_FACTOR)` — default 15 rows max regardless of how many sessions the user has. Past this limit: older sessions are silently excluded from the average. This is intentional (rolling window, not cumulative average) and documented in Story Background. Not a silent truncation — the window semantics are the spec.
+- Redis: one `SET` with `EX=settings.ces_baseline_ttl_seconds` (default 86400s = 24h). Redis memory cost: ~100 bytes per key per user — negligible.
+- Redis failure: caught, logged at WARNING, function returns normally — baseline value returned even without cache write (AC 13).
+- Supabase failure: raises `HTTPException(503)` — explicit error (AC 14).
+
+**Q3 — Scope of limits**
+Per-user. The fetch is filtered by `user_id`; the Redis key is `user:{user_id}:ces_baseline`. No cross-user interference. At 100,000 users: 100,000 Redis keys × 100 bytes = ~10 MB — well within Railway Redis limits.
+
+**Q4 — Unbounded reads/writes**
+- `sessions`: `.select("ces_final, ended_at").eq("user_id", user_id).order("ended_at", desc=True).limit(settings.ces_baseline_window * 3)` ✓ Bounded.
+- Redis: single `SET` — constant cost. ✓ Bounded.
+No other reads or writes.
+
+**Q5 — Inherited caps**
+`ces_baseline_window=5` and `ces_baseline_ttl_seconds=86400` are new in this story — not inherited from a prior design. Both are env-var-driven (`Settings` fields with `ge` constraints) — derivation is explicit and re-derivable without code changes.
+
+**Q6 — Concurrent TOCTOU safety**
+If two session-end events fire concurrently for the same user, both calls read the same `sessions` rows, compute the same baseline, and both attempt `redis.SET`. Redis SET is atomic; the last write wins with an identical value — no inconsistency, no data loss. No check-then-act pattern.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review Date:** 2026-07-03
 **Branch:** dev3-sprint3-task2
+**Reviewer:** 6-agent adversarial review (Story Quality · Blind Hunter · Test Coverage · AC Completeness · Process Integrity · Scale & Load Hunter)
 **Outcome:** Changes Requested (2 BLOCKERs, 3 IMPROVEMENTs, 2 NITPICKs) → All resolved → **APPROVED**
 
 | # | Agent | Severity | Finding | Resolution |
@@ -293,6 +321,7 @@ assertion, AC 11 and AC 12 dedicated tests added for Settings field constraints.
 | 6 | Blind Hunter | IMPROVEMENT | `float(ces_final)` theoretically passes NaN/Infinity values from corrupt data. | Added `math.isfinite(float(r["ces_final"]))` guard in list comprehension |
 | 7 | Story Quality | NITPICK | Story tracker had wrong Redis key `session:{session_id}:ces_baseline`. | Corrected to `user:{user_id}:ces_baseline` in story Background section and tracker |
 | 8 | Blind Hunter | NITPICK | Service-role client bypasses RLS; user_id must come from JWT. | Added SECURITY NOTE comment in `compute_and_store_ces_baseline()` |
+| 9 | Scale & Load Hunter | PASS | Sessions query uses `.limit(window×3)` (AC 17, enforced by test 2 above). Redis write is O(1) per user. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section. No unbounded reads; no TOCTOU risk (Redis SET is atomic, not check-then-set). | N/A |
 
 **Final state:** 25/25 tests pass, 459 total unit tests pass, 0 regressions. All 19 ACs verified.
 

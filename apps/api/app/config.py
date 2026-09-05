@@ -65,30 +65,41 @@ class Settings(BaseSettings):
 
     # ── TTS providers ─────────────────────────────────────────────────────────
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
-    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
+    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v3 API key — primary TTS")
     sarvam_voice_id: str = Field(
-        # D67: "meera" is not a valid Bulbul v2 speaker -- confirmed via a
-        # real, live call to api.sarvam.ai (400 invalid_request_error,
-        # listing the valid speakers). Every real TTS call through the
-        # primary provider was 400ing and silently degrading to the Azure
-        # fallback on 100% of narration. "anushka" verified via a second
-        # live call (200 OK, real audio) -- chosen for parity with the
-        # existing Azure fallback default (en-IN-NeerjaNeural, Indian
-        # English), matching this product's target market.
-        default="anushka",
-        description="Sarvam Bulbul v2 speaker name for narration synthesis",
+        # D67 (historical): "meera" is not a valid Bulbul v2 speaker --
+        # confirmed via a real, live call to api.sarvam.ai. "anushka" was
+        # verified valid for v2 and chosen for parity with the existing
+        # Azure fallback default (en-IN-NeerjaNeural, Indian English).
+        #
+        # D148 (2026-09-04): the request body never pinned an explicit
+        # `model`, so it silently rode Sarvam's server-side default, which
+        # drifted to `bulbul:v3` -- "anushka" is NOT a valid v3 speaker
+        # (confirmed live, 400 invalid_request_error). By the time this was
+        # fixed, `bulbul:v2` itself had been deprecated server-side too, so
+        # pinning back to v2 was no longer an option. "priya" verified live
+        # (200 OK, real audio) against `bulbul:v3` and chosen to preserve the
+        # same Indian-English-female-voice parity D67 originally chose --
+        # the specific voice CHARACTER has not been human-reviewed/listened
+        # to, only its validity confirmed; revisit if narration quality is
+        # ever flagged.
+        default="priya",
+        description="Sarvam Bulbul v3 speaker name for narration synthesis",
     )
     sarvam_narration_pace: float = Field(
         default=0.85,
         ge=0.3,
         le=3.0,
         description=(
-            "Sarvam Bulbul v2 `pace` parameter for narration synthesis -- controls "
-            "speaking speed (lower is slower; Sarvam's own valid range for bulbul:v2 "
-            "is 0.3-3.0, default 1.0). Sarvam's raw 1.0 default read as 'very fast' in "
-            "real stakeholder playback (D89); 0.85 is a reasoned, moderately-slower "
-            "starting value, not an exact scientifically-derived one -- tune via env "
-            "var without a code change, same as sarvam_voice_id above."
+            "Sarvam Bulbul v3 `pace` parameter for narration synthesis -- controls "
+            "speaking speed (lower is slower; Sarvam's valid range was 0.3-3.0, "
+            "default 1.0, for v2 -- unverified whether v3's range differs, not "
+            "re-checked live since D148's fix only needed a valid (speaker, model) "
+            "pair, not a pace-range re-verification). Sarvam's raw 1.0 default read "
+            "as 'very fast' in real stakeholder playback (D89); 0.85 is a reasoned, "
+            "moderately-slower starting value, not an exact scientifically-derived "
+            "one -- tune via env var without a code change, same as sarvam_voice_id "
+            "above."
         ),
     )
     azure_tts_key: str | None = Field(
@@ -395,11 +406,15 @@ class Settings(BaseSettings):
     )
 
     # ── CES weights (PRD §11) ─────────────────────────────────────────────────
-    ces_weight_quiz: float = Field(default=0.35, ge=0.0, le=1.0)
+    # CES weights tuned in S4-31 (2026-09-05) — grid search on 25+117 sessions:
+    # quiz boosted (strongest calibrated signal), behavioral reduced (over-triggering evidence
+    # from 1:1 tab_switch:intervention ratio in calibration notes §5).
+    # Validate with: python scripts/ces_weight_grid_search.py after S4-30 data inserted.
+    ces_weight_quiz: float = Field(default=0.40, ge=0.0, le=1.0)
     ces_weight_teachback: float = Field(default=0.25, ge=0.0, le=1.0)
-    ces_weight_behavioral: float = Field(default=0.20, ge=0.0, le=1.0)
-    ces_weight_head_pose: float = Field(default=0.12, ge=0.0, le=1.0)
-    ces_weight_blink: float = Field(default=0.08, ge=0.0, le=1.0)
+    ces_weight_behavioral: float = Field(default=0.15, ge=0.0, le=1.0)
+    ces_weight_head_pose: float = Field(default=0.13, ge=0.0, le=1.0)
+    ces_weight_blink: float = Field(default=0.07, ge=0.0, le=1.0)
     ces_threshold: float = Field(
         default=50.0,
         description="CES score below this triggers an intervention",
@@ -558,15 +573,15 @@ class Settings(BaseSettings):
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
     learner_tier_t1_qa_seconds: int = Field(
         default=600,
-        description="Q&A phase duration in seconds for T1 (beginner) tier",
+        description="Q&A phase duration in seconds for T1 (Full-Depth, 45-min) tier",
     )
     learner_tier_t2_qa_seconds: int = Field(
         default=300,
-        description="Q&A phase duration in seconds for T2 (intermediate) tier",
+        description="Q&A phase duration in seconds for T2 (Standard, 30-min) tier",
     )
     learner_tier_t3_qa_seconds: int = Field(
         default=150,
-        description="Q&A phase duration in seconds for T3 (advanced) tier",
+        description="Q&A phase duration in seconds for T3 (Refresher, 15-min) tier",
     )
     learner_tier_default_qa_seconds: int = Field(
         default=300,
@@ -710,6 +725,23 @@ class Settings(BaseSettings):
         description="Read/write/pool timeout for OpenAI chat + embeddings calls (seconds). "
         "Connect stays at 5s — see the note on openai_image_request_timeout_s.",
     )
+    # ── STT (Whisper) — F2-4 ─────────────────────────────────────────────────
+    stt_model: str = Field(
+        default="whisper-1",
+        description="OpenAI Whisper model for voice teach-back transcription (F2-4). "
+        "Never hardcoded in providers/stt/whisper.py — always read from this setting.",
+    )
+    stt_max_file_mb: int = Field(
+        default=25,
+        description="Maximum audio file size in MB for voice teach-back uploads (F2-4). "
+        "Whisper API hard limit is 25 MB; a smaller value can be set for cost control.",
+    )
+    stt_cost_per_min: float = Field(
+        default=0.006,
+        description="Whisper transcription cost in USD per minute of audio (F2-4). "
+        "Used by cost_tracker to accumulate per-lesson STT spend.",
+    )
+
     openai_image_request_timeout_s: float = Field(
         default=180.0,
         description="Read/write/pool timeout for OpenAI image generation (seconds) — "

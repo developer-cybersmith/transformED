@@ -10,19 +10,21 @@ from __future__ import annotations
 import logging
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
 from redis.asyncio import Redis
 
+from app.config import Settings
 from app.core.posthog_client import capture_event
 from app.core.redis import get_redis
-from app.dependencies import ApprovedUser, CurrentUser
+from app.dependencies import ApprovedUser, CurrentUser, get_settings
 
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
 from app.modules.assessment.schemas import (
     ConsentCreate,
     ConsentRecord,
+    LearnerContext,
     OnboardingDiagnosticSubmission,
     OnboardingResult,
     QuizAnswer,
@@ -49,6 +51,7 @@ __all__ = [
     "TeachbackSubmission",
     "TeachbackResult",
     "TeachbackDetail",
+    "LearnerContext",  # R3: added so tests/other modules can import from here
 ]
 
 
@@ -62,6 +65,8 @@ class TeachbackDetail(BaseModel):
     concepts_hit: list[str] = []
     concepts_missed: list[str] = []
     attempt_number: int = 1
+    # F2-2: default "llm" so pre-migration rows (no column → DB DEFAULT) deserialise correctly
+    score_source: Literal["llm", "fallback", "skipped"] = "llm"
 
 
 class SessionReport(BaseModel):
@@ -260,6 +265,53 @@ async def submit_teachback(
         response_text=body.response_text,
         user_id=current_user["sub"],
         supabase=get_supabase(),
+        is_skip=body.is_skip,
+    )
+
+
+@router.post(
+    "/teachback/{session_id}/{segment_id}/audio",
+    response_model=TeachbackResult,
+    summary="Submit a voice teach-back recording for Whisper STT + LLM evaluation (F2-4)",
+)
+async def submit_audio_teachback(
+    session_id: str,
+    segment_id: str,
+    audio: Annotated[UploadFile, File(description="Audio file (WAV, MP3, MP4, WEBM)")],
+    current_user: ApprovedUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TeachbackResult:
+    """Transcribe a voice teach-back recording via Whisper and score it with GPT-4o-mini.
+
+    On transcription failure the endpoint returns HTTP 200 with score_source='fallback'
+    so the student is never hard-blocked by a Whisper outage.
+    Raw audio is never stored — only the transcript reaches the database.
+    """
+    from app.core.db import get_supabase  # noqa: PLC0415
+    from app.modules.assessment.service import transcribe_and_score_audio  # noqa: PLC0415
+
+    max_bytes = settings.stt_max_file_mb * 1024 * 1024
+    audio_bytes = await audio.read()
+    if len(audio_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Audio file exceeds the {settings.stt_max_file_mb} MB limit "
+                f"({len(audio_bytes) / (1024 * 1024):.1f} MB uploaded). "
+                "Please trim the recording and try again."
+            ),
+        )
+
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    filename = _Path(audio.filename or "audio.webm").name  # strip any path components
+    return await transcribe_and_score_audio(
+        session_id=session_id,
+        segment_id=segment_id,
+        audio_bytes=audio_bytes,
+        filename=filename,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
     )
 
 
@@ -387,6 +439,31 @@ async def submit_onboarding_diagnostic(
         logger.warning("onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc)
 
     return result
+
+
+@router.get(
+    "/session/{session_id}/learner-context",
+    response_model=LearnerContext,
+    summary="Get learner DNA + session signals for tutor prompt injection (Story F2-1)",
+)
+async def get_learner_context_endpoint(
+    session_id: str,
+    current_user: CurrentUser,
+) -> LearnerContext:
+    """Return combined Learner DNA and current session engagement for the tutor state machine.
+
+    Internal endpoint called by Dev 4's tutor module to personalise LLM responses.
+    IDOR-protected: returns 404 if session_id belongs to a different user.
+    Pure data aggregation — no LLM calls, no cost tracking.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import get_learner_context
+
+    return await get_learner_context(
+        session_id=session_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(
