@@ -99,7 +99,7 @@ async def _wait_for_lessons_terminal(
     """Block until every id in *lesson_ids* has a real terminal `status`
     ('ready'/'failed') in the `lessons` table, or *max_wait_s* elapses.
 
-    D152 (found live, run #10, 2026-09-04): `_run_full`'s cleanup used to
+    D155 (found live, run #10, 2026-09-04): `_run_full`'s cleanup used to
     fire as soon as `run_phase_b`'s OWN polling gave up on a lesson --
     which can happen EARLY if the disposable user's own bearer token
     expires mid-poll (`phase_b_generate._poll_one_lesson`'s 401/403/404
@@ -152,7 +152,7 @@ async def _wait_for_lessons_terminal(
                 logger.info(
                     "Waiting for %d lesson(s) to reach a REAL terminal status "
                     "(service-role check, immune to test-user token expiry) "
-                    "before cleanup -- D152: %s",
+                    "before cleanup -- D155: %s",
                     len(remaining),
                     sorted(remaining)[:5],
                 )
@@ -243,7 +243,7 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
     # book-only cleanup is needed the way it was for the old real-account
     # design.
     phase_a_users: list[TestUser] = []
-    # D152: set to a reason string if any Phase B lesson never reaches a
+    # D155: set to a reason string if any Phase B lesson never reaches a
     # real terminal status even after the extended wait below -- the
     # `finally` block checks this and skips cleanup entirely rather than
     # risk deleting a disposable user whose lesson may still be genuinely
@@ -299,7 +299,7 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
             total_requests=_FULL_TOTAL_REQUESTS,
         )
 
-        # D152: wait for every ACCEPTED Phase B lesson to reach a REAL
+        # D155: wait for every ACCEPTED Phase B lesson to reach a REAL
         # terminal status (checked via the service-role API, immune to a
         # disposable user's own token expiring) before doing anything else
         # that leads to cleanup. `run_phase_b`'s own polling may have given
@@ -310,14 +310,14 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
         if accepted_lesson_ids:
             logger.info(
                 "Full run: confirming all %d accepted Phase B lesson(s) reached a "
-                "REAL terminal status before cleanup (D152)",
+                "REAL terminal status before cleanup (D155)",
                 len(accepted_lesson_ids),
             )
             final_statuses = await _wait_for_lessons_terminal(accepted_lesson_ids)
             stuck = sorted(lid for lid, st in final_statuses.items() if st == "timed_out")
             if stuck:
                 skip_cleanup_reason = (
-                    f"D152: {len(stuck)} lesson(s) never reached a real terminal status "
+                    f"D155: {len(stuck)} lesson(s) never reached a real terminal status "
                     f"even after the extended wait -- {stuck[:10]}"
                 )
                 logger.error(
@@ -408,7 +408,7 @@ async def _run_full(base_url: str) -> tuple[list[ScenarioResult], dict[str, Any]
         # via cascade, everything they created) leaking onto the real
         # project must not depend on the rest of the run succeeding.
         #
-        # D152 exception: if a Phase B lesson never confirmed a real
+        # D155 exception: if a Phase B lesson never confirmed a real
         # terminal status (see above), skip cleanup entirely rather than
         # delete a disposable user whose lesson may still be genuinely
         # running -- a leaked disposable test account is cheap and visible

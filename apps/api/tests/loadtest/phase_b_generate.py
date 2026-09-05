@@ -436,7 +436,7 @@ async def run_phase_b(
             "tier": _TIER,
             "num_generate_users": len(generate_users),
             "accepted_count": len(poll_targets),
-            # D152: every lesson_id actually accepted (202) this run, so a
+            # D155: every lesson_id actually accepted (202) this run, so a
             # caller (`_run_full`) can independently confirm each one reaches
             # a REAL terminal status before any cleanup deletes the disposable
             # users that own them -- this harness's own polling above may

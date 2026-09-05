@@ -1,4 +1,4 @@
-"""Regression test for D152, found live on load-test run #10 (2026-09-04):
+"""Regression test for D155, found live on load-test run #10 (2026-09-04):
 `_run_full`'s cleanup used to fire as soon as `run_phase_b`'s OWN polling
 gave up on a lesson -- which can happen EARLY (see
 `phase_b_generate._poll_one_lesson`'s 401/403/404 fail-fast branch) if the
