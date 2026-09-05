@@ -1,6 +1,6 @@
 # ADR-001 — India-region migration: deployment topology
 
-**Status:** 🟡 **PROPOSED — provider choice needs sign-off; topology and Langfuse are decided**
+**Status:** 🟢 **IMPLEMENTED 2026-08-14 — provider chosen (Fly.io), topology and Langfuse as decided below.** One open follow-up: **D145** (`docs/DEFECT-REGISTER.md`) — the live region list has been observed drifted to `sin` (Singapore) instead of this ADR's `bom` (Mumbai) intent; registered, not fixed. See also **D158** (CLAUDE.md's stack table was stale about this for three weeks after implementation).
 **Date:** 2026-07-30 · **Owner:** Dev 1 (`docs/master-tracker.md:204` assigns this migration to Dev 1)
 **Supersedes:** nothing. **Referenced by:** `CLAUDE.md:201`, `docs/bmad/epics/epic-5-platform-core.md:153`, `docs/master-tracker.md:204`
 
