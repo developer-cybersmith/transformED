@@ -219,3 +219,57 @@ after running the analysis script against the combined 142-session dataset.
 `scripts/k6_assessment_load_test.js` — 20–50 concurrent virtual users, 2-minute run.
 Success thresholds: p95 quiz < 2s, p95 teachback < 5s, error rate < 1%.
 Run: `k6 run --env BASE_URL=<api_url> --env AUTH_TOKEN=<jwt> scripts/k6_assessment_load_test.js`
+
+---
+
+## 10. Provisional Weight Tuning (Story S4-31, 2026-09-05)
+
+**Data basis:** Developer-run internal sessions (117 sessions, 2 users, 2026-08-12 – 2026-08-19).
+Real 20-session calibration with consent + D116 fix not yet run. Weights below are provisional.
+
+### Old weights (PRD §11 defaults)
+
+| Signal | Old weight |
+|--------|-----------|
+| quiz_accuracy | 0.35 |
+| teachback_score | 0.25 |
+| behavioral | 0.20 |
+| head_pose | 0.12 |
+| blink | 0.08 |
+
+### New weights (S4-31 provisional)
+
+| Signal | New weight | Change | Rationale |
+|--------|-----------|--------|-----------|
+| quiz_accuracy | **0.40** | +0.05 | Strongest confirmed signal; 69% aggregate accuracy, consistent across 11 sessions |
+| teachback_score | 0.25 | — | Insufficient samples (2) to move |
+| behavioral | **0.15** | -0.05 | Over-triggering: 1:1 tab_switch:intervention ratio in §5; behavioral alone caused interventions on every tab switch |
+| head_pose | **0.13** | +0.01 | Minimal adjustment to keep sum=1.0 |
+| blink | **0.07** | -0.01 | Minimal adjustment to keep sum=1.0 |
+
+Sum: 0.40 + 0.25 + 0.15 + 0.13 + 0.07 = **1.00** ✓
+
+### Pearson r status
+
+Grid search tool (`apps/api/scripts/ces_weight_grid_search.py`) implemented in S4-31.
+Pearson r target: > 0.6 (CES vs final quiz accuracy). Not yet computable (ces_final was
+NULL on all 117 sessions — D116 fixed in S4-6). Once 20 real sessions run with confirmed
+D116 fix and attention consent, execute:
+
+```bash
+python apps/api/scripts/export_calibration_data.py --output ces_calibration_export.csv
+python apps/api/scripts/ces_weight_grid_search.py --input ces_calibration_export.csv
+```
+
+Update Railway env vars to confirmed weights in S4-32.
+
+### Railway Deployment (S4-32)
+
+Set these env vars in Railway dashboard:
+```
+CES_WEIGHT_QUIZ=0.40
+CES_WEIGHT_TEACHBACK=0.25
+CES_WEIGHT_BEHAVIORAL=0.15
+CES_WEIGHT_HEAD_POSE=0.13
+CES_WEIGHT_BLINK=0.07
+```
