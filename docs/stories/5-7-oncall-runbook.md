@@ -1,6 +1,6 @@
 # Story 5-7 — On-call runbook written (5 most likely failure scenarios)
 
-Status: ready-for-dev
+Status: review (Tasks 1-4 done; Task 5, independent teammate test, still pending — see AC 7)
 
 ## Story
 
@@ -134,16 +134,16 @@ outage.
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — Scaffold `docs/ops/runbook.md` (AC: 1, 8)
-  - [ ] 1.1 Create `docs/ops/` (does not exist in the repo today — verified via `find`).
-  - [ ] 1.2 Write the doc header: owner rotation reference (W10-3), environment scope note
+- [x] Task 1 — Scaffold `docs/ops/runbook.md` (AC: 1, 8)
+  - [x] 1.1 Create `docs/ops/` (does not exist in the repo today — verified via `find`).
+  - [x] 1.2 Write the doc header: owner rotation reference (W10-3), environment scope note
         (single Railway deployment, no India region yet — ADR-001), links to
         `GET /api/admin/health` (deep_health) as the first diagnostic step for any incident.
-  - [ ] 1.3 Add the "tested by" sign-off block (AC 7) as an empty template at the bottom of the
+  - [x] 1.3 Add the "tested by" sign-off block (AC 7) as an empty template at the bottom of the
         doc, ready for Task 5.
 
-- [ ] Task 2 — Write the 5 mandatory scenario entries (AC: 2, 3, 5, and Q1–Q6 of Scale & Load)
-  - [ ] 2.1 **ARQ job stuck** — detection via `GET /api/admin/jobs` (status=running with a stale
+- [x] Task 2 — Write the 5 mandatory scenario entries (AC: 2, 3, 5, and Q1–Q6 of Scale & Load)
+  - [x] 2.1 **ARQ job stuck** — detection via `GET /api/admin/jobs` (status=running with a stale
         `started_at`) or waiting for the `reap_stale_generating_lessons` cron
         (`apps/api/app/workers/jobs/reap_stale_lessons.py`, runs at :00/:10/:20/:30/:40/:50,
         `arq_job_timeout_s`-bounded, D53/D91); resolution steps limited to: confirm via admin
@@ -153,24 +153,24 @@ outage.
         since ARQ needs Redis). Incorporate S4-1/S4-2's real load-test findings on ARQ behavior
         under load once those stories land (AC 5) — do not write this entry from documentation
         alone.
-  - [ ] 2.2 **Cost ceiling breach mid-pipeline** — detection via `GET /api/admin/costs`
+  - [x] 2.2 **Cost ceiling breach mid-pipeline** — detection via `GET /api/admin/costs`
         (bounded per Story 3-51/D59(a), `.limit(10_000)`, `truncated` flag) or
         `lesson_jobs.error` prefixed `cost_ceiling_exceeded:`; note the system's actual designed
         behavior is downshift-and-complete, not abort (`core/cost_tracker.py`'s
         `CostCeilingError`, `max_lesson_cost_usd = $3.00` default) — the runbook step is mostly
         confirm-this-is-expected-behavior, not "fix" a working control. Cross-reference D45 if
         the resolution ever involves manually re-triggering a lesson.
-  - [ ] 2.3 **Redis unreachable** — detection via `GET /api/admin/health` (`deep_health`'s
+  - [x] 2.3 **Redis unreachable** — detection via `GET /api/admin/health` (`deep_health`'s
         `redis` field) or Railway Redis dashboard; note real blast radius from actual code:
         ARQ cannot dequeue jobs at all, `core/circuit_breaker.py` and `core/cost_tracker.py`
         both depend on `get_redis()` (raises `RuntimeError` if `init_redis()` never completed),
         so this failure is upstream of "ARQ job stuck" and "cost ceiling," not independent of
         them — say so explicitly rather than presenting all 5 as siblings with no relationship.
-  - [ ] 2.4 **Supabase down** — detection via `GET /api/admin/health`'s `supabase` field;
+  - [x] 2.4 **Supabase down** — detection via `GET /api/admin/health`'s `supabase` field;
         resolution steps stay ≤5 by linking to Story 5-6's DR doc for the actual restore
         procedure (AC 6) rather than duplicating it — this entry's own steps are limited to
         confirm-and-communicate (status page / user-facing messaging), not restore mechanics.
-  - [ ] 2.5 **Pipeline node 500-loop** — detection via Langfuse traces (if wired — verify
+  - [x] 2.5 **Pipeline node 500-loop** — detection via Langfuse traces (if wired — verify
         against actual Sprint 0 wiring, don't assume) or repeated `lesson_jobs.node_outputs`
         entries for the same `last_node`; resolution references the REAL layered retry
         mechanism already in code: per-node `with_retry` (`core/retry.py`, 3 attempts critical /
@@ -182,20 +182,20 @@ outage.
         three layers failed to break it, which is itself the escalation trigger. Incorporate
         S4-2's real reliability-fix findings (AC 5) once landed.
 
-- [ ] Task 3 — Write the "6th scenario?" reconciliation section (AC 4)
-  - [ ] 3.1 Check Story 5-3's real shipped state (webhook handler exists? idempotency check
+- [x] Task 3 — Write the "6th scenario?" reconciliation section (AC 4)
+  - [x] 3.1 Check Story 5-3's real shipped state (webhook handler exists? idempotency check
         implemented? per epic-5 §Payments, `stripe_session_id` de-dupe is the stated design).
-  - [ ] 3.2 Write the recommendation with reasoning — do not leave "TBD" (CLAUDE.md's binding
+  - [x] 3.2 Write the recommendation with reasoning — do not leave "TBD" (CLAUDE.md's binding
         rule 5: a documented limitation with no decision is a defect wearing a decision's
         clothes; the same standard applies to an undecided reconciliation in a runbook).
-  - [ ] 3.3 If recommending inclusion as a 6th scenario, write it to the same ≤5-step,
+  - [x] 3.3 If recommending inclusion as a 6th scenario, write it to the same ≤5-step,
         detection/diagnosis/resolution shape as the other 5. If recommending a merged sub-case,
         state which existing entry it merges into and why (most likely candidate: it's a
         webhook delivery failure, not a pipeline failure — may not fit any of the 5 cleanly,
         which is itself part of the reasoning to write down).
 
-- [ ] Task 4 — Correct the epic-5 path/detail drift found during research (AC: 1, 8; Dev Notes)
-  - [ ] 4.1 Note in the runbook's header (or in this story's Dev Notes, not silently) that
+- [x] Task 4 — Correct the epic-5 path/detail drift found during research (AC: 1, 8; Dev Notes)
+  - [x] 4.1 Note in the runbook's header (or in this story's Dev Notes, not silently) that
         epic-5's Technical Scope table names `backend/routers/payments.py` for the payments
         router — this repo's real, verified convention is
         `apps/api/app/modules/{module}/router.py` (confirmed via `apps/api/app/modules/admin/
@@ -337,8 +337,37 @@ outage.
 
 ### Agent Model Used
 
+Claude Sonnet 5 (claude-sonnet-5)
+
 ### Debug Log References
+
+None — documentation-only story, no test suite run required by AC 8.
 
 ### Completion Notes List
 
+- Re-verified every mechanism cited in the runbook against real, current code before writing
+  (not from memory/prose) per Dev Notes: `admin/router.py`'s 5 real endpoint paths
+  (`/api/admin/jobs`, `/jobs/{job_id}`, `/jobs/{job_id}/retry`, `/costs`, `/health`),
+  `reap_stale_lessons.py`'s cron schedule and `_REAP_BATCH_LIMIT=100`, `cost_tracker.py`'s
+  `max_lesson_cost_usd=$3.00` default, `circuit_breaker.py`'s `FAILURE_THRESHOLD=5` /
+  `FAILURE_WINDOW_SECONDS=120` / `RECOVERY_TIMEOUT_SECONDS=600`, `retry.py`'s retryable/
+  non-retryable status sets, `workers/main.py`'s `max_tries=3` / `job_timeout=arq_job_timeout_s`
+  (1800s default). All matched the story's Dev Notes exactly — no drift found since story
+  research.
+- AC 4 reconciliation: confirmed via `gh pr view 157` and `git ls-tree main` that the real
+  payment vendor is Razorpay (not Stripe — Stripe Checkout was closed unmerged), that PR #157
+  (Razorpay backend) is open+approved but not yet merged, and that `main` has no payments module
+  at all today (only stale local `__pycache__` from a prior branch checkout, no tracked source).
+  Recommendation given: add payment webhook failure as its own 6th scenario once #157 merges and
+  runs against real traffic — explicitly deferred, not fabricated from guesswork, per the
+  story's own Sprint 4 Sequencing (depends on 5-3 shipping).
+- Supabase-down entry (AC 6) written with its DR-doc link explicitly marked pending — Story 5-6
+  has not started, so the entry states this gap rather than inventing restore steps or silently
+  duplicating an untested procedure.
+- Task 5 (independent teammate test) intentionally left unchecked — requires a teammate who did
+  not author this runbook, per AC 7. Story status set to `review`, not `done`.
+
 ### File List
+
+- `docs/ops/runbook.md` (new)
+- `docs/stories/5-7-oncall-runbook.md` (this file)
