@@ -46,10 +46,23 @@ function SkipForwardIcon() {
   );
 }
 
+function NextIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="currentColor" aria-hidden>
+      <path d="M6 4l8 6-8 6V4z" />
+      <rect x="15" y="4" width="2" height="12" rx="1" />
+    </svg>
+  );
+}
+
 export function PlayerControls() {
   const status        = usePlayerStore((s) => s.status);
   const play          = usePlayerStore((s) => s.play);
   const pause         = usePlayerStore((s) => s.pause);
+  const pauseForIntervention = usePlayerStore((s) => s.pauseForIntervention);
+  const pauseReason      = usePlayerStore((s) => s.pauseReason);
+  const skipTransitionPauseForSegment = usePlayerStore((s) => s.skipTransitionPauseForSegment);
+  const setSkipTransitionPauseForSegment = usePlayerStore((s) => s.setSkipTransitionPauseForSegment);
   const audioPositionMs  = usePlayerStore((s) => s.audioPositionMs);
   const audioDurationMs  = usePlayerStore((s) => s.audioDurationMs);
   const requestSeek      = usePlayerStore((s) => s.requestSeek);
@@ -60,8 +73,21 @@ export function PlayerControls() {
 
   const totalSegments = lesson?.segments.length ?? 0;
   const isPlaying  = status === 'PLAYING';
+  // Story 2-57 AC3: the transport button becomes "Next" (resume immediately)
+  // only during the auto-triggered slide-transition pause -- a manual pause
+  // or an intervention pause still show the normal Play button, since only
+  // the transition pause has a race-against-a-timer the button is meant to
+  // preempt.
+  const isSlideTransitionPause = status === 'PAUSED' && pauseReason === 'slide-transition';
   const canControl = status === 'IDLE' || status === 'PLAYING' || status === 'PAUSED';
   const canSeek    = canControl && audioDurationMs > 0;
+  // AC11 (revised — review finding while writing this story's tests):
+  // available while PLAYING (the primary case) OR already PAUSED for any
+  // OTHER reason (e.g. an in-progress slide-transition auto-pause) -- a
+  // student must be able to ask a question without first resuming just to
+  // re-pause. Not available once the Ask-Tutor panel is already open
+  // (pauseReason === 'intervention'), and not while IDLE/QUIZ/TEACH_BACK/ENDED.
+  const canAskTutor = (status === 'PLAYING' || status === 'PAUSED') && pauseReason !== 'intervention';
 
   const progressPct = audioDurationMs > 0
     ? (audioPositionMs / audioDurationMs) * 100
@@ -116,6 +142,27 @@ export function PlayerControls() {
         )}
       </div>
 
+      {/* Story 2-57: Ask Tutor + skip-pause-for-segment row */}
+      <div className="flex items-center justify-between gap-3 px-5 pt-2 text-xs">
+        <label className="flex items-center gap-1.5 text-neutral-500 select-none cursor-pointer">
+          <input
+            type="checkbox"
+            checked={skipTransitionPauseForSegment}
+            onChange={(e) => setSkipTransitionPauseForSegment(e.target.checked)}
+            className="rounded border-neutral-300 text-[var(--accent-secondary)] focus:ring-[var(--accent-secondary)]"
+          />
+          Skip pause for this segment
+        </label>
+        <button
+          type="button"
+          onClick={pauseForIntervention}
+          disabled={!canAskTutor}
+          className="text-neutral-500 hover:text-neutral-900 font-medium disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        >
+          Ask Tutor
+        </button>
+      </div>
+
       {/* Controls row */}
       <div className="flex items-center gap-3 px-5 py-3">
         {/* Left: segment counter */}
@@ -136,15 +183,16 @@ export function PlayerControls() {
           </button>
 
           <button
-            onClick={isPlaying ? pause : play}
+            onClick={isSlideTransitionPause ? play : isPlaying ? pause : play}
             disabled={!canControl}
-            aria-label={isPlaying ? 'Pause' : 'Play'}
+            aria-label={isSlideTransitionPause ? 'Next' : isPlaying ? 'Pause' : 'Play'}
+            title={isSlideTransitionPause ? 'Skip the pause and continue now' : undefined}
             className="w-11 h-11 rounded-full flex items-center justify-center text-primary
                        bg-[var(--accent-secondary)] hover:brightness-105
                        active:scale-95 transition-all duration-150
                        disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {isPlaying ? <PauseIcon /> : <PlayIcon />}
+            {isSlideTransitionPause ? <NextIcon /> : isPlaying ? <PauseIcon /> : <PlayIcon />}
           </button>
 
           <button

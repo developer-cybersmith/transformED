@@ -200,6 +200,88 @@ describe('play / pause', () => {
     usePlayerStore.getState().pause();
     expect(usePlayerStore.getState().status).toBe('IDLE');
   });
+
+  it('pause() sets pauseReason to "manual" (Story 2-57)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pause();
+    expect(usePlayerStore.getState().pauseReason).toBe('manual');
+  });
+
+  it('play() clears pauseReason back to null on every resume (Story 2-57)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pause();
+    expect(usePlayerStore.getState().pauseReason).toBe('manual');
+    usePlayerStore.getState().play();
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+  });
+});
+
+describe('pauseForSlideTransition / pauseForIntervention (Story 2-57 / BR-5)', () => {
+  it('pauseForSlideTransition() pauses and sets pauseReason to "slide-transition" while PLAYING', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+  });
+
+  it('pauseForSlideTransition() does NOT call saveProgress (AC7 — no write per slide boundary)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem');
+    usePlayerStore.getState().pauseForSlideTransition();
+    expect(setItemSpy).not.toHaveBeenCalled();
+  });
+
+  it('pauseForSlideTransition() is a no-op when not PLAYING', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().pauseForSlideTransition();
+    expect(usePlayerStore.getState().status).toBe('IDLE');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+  });
+
+  it('pauseForIntervention() pauses and sets pauseReason to "intervention" while PLAYING', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('intervention');
+  });
+
+  it('pauseForIntervention() is a no-op when not PLAYING', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().status).toBe('IDLE');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+  });
+
+  it('a second pauseForSlideTransition() after resuming sets pauseReason again (repeated transitions keep working)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    usePlayerStore.getState().play();
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+    usePlayerStore.getState().pauseForSlideTransition();
+    expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+  });
+});
+
+describe('setSkipTransitionPauseForSegment (Story 2-57 AC10)', () => {
+  it('sets skipTransitionPauseForSegment', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().skipTransitionPauseForSegment).toBe(false);
+    usePlayerStore.getState().setSkipTransitionPauseForSegment(true);
+    expect(usePlayerStore.getState().skipTransitionPauseForSegment).toBe(true);
+  });
+
+  it('advanceSegment() resets skipTransitionPauseForSegment to false for the new segment', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().setSkipTransitionPauseForSegment(true);
+    usePlayerStore.getState().advanceSegment();
+    expect(usePlayerStore.getState().skipTransitionPauseForSegment).toBe(false);
+  });
 });
 
 describe('setCurrentSlide', () => {
