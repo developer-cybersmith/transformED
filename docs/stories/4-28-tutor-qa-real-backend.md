@@ -224,7 +224,7 @@ by an explicit per-session cap, not silence and not an unbounded LLM bill.
     measured) defaults, stated as such in each field's description.
   - [x] `docs/DEFECT-REGISTER.md`: D149 turned out not to exist in this file at all yet — it only
     lives on the still-unmerged `bug-resolution/br-5-slide-transition-pause` branch (PR #182).
-    Registered fresh as **D152** instead of editing a row that isn't here, cross-referencing D149
+    Registered fresh as **D158** instead of editing a row that isn't here, cross-referencing D149
     by name/branch/PR so whoever merges #182 can reconcile rather than collide.
   - [x] `docs/dev4-tracker.md`: this story doesn't fit the existing Sprint/BR sections cleanly
     (it's Phase 2, cross-module) — add a new "Phase 2" section rather than forcing it into an
@@ -314,7 +314,7 @@ Claude Sonnet 5 (claude-sonnet-5), 2026-09-04.
 - AC1–AC7 all met. New endpoint + service function + 26 tests (17 endpoint-level, 9
   provider-level), all external dependencies (Supabase, Redis, embeddings provider, LLM provider)
   mocked — no real network/DB call anywhere.
-- `docs/DEFECT-REGISTER.md`: registered fresh as **D152** rather than editing D149 (which turned
+- `docs/DEFECT-REGISTER.md`: registered fresh as **D158** rather than editing D149 (which turned
   out not to exist on `main` at all — still only on unmerged PR #182) — cross-references D149 by
   name/branch/PR explicitly so whoever merges #182 can reconcile rather than collide.
 - `docs/dev4-tracker.md`: new "Phase 2 — Post-MVP Features" section added (didn't fit the
@@ -338,11 +338,23 @@ Claude Sonnet 5 (claude-sonnet-5), 2026-09-04.
 - `apps/api/app/providers/llm/openai.py` — `OpenAILLMProvider.complete_with_meta()`,
   `_price_tokens()` (extracted), `_maybe_accumulate_cost()` refactored to call it
 - `supabase/migrations/20260905000000_match_tutor_chunks_rpc.sql` — new, `match_tutor_chunks` RPC
-- `apps/api/tests/test_tutor_question_endpoint.py` — new, 17 tests
+- `apps/api/tests/unit/test_tutor_question_endpoint.py` — new, 17 tests
 - `apps/api/tests/unit/test_complete_with_meta.py` — new, 9 tests
-- `docs/DEFECT-REGISTER.md` — new D152 entry
+- `docs/DEFECT-REGISTER.md` — new D158 entry
 - `docs/dev4-tracker.md` — new Phase 2 section, P2-1 entry
 - `docs/stories/4-28-tutor-qa-real-backend.md` — this file
+
+### Pre-merge review notes (2026-09-05)
+
+- **Test file moved**: `test_tutor_question_endpoint.py` was originally placed at the tests/ root,
+  which `.github/workflows/ci.yml`'s gating step (`pytest tests/unit tests/integration`) never
+  runs — it would only ever have executed in the advisory, `continue-on-error: true` full-suite
+  step, identical to the gap D150 (same author) had just fixed for a different file. Moved to
+  `tests/unit/` so these 17 tests actually gate CI.
+- **ID renumbered D152 → D158**: correct at the time this story checked main (D151 was the highest
+  allocated id), but D152 through D157 were all independently claimed by other PRs that merged
+  while this one was open (F2-2's D152, D153/D156, D154, D155, D157). Renumbered to D158, the
+  first free id as of this merge.
 
 ### References
 

@@ -3,7 +3,7 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-04 (Phase 2 P2-1 added and completed — Tutor Q&A real backend, D152, closing D149)
+**Last updated:** 2026-09-04 (Phase 2 P2-1 added and completed — Tutor Q&A real backend, D158, closing D149)
 **Overall status:** 37/49 Completed · 6 Partial · 6 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
@@ -824,7 +824,7 @@ MAX_DISTRACTION_PER_SESSION=3
 > independently mergeable, unlike the Bug Resolution sprint's four originally-coupled tasks).
 
 <!-- CHECK:p2_1_tutor_qa_real_backend -->
-- [Completed] **Tutor Q&A: real backend (RAG + LLM_TUTOR) — closes D149/registered as D152** ✅ 2026-09-04
+- [Completed] **Tutor Q&A: real backend (RAG + LLM_TUTOR) — closes D149/registered as D158** ✅ 2026-09-04
   - Picked up opportunistically, cross-module (assessment/, not tutor/) — D149's proposed owner
     was "TBD/Dev 3," never started; Dev 2's scoping email named the delivery/FSM/rate-limiting
     calls as mine specifically.
@@ -848,7 +848,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - Story: `docs/stories/4-28-tutor-qa-real-backend.md`
   - **AC MET:** AC1–AC7 all satisfied — 26 new tests (17 `test_tutor_question_endpoint.py` + 9
     `test_complete_with_meta.py`), all external dependencies mocked, `ruff`/`mypy` clean.
-    Registered as **D152** in `docs/DEFECT-REGISTER.md` (D149 itself doesn't exist on `main` yet —
+    Registered as **D158** in `docs/DEFECT-REGISTER.md` (D149 itself doesn't exist on `main` yet —
     still on unmerged PR #182 — so this cross-references it rather than editing a row that isn't
     here).
 
