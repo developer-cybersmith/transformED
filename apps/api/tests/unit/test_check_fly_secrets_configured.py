@@ -156,8 +156,8 @@ def test_fetch_configured_secret_names_parses_real_flyctl_json_shape() -> None:
         returncode=0,
         stdout=json.dumps(
             [
-                {"Name": "SUPABASE_URL", "Digest": "abc123", "CreatedAt": "2026-08-01T00:00:00Z"},
-                {"Name": "OPENAI_API_KEY", "Digest": "def456", "CreatedAt": "2026-08-01T00:00:00Z"},
+                {"name": "SUPABASE_URL", "digest": "abc123", "status": "Deployed"},
+                {"name": "OPENAI_API_KEY", "digest": "def456", "status": "Deployed"},
             ]
         ),
         stderr="",
@@ -225,7 +225,7 @@ def test_fetch_configured_secret_names_raises_loud_when_flyctl_is_not_executable
     ("label", "stdout"),
     [
         ("object instead of array", json.dumps({"error": "app not found"})),
-        ("list of dicts missing Name key", json.dumps([{"Digest": "abc123"}])),
+        ("list of dicts missing name key", json.dumps([{"digest": "abc123"}])),
         ("literal null", "null"),
         ("list of bare strings, not objects", json.dumps(["SUPABASE_URL", "OPENAI_API_KEY"])),
     ],
@@ -234,7 +234,7 @@ def test_fetch_configured_secret_names_raises_loud_on_valid_json_wrong_shape(
     label: str, stdout: str
 ) -> None:
     """[Review][Patch]: `flyctl secrets list --json` returning syntactically
-    VALID but wrongly-shaped JSON (not a list of {"Name": ...} objects) used
+    VALID but wrongly-shaped JSON (not a list of {"name": ...} objects) used
     to raise an uncaught KeyError/TypeError past main()'s `except
     RuntimeError` entirely -- json.loads succeeds, so the pre-existing
     JSONDecodeError handler never fires. Reproduced live by the Test Coverage

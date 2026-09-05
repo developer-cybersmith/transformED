@@ -130,22 +130,28 @@ def _fetch_configured_secret_names(app: str) -> set[str]:
             f"output: {exc}. Refusing to report a pass on unparseable output."
         ) from exc
     # [Review][Patch]: syntactically VALID JSON in an unexpected shape (not a
-    # list of {"Name": ...} objects -- an error object, null, or a list of
+    # list of {"name": ...} objects -- an error object, null, or a list of
     # bare strings) used to raise an uncaught KeyError/TypeError here, past
     # main()'s `except RuntimeError` entirely. Reproduced live by the Test
     # Coverage review layer with real payloads; independently found by Edge
     # Case Hunter and Blind Hunter. Validate the shape explicitly so every
     # variant resolves to the same clean RuntimeError as every other
     # failure mode, never a raw crash.
+    #
+    # D157: the review's own "live-verified" claim was never actually checked
+    # against a real `flyctl secrets list --json` payload -- the real key is
+    # lowercase "name" (confirmed live in a failed production deploy run,
+    # 2026-09-05: real output was `{"name": ..., "digest": ..., "status": ...}`),
+    # not "Name". This broke every deploy from the moment D150 merged.
     if not isinstance(rows, list) or not all(
-        isinstance(row, dict) and "Name" in row for row in rows
+        isinstance(row, dict) and "name" in row for row in rows
     ):
         raise RuntimeError(
             f"`flyctl secrets list --app {app} --json` returned valid JSON in an "
-            f'unexpected shape (expected a list of objects each with a "Name" key, '
+            f'unexpected shape (expected a list of objects each with a "name" key, '
             f"got: {rows!r}). Refusing to report a pass on unexpected output shape."
         )
-    return {row["Name"] for row in rows}
+    return {row["name"] for row in rows}
 
 
 def main() -> int:

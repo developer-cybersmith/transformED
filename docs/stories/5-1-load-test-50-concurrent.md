@@ -1,6 +1,6 @@
 # Story 5-1 — Load test: 50 concurrent lesson generations
 
-Status: in-progress (harness built + reviewed; real 50-concurrent execution not yet run — pending explicit go-ahead on real spend)
+Status: in-progress (harness built + reviewed + merged, PR #178; run #9 executed 2026-09-03 but measured a real provider outage, not steady-state capacity — see D129/D45 in DEFECT-REGISTER.md; a clean run with both providers healthy is still pending)
 
 ## Story
 
