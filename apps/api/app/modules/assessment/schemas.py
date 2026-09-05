@@ -26,6 +26,7 @@ __all__ = [
     "SessionCreate",
     "SessionCreated",
     "SessionCompleted",
+    "SessionSummary",
     "TutorQuestionSubmission",
     "TutorQuestionResult",
     "LearnerContextDNA",
@@ -98,6 +99,25 @@ class SessionCompleted(BaseModel):
 
     session_id: str
     ended_at: str
+
+
+class SessionSummary(BaseModel):
+    """One row of `GET /sessions` — Story 2-58 (BR-7).
+
+    Deliberately lighter than `SessionReport` (router.py): enough to render a
+    list card and link to `/reports/{session_id}` for the full report, not a
+    second copy of the full report's own fields.
+    """
+
+    session_id: str
+    lesson_id: str
+    lesson_title: str | None = None
+    tier: str
+    tier_label: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    completed: bool
+    ces_score: float | None = None
 
 
 class QuizAnswer(BaseModel):
