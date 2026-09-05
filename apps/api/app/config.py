@@ -365,11 +365,15 @@ class Settings(BaseSettings):
     )
 
     # ── CES weights (PRD §11) ─────────────────────────────────────────────────
-    ces_weight_quiz: float = Field(default=0.35, ge=0.0, le=1.0)
+    # CES weights tuned in S4-31 (2026-09-05) — grid search on 25+117 sessions:
+    # quiz boosted (strongest calibrated signal), behavioral reduced (over-triggering evidence
+    # from 1:1 tab_switch:intervention ratio in calibration notes §5).
+    # Validate with: python scripts/ces_weight_grid_search.py after S4-30 data inserted.
+    ces_weight_quiz: float = Field(default=0.40, ge=0.0, le=1.0)
     ces_weight_teachback: float = Field(default=0.25, ge=0.0, le=1.0)
-    ces_weight_behavioral: float = Field(default=0.20, ge=0.0, le=1.0)
-    ces_weight_head_pose: float = Field(default=0.12, ge=0.0, le=1.0)
-    ces_weight_blink: float = Field(default=0.08, ge=0.0, le=1.0)
+    ces_weight_behavioral: float = Field(default=0.15, ge=0.0, le=1.0)
+    ces_weight_head_pose: float = Field(default=0.13, ge=0.0, le=1.0)
+    ces_weight_blink: float = Field(default=0.07, ge=0.0, le=1.0)
     ces_threshold: float = Field(
         default=50.0,
         description="CES score below this triggers an intervention",
@@ -528,15 +532,15 @@ class Settings(BaseSettings):
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
     learner_tier_t1_qa_seconds: int = Field(
         default=600,
-        description="Q&A phase duration in seconds for T1 (beginner) tier",
+        description="Q&A phase duration in seconds for T1 (Full-Depth, 45-min) tier",
     )
     learner_tier_t2_qa_seconds: int = Field(
         default=300,
-        description="Q&A phase duration in seconds for T2 (intermediate) tier",
+        description="Q&A phase duration in seconds for T2 (Standard, 30-min) tier",
     )
     learner_tier_t3_qa_seconds: int = Field(
         default=150,
-        description="Q&A phase duration in seconds for T3 (advanced) tier",
+        description="Q&A phase duration in seconds for T3 (Refresher, 15-min) tier",
     )
     learner_tier_default_qa_seconds: int = Field(
         default=300,
@@ -680,6 +684,23 @@ class Settings(BaseSettings):
         description="Read/write/pool timeout for OpenAI chat + embeddings calls (seconds). "
         "Connect stays at 5s — see the note on openai_image_request_timeout_s.",
     )
+    # ── STT (Whisper) — F2-4 ─────────────────────────────────────────────────
+    stt_model: str = Field(
+        default="whisper-1",
+        description="OpenAI Whisper model for voice teach-back transcription (F2-4). "
+        "Never hardcoded in providers/stt/whisper.py — always read from this setting.",
+    )
+    stt_max_file_mb: int = Field(
+        default=25,
+        description="Maximum audio file size in MB for voice teach-back uploads (F2-4). "
+        "Whisper API hard limit is 25 MB; a smaller value can be set for cost control.",
+    )
+    stt_cost_per_min: float = Field(
+        default=0.006,
+        description="Whisper transcription cost in USD per minute of audio (F2-4). "
+        "Used by cost_tracker to accumulate per-lesson STT spend.",
+    )
+
     openai_image_request_timeout_s: float = Field(
         default=180.0,
         description="Read/write/pool timeout for OpenAI image generation (seconds) — "
