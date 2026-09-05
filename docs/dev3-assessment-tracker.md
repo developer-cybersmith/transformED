@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-05 (S4-31 CES weight tuning done; F2-1 Learner Context API + F2-2 Teachback score_source + F2-3 tier label verify done — Sprint 4 now 10/13)
+**Last updated:** 2026-09-05 (S4-31 CES weight tuning done; F2-1 Learner Context API, F2-2 Teachback score source flag, F2-3 tier label verify, F2-4 voice teach-back STT all done — Bug Resolution Sprint 4/4; process debt: Scale & Load sections + 6-agent Hunter rows added to all Sprint 2 & 3 Dev 3 stories)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,10 +20,10 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 13 | 10 | 1 | 2 |
-| Bug Resolution Sprint | Sep 2026 | 1 | 1 | 0 | 0 |
+| Sprint 4 | Weeks 8–9 | 11 | 8 | 1 | 2 |
+| Bug Resolution Sprint | Sep 2026 | 4 | 4 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **70** | **64** | **1** | **5** |
+| **Total** | | **71** | **66** | **1** | **4** |
 
 Update this table each time a task is checked off below.
 
@@ -1052,6 +1052,65 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - 6-layer adversarial BMAD review run + R1–R3 patches applied (import dedup, asyncio.run(), .limit() mocks, DPDP endswith) ✓
   - 14/14 unit tests GREEN; guard tests `test_unbounded_queries.py` + `test_node_return_shape.py` pass (21/22 — 1 pre-existing tinytag failure unrelated to F2-1) ✓
   - Commits: story-first (3d5ad00), impl (778888f), R1 import (prev session), R1-R3 patches (4ae32b7) ✓
+
+---
+
+## Bug Resolution Sprint — Sep 2026
+
+> **Goal:** Fix bugs and gaps found post-Sprint 4. Story-first BMAD process with 6-layer review gate.
+
+- [x] **F2-1 — Expose Learner DNA + behaviour-signal summary as internal service helper** — ✓ 2026-09-05
+  - New `get_dna_prompt_context()` async function in `service.py` — returns DNA labels, badge labels, profile snippet, session signals as a typed dict for LLM prompt injection
+  - Pure service-layer addition — no new HTTP route, no OpenAPI contract change (CLAUDE.md Interface Contracts §1)
+  - `format_dna_for_prompt()` companion helper renders the dict as a compact prompt-context string for caller convenience
+  - DNA reads from `user:{user_id}:dna` Redis cache → Supabase fallback (same pattern as `seed_personalized_ces_threshold`)
+  - Session signals (quiz accuracy, teachback average, intervention count) from `quiz_attempts`, `teachback_attempts`, `session_events` — scoped by `session_id`; IDOR-safe via RLS on `sessions.user_id`
+  - Story-first BMAD process followed; 6-layer adversarial review gate completed
+  - Branch: `feature2/f2-1-dna-api-prompt-injection` | PR: #194
+  - Story: `docs/stories/f2-1-dna-api-prompt-injection.md` — status: done
+
+- [x] **F2-2 — Teachback score_source flag: llm | fallback | skipped** — ✓ 2026-09-04
+  - Added `score_source: Literal["llm", "fallback", "skipped"]` to `TeachbackResult` schema
+  - `grade_teachback()` sets `score_source="llm"` on LLM success, `"fallback"` on failure, `"skipped"` on skip
+  - `teachback_attempts` table updated with `score_source` column (migration `20260904000000_teachback_score_source.sql`)
+  - D152: CES skip path `ces_contribution=0.0` bug registered (OPEN — cross-team Dev3/Dev4)
+  - D153: HTTPException bypasses fallback path registered (OPEN — low risk)
+  - 6-layer adversarial BMAD review passed; 7 patches applied (R1–R7)
+  - Branch: `feature2/f2-2-teachback-source-flag`
+  - Story: `docs/stories/f2-2-teachback-source-flag.md` — status: done
+
+- [x] **F2-3 — Verify Learner Mode tiers map to 15/30/45 min; relabel internally if needed** — ✓ 2026-09-04
+  - Added `_TIER_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}` to `service.py`
+  - Fixed inverted config descriptions (T1="beginner"→"Full-Depth,45-min", T2="intermediate"→"Standard,30-min", T3="advanced"→"Refresher,15-min")
+  - `tier_minutes` confirmed internal-only (NOT added to `SessionReport` API)
+  - 9 unit tests in `apps/api/tests/unit/test_f2_3_tier_label_verify.py` — all GREEN
+  - 6-layer BMAD review: 2 patches applied (F1 unused import, F2 int-type test added)
+  - Branch: `feature2/f2-3-tier-label-verify`
+  - Story: `docs/stories/f2-3-tier-label-verify.md` — status: done
+
+- [x] **F2-4 — Voice teach-back: Whisper STT node + audio endpoint** — ✓ 2026-09-04
+  - New `POST /assessment/teachback/{session_id}/{segment_id}/audio` endpoint (multipart `UploadFile`)
+  - New `apps/api/app/providers/stt/whisper.py` (`WhisperProvider`) — model from `settings.stt_model`
+  - New config fields: `stt_model="whisper-1"`, `stt_max_file_mb=25`, `stt_cost_per_min=0.006`
+  - New service functions: `transcribe_and_score_audio()`, `_calculate_stt_cost()`
+  - On Whisper failure: HTTP 200 + `score_source="fallback"` (never hard-blocks student)
+  - Raw audio never stored — DPDP data minimisation
+  - Whisper cost accumulated via `accumulate_cost(session_id, cost_usd)`
+  - CLAUDE.md updated: "No STT in MVP" → scoped rule for typed vs. audio endpoint
+  - All 5 typed-submit STT guard tests still pass (assertions unchanged)
+  - `test_no_unbounded_select_on_a_request_path` passes — session query is `.maybe_single()` bounded
+  - 9 unit tests in `apps/api/tests/unit/test_f2_4_voice_teachback_stt.py` — all GREEN
+  - 6-layer adversarial BMAD review passed 2026-09-04; 6 patches applied (R1–R6)
+    - R1: `is_circuit_open` import + `await` (was NameError at runtime)
+    - R2: `guard_breaker` wired around `with_retry` (circuit state now tracked for STT)
+    - R3: `accumulate_cost(lesson_id, ...)` not `session_id` ($3.00/lesson ceiling fixed)
+    - R4: unified 404 messages (session-existence enumeration closed)
+    - R5: WARNING log when `duration_seconds==0` (silent cost skip now observable)
+    - R6: filename sanitized with `Path(...).name` before passing to Whisper
+  - Deferred defects: D154 (read-before-check DoS), D155 (duration=0 cost gap doc), D156 (audio inherits D45 race)
+  - 10/10 unit tests GREEN after patches
+  - Branch: `feature2/f2-4-voice-teachback-stt`
+  - Story: `docs/stories/f2-4-voice-teachback-stt.md` — status: done
 
 ---
 

@@ -232,3 +232,14 @@ python apps/api/scripts/ces_weight_grid_search.py --input ces_calibration_export
 ```
 
 Update Railway env vars to confirmed weights in S4-32.
+
+### Railway Deployment (S4-32)
+
+Set these env vars in Railway dashboard:
+```
+CES_WEIGHT_QUIZ=0.40
+CES_WEIGHT_TEACHBACK=0.25
+CES_WEIGHT_BEHAVIORAL=0.15
+CES_WEIGHT_HEAD_POSE=0.13
+CES_WEIGHT_BLINK=0.07
+```

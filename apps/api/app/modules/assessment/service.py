@@ -631,7 +631,8 @@ async def grade_teachback(
         session_id: UUID of the live session.
         lesson_id: UUID of the lesson whose JSONB content contains the segment.
         segment_id: ID of the segment the student just completed.
-        response_text: Student's typed teach-back (no STT, no timer, no duration_seconds).
+        response_text: Student's teach-back text (typed, or Whisper transcript from
+            F2-4 audio path).
         user_id: User UUID from the decoded JWT (for ownership check).
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
 
@@ -915,6 +916,114 @@ async def grade_teachback(
         feedback=feedback,
         score_source="llm",
     )
+
+
+def _calculate_stt_cost(duration_seconds: float) -> float:
+    """Return the Whisper transcription cost in USD for *duration_seconds* of audio.
+
+    Cost = (duration_seconds / 60) * settings.stt_cost_per_min.
+    Called after transcription so the caller can accumulate via cost_tracker.
+    """
+    settings = get_settings()
+    return (duration_seconds / 60.0) * settings.stt_cost_per_min
+
+
+async def transcribe_and_score_audio(
+    *,
+    session_id: str,
+    segment_id: str,
+    audio_bytes: bytes,
+    filename: str,
+    user_id: str,
+    supabase: Client,
+) -> TeachbackResult:
+    """Transcribe a voice teach-back recording and score it via the LLM rubric.
+
+    On successful transcription: calls grade_teachback() with the transcript as
+    response_text and returns the result with score_source="llm".
+
+    On transcription failure (Whisper API error, timeout, unsupported format):
+    returns HTTP 200 with score_source="fallback" and neutral scores — never raises.
+
+    Args:
+        session_id: UUID of the live session.
+        segment_id: ID of the segment the student just completed.
+        audio_bytes: Raw audio file contents (WAV, MP3, MP4, WEBM, etc.).
+        filename: Original filename — Whisper uses extension for format detection.
+        user_id: User UUID from the decoded JWT.
+        supabase: Synchronous Supabase client.
+
+    Returns:
+        TeachbackResult with score_source "llm" or "fallback".
+    """
+    from app.core.cost_tracker import accumulate_cost  # noqa: PLC0415 — lazy to avoid circular
+    from app.providers.stt.whisper import WhisperProvider  # noqa: PLC0415
+
+    # Load lesson_id from the session row so we can call grade_teachback.
+    # grade_teachback will re-validate ownership — two reads is acceptable for MVP.
+    session_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("lesson_id, user_id")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    session_row = single_row(session_resp)
+    if session_row is None or str(session_row["user_id"]) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
+        )
+    lesson_id: str = str(session_row["lesson_id"])
+
+    settings = get_settings()
+    provider = WhisperProvider(settings=settings)
+
+    try:
+        transcript, duration_seconds = await provider.transcribe(audio_bytes, filename)
+        cost = _calculate_stt_cost(duration_seconds)
+        if cost > 0:
+            await accumulate_cost(lesson_id, cost)
+        elif duration_seconds == 0.0:
+            logger.warning(
+                "Voice teach-back: Whisper returned duration=0 for session=%s — cost not tracked",
+                session_id,
+            )
+
+        result = await grade_teachback(
+            session_id=session_id,
+            lesson_id=lesson_id,
+            segment_id=segment_id,
+            response_text=transcript,
+            user_id=user_id,
+            supabase=supabase,
+        )
+        return result
+
+    except HTTPException:
+        raise  # session/segment validation errors propagate as-is
+    except Exception:
+        logger.warning(
+            "Voice teach-back transcription failed — returning fallback result",
+            exc_info=True,
+        )
+        return TeachbackResult(
+            session_id=session_id,
+            rubric_scores={
+                "accuracy": "Developing",
+                "completeness": "Developing",
+                "clarity": "Developing",
+            },
+            overall_score=50.0,
+            ces_contribution=12.5,
+            feedback=(
+                "Your audio could not be transcribed. "
+                "Please try again or submit a typed response instead."
+            ),
+            score_source="fallback",
+        )
 
 
 async def compute_ces_from_session_aggregates(

@@ -244,10 +244,32 @@ All 15 ACs satisfied. 25 new tests in `test_quiz_generator_tier.py` all pass. 8 
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one `quiz_generator_node` invocation per segment per lesson generation. Tier-aware question count: T1 → 3–5 questions, T2 → 2–3 questions, T3 → 1–2 questions. The LLM call (GPT-4o-mini via `settings.llm_mini`) receives the segment summary (~500–1,000 tokens) and returns a structured quiz JSON. Range: minimum 1 question (T3 floor), maximum 5 questions (T1 ceiling). Number of segments per lesson: typically 5–15 (bounded by `structure_max_sections = 15` — see Scale Contract Q5).
+
+**Q2 — Fixed budgets vs variable input**
+The `$3.00/lesson` ceiling applies. Quiz generation is one of the cheapest nodes (GPT-4o-mini, ~200–500 output tokens per segment). At 15 segments × 5 questions each at T1, total cost is well under $0.10. The tier value is read from LangGraph state (in-memory) — no Supabase read in this node. On LLM failure, the node raises (pipeline retries via ARQ checkpoint). No silent truncation of question count: the tier floor/ceiling is applied before the LLM call, so the prompt always requests a specific range.
+
+**Q3 — Scope of limits**
+Per-segment, per-lesson-generation job. The ARQ worker processes one lesson at a time per worker slot; horizontal scaling adds workers. Each `quiz_generator_node` invocation is independent (segments run in parallel via LangGraph fan-out in Phase 1).
+
+**Q4 — Unbounded reads/writes**
+- **Reads**: none from Supabase — all inputs come from LangGraph state (`segment_summary`, `tier`).
+- **Writes**: quiz questions are written to LangGraph state (in-memory), persisted to `lesson_jobs.node_outputs` as JSONB by the checkpoint pattern. One checkpoint write per node completion — bounded.
+No unbounded scans.
+
+**Q5 — Inherited caps**
+The tier value is inherited from the `segment_complexity_node` output (Story 3-28 builds on that). The 15-segment cap is inherited from `structure_max_sections` (see SCALE-CONTRACT.md Q5 — known limitation D-nn). Question count per tier is a static mapping defined in code — no external configuration drift.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A. `quiz_generator_node` runs inside an ARQ worker (single-process per job). Multiple segments run concurrently via LangGraph async fan-out, but each segment's node invocation is independent (no shared write targets within a single job). Cross-job concurrent runs for different lessons write to different `lesson_jobs` rows — no shared state.
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-20
-**Layers run:** Story Quality · Blind Hunter · Edge Case Hunter · Acceptance Auditor · Process Integrity
+**Layers run:** Story Quality · Blind Hunter · Edge Case Hunter · Acceptance Auditor · Process Integrity · Scale & Load Hunter
 **Outcome:** Changes Requested — 5 patch findings
 
 ### Review Findings
@@ -264,3 +286,4 @@ All 15 ACs satisfied. 25 new tests in `test_quiz_generator_tier.py` all pass. 8 
 - [x] [Review][Defer] D5 — AC-9 old-shape cache-miss integration path not end-to-end tested — deferred, story explicitly documents unit-test approach; sufficient coverage
 - [x] [Review][Defer] D6 — AC-11 _group_by_segment_id multi-accumulation waived — deferred, explicit story waiver; implementation trivially correct
 - [x] [Review][Defer] D7 — _TIER_QUIZ_COUNT_BAND not typed Final — deferred, matches _TIER_TOTAL_SLIDE_BAND pattern; coordinated fix needed for both constants
+- [x] [Scale & Load Hunter] PASS — No Supabase reads in this node; all inputs come from LangGraph state. Question count is tier-deterministic (T1: 3–5, T2: 2–3, T3: 1–2). LLM call bounded by `with_retry(max_attempts=3)` and `$3.00/lesson` ceiling. Bounded checkpoint write per segment. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section.
