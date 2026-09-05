@@ -372,7 +372,9 @@ def _session_row_to_summary(row: dict[str, Any]) -> SessionSummary:
     assumption about PostgREST's embed shape.
     """
     lesson = row.get("lessons") or {}
-    tier = lesson.get("tier") if lesson.get("tier") in _TIER_LABELS else "T2"
+    tier = "T2"  # safe default — get_session_report's own fallback for a missing/bad tier
+    if lesson.get("tier") in _TIER_LABELS:
+        tier = lesson["tier"]
     ces_final = row.get("ces_final")
     return SessionSummary(
         session_id=str(row["session_id"]),
