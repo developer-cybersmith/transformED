@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 __all__ = [
     "QuizAnswer",
@@ -26,6 +26,9 @@ __all__ = [
     "SessionCreate",
     "SessionCreated",
     "SessionCompleted",
+    "LearnerContextDNA",
+    "LearnerContextSession",
+    "LearnerContext",
 ]
 
 
@@ -119,26 +122,30 @@ class QuizResult(BaseModel):
 
 # ── Teachback schemas ──────────────────────────────────────────────────────────
 # Frozen contract (Sprint 1) — shape changes require 4-dev PR review.
-# NO transcript field (STT banned). NO duration_seconds field (implies timer).
+# NO transcript field on typed-submit schema (voice uses audio endpoint, F2-4).
+# NO duration_seconds field (implies a timer, banned — creates test anxiety).
 
 
 class TeachbackSubmission(BaseModel):
     session_id: str
     lesson_id: str
     segment_id: str
+    # F2-2: min_length moved from Field to model_validator so blank text is only
+    # rejected when is_skip=False.  max_length=4000 stays as a hard Field constraint.
     response_text: str = Field(
-        min_length=1, max_length=4000, description="Student's typed teach-back response"
+        default="", max_length=4000, description="Student's typed teach-back response"
     )
+    # F2-2: is_skip=False by default — backward-compatible; existing callers omitting
+    # it behave identically to before (blank text still raises 422).
+    is_skip: bool = Field(default=False)
 
-    @field_validator("response_text")
-    @classmethod
-    def response_text_not_blank(cls, v: str) -> str:
-        # D98 (was D80): min_length=1 counts characters, not content — a single space passes.
-        # Strip first so "   " is treated as empty and returned as 422, not forwarded
-        # to grade_teachback as substantively empty content that silently burns tokens.
-        if not v.strip():
+    @model_validator(mode="after")
+    def _validate_response_or_skip(self) -> TeachbackSubmission:
+        # D98 (was D80): a single space is not a valid response. Only enforce when
+        # is_skip=False; on skip, response_text is stored as "" (TEXT NOT NULL accepts "").
+        if not self.is_skip and not self.response_text.strip():
             raise ValueError("response_text must not be blank or whitespace-only")
-        return v
+        return self
 
 
 class TeachbackResult(BaseModel):
@@ -150,6 +157,9 @@ class TeachbackResult(BaseModel):
     overall_score: float
     ces_contribution: float
     feedback: str  # praise only (score >= 90) or praise + "\n\n" + correction (score < 90)
+    # F2-2 / F2-4: how the score was produced. "llm" = GPT-4o-mini rubric; "fallback" = pre-computed
+    # default (LLM or STT unavailable); "skipped" = student chose to skip.
+    score_source: Literal["llm", "fallback", "skipped"] = "llm"
 
 
 # ── Onboarding schemas ─────────────────────────────────────────────────────────
@@ -200,3 +210,46 @@ class ConsentRecord(BaseModel):
     consent_type: str
     policy_version: str
     consented_at: str | None = None
+
+
+# ── Learner context schemas (Story F2-1) ───────────────────────────────────────
+# Internal endpoint for tutor prompt injection (Dev 4 state machine).
+# Called by tutor module with student's own JWT — never displayed directly to student.
+# Raw numeric dimension values are NOT exposed; dimension_labels uses descriptive bands.
+
+
+class LearnerContextDNA(BaseModel):
+    """Historical Learner DNA for one student — descriptive bands only, no raw floats."""
+
+    badge_labels: list[str]
+    profile_text: str | None  # always ends with DPDP Act 2023 disclaimer when not None
+    session_count: int
+    dimension_labels: dict[str, str]  # 9 dimension keys → band: strong|developing|building|emerging
+
+
+class LearnerContextSession(BaseModel):
+    """Current session engagement signals.
+
+    Derived from quiz_attempts, teachback_attempts, and ces_final.
+    """
+
+    quiz_accuracy: float | None = None  # correct / total; None when no attempts
+    quiz_total: int = 0
+    teachback_score: float | None = None  # avg score 0-100; None when no attempts
+    teachback_count: int = 0
+    ces_score: float | None = None  # from sessions.ces_final; None when still in progress
+
+
+class LearnerContext(BaseModel):
+    """Combined learner context for tutor prompt injection (Story F2-1).
+
+    Returned by GET /api/assessment/session/{session_id}/learner-context.
+    prompt_text is ready to prepend to an LLM system prompt — descriptive language only,
+    never raw numeric dimension values.
+    """
+
+    session_id: str
+    user_id: str
+    dna: LearnerContextDNA | None = None  # None when student has not completed onboarding
+    current_session: LearnerContextSession
+    prompt_text: str  # "" when no context exists; never null

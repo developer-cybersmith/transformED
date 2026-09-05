@@ -169,3 +169,12 @@ this section lists what applied to this story specifically.
   merges instead of explicit merge commits, which made the git log read as stacked when it wasn't.
 - [ ] [Review][Dismiss] `lessons(user_id)` selected but unused in `retry_job` — harmless; admin
   retry has no per-user ownership check by design (an admin operator, not the lesson's owner).
+
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | `## Scale & Load` section present and answers all 6 SCALE-CONTRACT.md questions. No unbounded queries identified; all reads carry `.limit()` / `.maybe_single()` / `count=` or a `# BOUNDED:` justification per the story's own analysis. Inherited caps re-derived where noted in the Scale & Load section. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.
