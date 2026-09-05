@@ -644,6 +644,28 @@ This means:
 
 ---
 
+## D152 — Skip path writes `ces_contribution=0.0` instead of redistributing CES weights at runtime
+
+**Status:** OPEN · **Owner:** Dev 3 / Dev 4 (cross-team) · **Detected:** 2026-09-03 (F2-2 code review, R8)
+
+When `is_skip=True`, `grade_teachback` returns `ces_contribution=0.0` (Story F2-2 AC6, by spec). However, the real-time CES formula in the Dev 4 state machine still expects a teach-back contribution for that segment window. The CLAUDE.md CES formula specifies weight redistribution when `teachback_score is None` (`CES = quiz_accuracy×0.467 + behavioral×0.267 + head_pose×0.160 + blink×0.107`), but that redistribution must happen in the CES evaluator (Dev 4 territory), not in `grade_teachback`. As of F2-2, Dev 4's CES consumer receives `ces_contribution=0.0` on skip rather than the redistribution signal, which may suppress the CES below the intervention threshold artificially (a skipped teach-back should be weight-neutral, not zero-additive).
+
+**Resolution path:** Dev 3 and Dev 4 must agree on the inter-module contract. Options: (a) Dev 4 reads `score_source` from the WS message and triggers redistribution internally; (b) Dev 3 passes `ces_contribution=None` on skip to signal "no data, redistribute". Either requires a 4-dev PR review per CLAUDE.md §16 (frozen WS contract). Deferring to Sprint 4 CES calibration sprint.
+
+**Enforcement:** DISCIPLINE — no guard test exists; tracked here per binding rule 5.
+
+---
+
+## D153 — `HTTPException` raised inside `score_teachback` bypasses the fallback path
+
+**Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-09-03 (F2-2 code review, R9)
+
+`grade_teachback` has an explicit `except HTTPException: raise` guard before the generic `except Exception` fallback handler. This is correct for the JWT/dependency path (where an `HTTPException` from an upstream service should propagate), but `score_teachback` itself could theoretically raise an `HTTPException` (e.g. if an internal validation step does so). In that case the response would be a 5xx to the client rather than the graceful `score_source="fallback"` HTTP 200 path. Risk is LOW because the OpenAI SDK raises `openai.APIError` (not `HTTPException`) and `score_teachback` contains no direct `raise HTTPException`. Accepted as low-risk for MVP; revisit if `score_teachback` signature changes.
+
+**Enforcement:** DISCIPLINE — no guard test exists; tracked here per binding rule 5.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
