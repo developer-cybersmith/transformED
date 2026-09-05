@@ -1,9 +1,12 @@
 """
-Sarvam AI Bulbul v2 TTS provider implementation.
+Sarvam AI Bulbul v3 TTS provider implementation.
 
 Responsibilities
 ----------------
-- Implements TTSProvider using Sarvam's Bulbul v2 text-to-speech HTTP API.
+- Implements TTSProvider using Sarvam's Bulbul v3 text-to-speech HTTP API
+  (D148: was `v2` until 2026-09-04 -- Sarvam deprecated `v2` server-side;
+  see this module's request body for the explicit `model` pin and D148 in
+  DEFECT-REGISTER.md for the full incident).
 - Returns (audio_bytes, word_timestamps) tuples — timestamps always empty
   (Story 2-8 scope decision: slide-level timestamp mapping is deferred to a
   follow-up story; Narration.timestamps has no min_length constraint).
@@ -31,13 +34,17 @@ this module's real HTTP-response handling:
    Fixed to decode `response.json()["audios"][i]` per item.
 
 A third constraint (found while designing the fix, not assumed from docs):
-`inputs[]` also caps at 3 items per request (a real 400 names "List should
-have at most 3 items"). A long segment therefore needs multiple BATCHED
-requests, each ≤3 chunks, all within one logical `synthesize()` call --
-still exactly one circuit-breaker outcome (Story 2-32 AC-3 unchanged).
-Every batch's decoded WAV clips are concatenated via the `wave` module
-(real PCM-frame concatenation under one header, not naive byte concatenation
-of multiple complete WAV files, which produces an invalid multi-header file).
+`inputs[]` also capped at 3 items per request under `bulbul:v2` (a real 400
+named "List should have at most 3 items"). A long segment therefore needed
+multiple BATCHED requests, each <=3 chunks, all within one logical
+`synthesize()` call -- still exactly one circuit-breaker outcome (Story 2-32
+AC-3 unchanged). D149 (2026-09-04): under `bulbul:v3` this cap is now 1, not
+3 -- `v3` batches multiple inputs into ONE combined clip per request rather
+than one clip per input, so sending more than 1 at a time silently mismatches
+clip count against input count. Every request's decoded WAV clip is
+concatenated (one request per chunk now, still via the `wave` module -- real
+PCM-frame concatenation under one header, not naive byte concatenation of
+multiple complete WAV files, which produces an invalid multi-header file).
 
 D89 (Story 3-52): a real stakeholder reported narration speed as "very fast"
 in real generated-lesson playback. Sarvam's real `pace` request parameter
@@ -74,9 +81,17 @@ _SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
 # own 400 error bodies, not assumed from docs. Neither is documented in
 # Sarvam's public API reference at the time these were found.
 _SARVAM_MAX_CHARS_PER_INPUT = 500
-_SARVAM_MAX_INPUTS_PER_REQUEST = 3
+# D149 (2026-09-04): was 3 (a real, documented v2 cap: "List should have at
+# most 3 items"). Dropped to 1 after confirming live that `bulbul:v3` (D148)
+# batches multiple `inputs[]` into ONE combined audio clip per request, not
+# one clip per input like v2 did -- every real request with >1 input now
+# raises "returned 1 audio clips for N inputs". Sending exactly one input
+# per request sidesteps the mismatch entirely; the real 3-per-request cap
+# above may or may not still apply to v3, but there is no reason to batch
+# again unless a per-request-count cost/latency need reappears.
+_SARVAM_MAX_INPUTS_PER_REQUEST = 1
 
-# Sarvam Bulbul v2 pricing (USD per character) — same figure tts_node's own
+# Sarvam Bulbul v3 pricing (USD per character) — same figure tts_node's own
 # cost-tracking uses (graph.py's _synthesize_with_fallback imports this
 # constant rather than keeping a private duplicate, so there is one number,
 # not two that can drift). Documented placeholder, not a verified invoiced
@@ -175,7 +190,7 @@ def _concatenate_wav_clips(wav_clips: list[bytes]) -> bytes:
 
 
 class SarvamTTSProvider(TTSProvider):
-    """Primary TTS provider — Sarvam AI Bulbul v2."""
+    """Primary TTS provider — Sarvam AI Bulbul v3."""
 
     def __init__(self, lesson_id: str | None = None) -> None:
         from app.config import get_settings
@@ -205,7 +220,7 @@ class SarvamTTSProvider(TTSProvider):
         text: str,
         voice_id: str,
     ) -> tuple[bytes, list[dict[str, Any]]]:
-        """Synthesise *text* with Sarvam Bulbul v2, recording exactly one breaker
+        """Synthesise *text* with Sarvam Bulbul v3, recording exactly one breaker
         outcome per logical call (Story 2-32 AC-3).
 
         This provider's httpx errors were ALWAYS classified correctly, so unlike
@@ -252,13 +267,13 @@ class SarvamTTSProvider(TTSProvider):
                 lambda: langfuse.start_observation(
                     # Same name as azure.py's fallback observation
                     # (verb-first, provider-agnostic per Langfuse naming
-                    # guidance) — `model="bulbul-v2"` vs `"azure-neural-tts"`
+                    # guidance) — `model="bulbul-v3"` vs `"azure-neural-tts"`
                     # is what distinguishes primary vs fallback in the UI,
                     # so both TTS calls across the whole fallback chain
                     # group under ONE stable name for dashboards/evaluators.
                     name="synthesize-speech",
                     as_type="generation",
-                    model="bulbul-v2",
+                    model="bulbul-v3",
                     input=f"{len(text)} chars, voice={voice_id}",
                     metadata={"voice_id": voice_id, "lesson_id": self._lesson_id},
                     trace_context=deterministic_trace_context(langfuse, self._lesson_id),
@@ -295,6 +310,16 @@ class SarvamTTSProvider(TTSProvider):
                             # slower; unset previously synthesized every
                             # lesson at Sarvam's raw 1.0 default.
                             "pace": self._narration_pace,
+                            # D148: pinned explicitly -- an unset `model`
+                            # previously rode Sarvam's server-side default,
+                            # which drifted to `bulbul:v3` while
+                            # `sarvam_voice_id`'s configured default
+                            # ("anushka", D67) was only valid for `bulbul:v2`,
+                            # breaking every real call. `bulbul:v2` itself is
+                            # now deprecated server-side (confirmed live,
+                            # 2026-09-04) -- `v3` is the current pin, not a
+                            # placeholder for "whatever v2 was".
+                            "model": "bulbul:v3",
                         },
                     )
                     if response.status_code == 429:
