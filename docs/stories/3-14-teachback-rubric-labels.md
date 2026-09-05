@@ -160,6 +160,28 @@ result.rubric_scores["accuracy"] == "Proficient"
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one call to `_score_to_label(score: float) -> str` per rubric dimension per teach-back submission. Each `grade_teachback()` call invokes it exactly 3 times (accuracy, completeness, clarity). Range: always exactly 3 calls — fixed, not variable.
+
+**Q2 — Fixed budgets vs variable input**
+N/A — `_score_to_label` is a pure synchronous comparison function with no I/O, no memory allocation beyond a string constant, and no external budget. The 5 label tiers are hardcoded constants. No budget can be exceeded.
+
+**Q3 — Scope of limits**
+N/A — pure computation, no DB or network resources consumed.
+
+**Q4 — Unbounded reads/writes**
+None — no Supabase queries or writes introduced by this story. The change is confined to the return value construction in `grade_teachback()`.
+
+**Q5 — Inherited caps**
+N/A — no inherited caps. The score thresholds (90/75/60/40) are new constants introduced in this story. If threshold recalibration is needed in the future, they should become env vars (noted as deferred improvement I2).
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — pure synchronous computation with no shared state. Concurrent calls are independent.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-01
@@ -224,3 +246,11 @@ None.
 - 2026-07-01: RED phase — `test_rubric_scores_are_descriptive_labels` + `test_score_to_label_boundaries` (commit `50b6895`)
 - 2026-07-01: GREEN phase — `_score_to_label`, schema change, 5 existing tests updated (commit `90c4ca8`)
 - 2026-07-01: Story marked done, 5-agent review complete
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | Pure synchronous label lookup from static dict — no DB, no LLM, no network I/O. Unit of work: one O(1) dict lookup per score value (input range 0–100 int). All 6 SCALE-CONTRACT.md questions are N/A. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.
