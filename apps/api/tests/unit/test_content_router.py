@@ -189,7 +189,7 @@ def test_upload_lesson_202_shape(client: TestClient) -> None:
 
 @pytest.mark.unit
 def test_upload_lesson_retries_a_transient_storage_write_error(client: TestClient) -> None:
-    """D153: found live on load-test runs #9/#10 -- 100% of large (~19.7MB)
+    """D156: found live on load-test runs #9/#10 -- 100% of large (~19.7MB)
     book uploads failed with `httpcore.WriteError: EOF occurred in violation
     of protocol (_ssl.c:2427)` (a dropped TLS connection mid-upload), while
     every small-file upload succeeded. Root cause: the storage upload call

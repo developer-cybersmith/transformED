@@ -622,7 +622,7 @@ async def _upload_book_pdf_to_storage(
 ) -> None:
     """Upload one book's PDF bytes to the `source-pdfs` bucket, retried.
 
-    D153: found live on load-test runs #9/#10 -- 100% of large (~19.7MB)
+    D156: found live on load-test runs #9/#10 -- 100% of large (~19.7MB)
     real-book uploads failed with `httpcore.WriteError: EOF occurred in
     violation of protocol (_ssl.c:2427)` (a dropped TLS connection mid-write),
     while every small-file upload succeeded; 0% for the small file across both
