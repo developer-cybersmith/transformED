@@ -29,10 +29,12 @@ from fastapi import (
     status,
 )
 from pydantic import BaseModel
+from supabase import Client
 
 from app.config import get_settings
 from app.core.db import get_supabase, rows, single_row
 from app.core.rate_limit import _get_user_key, limiter
+from app.core.retry import with_retry
 from app.core.storage import sign_storage_path
 from app.dependencies import ApprovedUser, ArqRedis, CurrentUser
 
@@ -614,6 +616,36 @@ def _source_pdf_path(user_id: str, book_id: str, filename: str) -> str:
     return f"{user_id}/{book_id}/{filename}"
 
 
+@with_retry(max_attempts=3)
+async def _upload_book_pdf_to_storage(
+    supabase: Client, storage_path: str, pdf_bytes: bytes
+) -> None:
+    """Upload one book's PDF bytes to the `source-pdfs` bucket, retried.
+
+    D156: found live on load-test runs #9/#10 -- 100% of large (~19.7MB)
+    real-book uploads failed with `httpcore.WriteError: EOF occurred in
+    violation of protocol (_ssl.c:2427)` (a dropped TLS connection mid-write),
+    while every small-file upload succeeded; 0% for the small file across both
+    runs. This raw storage call had ZERO retry protection -- unlike every
+    other network call in this codebase, one transient connection drop
+    immediately failed the whole upload with a 500. `httpx.WriteError` is
+    already classified as a retryable transient error by `core/retry.py`
+    (a subclass of `httpx.NetworkError`) -- the gap was that nothing here
+    ever gave that classification a chance to run.
+
+    A plain function (not a lambda inline in `upload_lesson`) so `with_retry`
+    has something to decorate -- `asyncio.to_thread` still runs the actual
+    blocking supabase-py call off the event loop, unchanged from before (D138).
+    """
+    await asyncio.to_thread(
+        lambda: supabase.storage.from_("source-pdfs").upload(
+            path=storage_path,
+            file=pdf_bytes,
+            file_options={"content-type": "application/pdf"},
+        )
+    )
+
+
 def _fetch_owned_book(
     supabase: Any,  # noqa: ANN401 — supabase Client
     book_id: str,
@@ -805,13 +837,7 @@ async def upload_lesson(
         # must reconstruct this exact string from the books row long after the
         # upload, and `books` has no column to store it in.
         storage_path = _source_pdf_path(user_id, str(book_id), safe_filename)
-        await asyncio.to_thread(
-            lambda: supabase.storage.from_("source-pdfs").upload(
-                path=storage_path,
-                file=pdf_bytes,
-                file_options={"content-type": "application/pdf"},
-            )
-        )
+        await _upload_book_pdf_to_storage(supabase, storage_path, pdf_bytes)
 
         # ── 3. Enqueue chapter detection ──────────────────────────────────────
         # `storage_path` is passed rather than derived in the job: the layout is

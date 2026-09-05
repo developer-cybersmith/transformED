@@ -1,6 +1,6 @@
 ---
 title: "Nano Banana Migration — Gemini Primary, GPT Image 2 Fallback (S4-8)"
-status: in-progress
+status: done (merged PR #172; live key verified working 2026-09-04 — real end-to-end NanoBananaProvider.generate() call succeeded)
 baseline_commit: ad52c2e
 owners: [Dev 1]
 sprint: 4
