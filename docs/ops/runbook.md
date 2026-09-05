@@ -1,8 +1,10 @@
 # On-Call Runbook
 
-**Scope:** the single Railway deployment of `hie-api` (no India-region migration completed yet —
-ADR-001). Any host/dashboard link below is this-environment-only; re-verify after a region
-migration rather than assuming it still applies.
+**Scope:** the single Fly.io deployment of `hie-api` (`bom`/Mumbai per `fly.toml`; Redis is
+Upstash — the India-region migration completed 2026-08-14, ADR-001/D158; **D145 is a known,
+still-open exception: the live region list has been observed drifted to `sin`/Singapore**). Any
+host/dashboard link below is this-environment-only; re-verify after any future region change
+rather than assuming it still applies.
 
 **Owner rotation:** Week 10 on-call (`docs/dev1-tracker.md` W10-3).
 
@@ -43,7 +45,8 @@ root cause — see §3 below; ARQ cannot dequeue anything without it.
    One person retries; confirm `lesson_jobs.status`/`lessons.status` converge before anyone
    attempts a second retry.
 5. If the reaper itself isn't running (no jobs ever transition, worker process appears wedged
-   entirely) — escalate to §3 (Redis unreachable) or a direct Railway worker-process restart.
+   entirely) — escalate to §3 (Redis unreachable) or a direct Fly worker-machine restart
+   (`flyctl machine restart -a hie-api`, worker process group).
 
 ---
 
@@ -79,7 +82,7 @@ fix.
 
 ## 3. Redis unreachable
 
-**Detection:** `GET /api/admin/health` → `redis` field, or the Railway Redis dashboard directly.
+**Detection:** `GET /api/admin/health` → `redis` field, or the Upstash console directly.
 
 **Diagnosis — real blast radius, not independent of the other scenarios:** ARQ cannot dequeue any
 job at all without Redis. `app/core/circuit_breaker.py` and `app/core/cost_tracker.py` both call
@@ -89,11 +92,11 @@ broken, and fixing Redis is the actual fix, not treating them as three unrelated
 
 **Resolution (≤5 steps):**
 1. Confirm via `GET /api/admin/health` that `redis` (not just `supabase`) is the failing field.
-2. Check the Railway Redis instance directly (dashboard) for an outage, exhausted connections, or
-   a plan/quota limit.
-3. If Railway Redis itself is healthy but the app can't reach it, check `REDIS_URL` is still a
-   currently-valid Fly/Railway secret (same drift class as D145/D146/D157 — a secret or config
-   value that silently stopped matching reality).
+2. Check the Upstash instance directly (console) for an outage, exhausted connections, or a
+   plan/quota limit.
+3. If Upstash itself is healthy but the app can't reach it, check `REDIS_URL` is still a
+   currently-valid Fly secret (`flyctl secrets list -a hie-api` — same drift class as
+   D145/D146/D150/D157 — a secret or config value that silently stopped matching reality).
 4. Once Redis is confirmed reachable again, re-check `GET /api/admin/health` — do not assume a
    Redis-side fix has propagated without re-probing.
 5. After Redis recovery, re-check §1 and §2 symptoms — jobs that looked "stuck" due to Redis
@@ -141,7 +144,7 @@ mechanics, per the "don't duplicate a drifting copy of a restore procedure" rule
 3. Communicate to users (status page / in-app messaging) that generation and playback are
    degraded — do not attempt silent recovery while the outage is ongoing.
 4. **Gap, stated explicitly rather than silently omitted:** the intended step 4/5 here is "follow
-   the disaster-recovery procedure," which should live in a doc produced by **Story 5-6** (Railway
+   the disaster-recovery procedure," which should live in a doc produced by **Story 5-6** (Fly.io
    backups + DR tested) — **that story has not started yet, and no such doc exists today.** Until
    it does, restore is a manual, ad hoc action via Supabase's own dashboard (Project Settings →
    Database → Backups) with no tested, repo-owned procedure behind it.
