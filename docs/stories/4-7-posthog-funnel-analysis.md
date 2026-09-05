@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Story 4-7 — PostHog Funnel Analysis: Where Do Students Drop Off?
