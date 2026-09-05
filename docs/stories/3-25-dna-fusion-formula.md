@@ -416,9 +416,40 @@ use MagicMock supabase. All tests fail on ImportError first.
 - 2026-07-03: Story marked done
 - 2026-08-04: Post-impl audit remediation — AC 3 iscoroutinefunction assertion, AC 20 upsert exclusion assertions, AC 21 bounds-violation test; task list updated (3.28-3.30); scope extensions documented; 30 tests total; audit report at `docs/reports/sprint3-task3-bmad-validation-report.md`
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `fuse_learner_dna()` call per session end. Reads 4 Supabase tables (sessions, quiz_attempts, teachback_attempts, session_events), computes EMA-blended DNA update, upserts 1 `learner_dna` row, and writes 9 `session_events` growth rows (Story 3-27 Step 6). Typical session: ≤250 quiz rows, ≤50 teachback rows, ≤200 session_events rows.
+
+**Q2 — Fixed budgets vs variable input**
+- `quiz_attempts`: `.limit(500)` (AC 17) — past 500, older attempts excluded from accuracy calculation. At limit: `signals_capped` not surfaced in this function (pure DB update, no HTTP response). A session with >500 quiz attempts is pathological (T1 has max 5 questions × 50 segments = 250 per session); limit is unreachable in practice.
+- `teachback_attempts`: `.limit(100)` — past 100, older teachback attempts excluded from persistence signal. Max realistic: 50 segments × 2 attempts = 100 (exact limit). If a student attempts a 3rd time (not gated by CLAUDE.md), the 3rd attempt may be excluded. Log WARNING emitted.
+- `session_events`: `.limit(1000)` — past 1000, event counts may be under-reported. Max realistic per session: ~500 events.
+- EMA alpha: `settings.dna_ema_retain` (default 0.7) — bounded to [0.0, 1.0] by `config.py` Field constraint. Out-of-range values: rejected at startup by Pydantic, never reach the formula.
+
+**Q3 — Scope of limits**
+All limits are per-session (queries filtered by `session_id`). `learner_dna` upsert is per-user (UNIQUE `user_id`). No cross-user effects.
+
+**Q4 — Unbounded reads/writes**
+- `sessions`: `.select(...).eq("session_id", ...).maybe_single()` ✓ Bounded.
+- `quiz_attempts`: `.select(...).eq("session_id", ...).limit(500)` ✓ Bounded.
+- `teachback_attempts`: `.select(...).eq("session_id", ...).limit(100)` ✓ Bounded.
+- `session_events`: `.select("event_type").eq("session_id", ...).limit(1000)` ✓ Bounded.
+- `learner_dna` read (for old values): `.select(...).eq("user_id", ...).maybe_single()` ✓ Bounded.
+- `learner_dna` upsert: single row, `on_conflict="user_id"` ✓ Bounded.
+- `session_events` INSERT (Step 6): exactly 9 rows — fixed by number of DNA dimensions ✓ Bounded.
+
+**Q5 — Inherited caps**
+`_FAST_RESPONSE_MS = 15_000` and `_SLOW_RESPONSE_MS = 60_000` are module-level constants calibrated for a learner reading educational content. They are not inherited from a prior design; they were set in this story. Tuning requires code change — should become `settings` fields in Sprint 4 (documented as IMPROVEMENT in code review).
+
+**Q6 — Concurrent TOCTOU safety**
+`learner_dna` upsert uses `on_conflict="user_id"` — Postgres handles concurrent upserts atomically. Two concurrent session-end calls: one wins the upsert lock, the other serializes behind it (Postgres row-level lock). Both session_count increments are based on a pre-read `old_session_count`; the second write overwrites the first with the same base value — `session_count` could be under-incremented by 1 if two sessions end within milliseconds. This is a known, low-risk race at MVP scale (documented in code review deferred finding). Mitigation: add `session_count = session_count + 1` SQL expression in Sprint 4.
+
+---
+
 ## Senior Developer Review (AI)
 
-5-agent adversarial review ran 2026-07-03 against commits `c01584f`+`db3c593` (pre-fix).
+6-agent adversarial review ran 2026-07-03 against commits `c01584f`+`db3c593` (pre-fix). Scale & Load Hunter added 2026-09-05 (process debt closure).
 
 | # | Agent | Finding | Severity | Status |
 |---|-------|---------|----------|--------|
@@ -432,6 +463,7 @@ use MagicMock supabase. All tests fail on ImportError first.
 | 8 | Blind Hunter | IDOR check uses 404 not 403 — correct per PRD §18 security rules. | NITPICK | Pass |
 | 9 | Blind Hunter | upsert_payload `**new_dims` correctly excludes badge_labels/profile_text. | NITPICK | Pass |
 | 10 | Process Integrity | No LLM calls, no hardcoded model strings, no forbidden imports. All EMA weight from `settings.dna_ema_retain`. | PASS | — |
+| 11 | Scale & Load Hunter | IMPROVEMENT | (a) `signals_capped` not surfaced when `quiz_attempts.limit(500)` or `teachback_attempts.limit(100)` is hit — function returns silently degraded values with no caller-visible flag. (b) `session_count` TOCTOU: concurrent session-end calls both read old value and overwrite with same base — count under-increments by 1. Both documented in `## Scale & Load` Q2/Q6. Fix in Sprint 4: (a) add `signals_capped` bool to return; (b) use `session_count = session_count + 1` SQL expression. | Deferred — documented in `## Scale & Load` section; Sprint 4 backlog. |
 
 **Verdict:** APPROVED after BLOCKER fixes. Story 3-25 done.
 
