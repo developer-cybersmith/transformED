@@ -148,6 +148,22 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Razorpay ──────────────────────────────────────────────────────────────
+    # Only razorpay_key_id ever leaves the server (create-order response).
+    # razorpay_key_secret and razorpay_webhook_secret must never be logged or returned.
+    # Optional so existing test Settings construction (other modules) does not break;
+    # the payment endpoints raise 503 at call time when these are absent.
+    razorpay_key_id: str | None = Field(
+        default=None, description="Razorpay publishable key ID (safe to send to frontend)"
+    )
+    razorpay_key_secret: str | None = Field(
+        default=None, description="Razorpay secret key — server only, never returned"
+    )
+    razorpay_webhook_secret: str | None = Field(
+        default=None,
+        description="Razorpay webhook HMAC-SHA256 secret — server only, never returned",
+    )
+
     # ── Sentry ────────────────────────────────────────────────────────────────
     sentry_dsn: str | None = Field(default=None, description="Sentry DSN — leave empty to disable")
 
