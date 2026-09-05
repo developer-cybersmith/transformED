@@ -26,6 +26,9 @@ __all__ = [
     "SessionCreate",
     "SessionCreated",
     "SessionCompleted",
+    "LearnerContextDNA",
+    "LearnerContextSession",
+    "LearnerContext",
 ]
 
 
@@ -205,3 +208,46 @@ class ConsentRecord(BaseModel):
     consent_type: str
     policy_version: str
     consented_at: str | None = None
+
+
+# ── Learner context schemas (Story F2-1) ───────────────────────────────────────
+# Internal endpoint for tutor prompt injection (Dev 4 state machine).
+# Called by tutor module with student's own JWT — never displayed directly to student.
+# Raw numeric dimension values are NOT exposed; dimension_labels uses descriptive bands.
+
+
+class LearnerContextDNA(BaseModel):
+    """Historical Learner DNA for one student — descriptive bands only, no raw floats."""
+
+    badge_labels: list[str]
+    profile_text: str | None  # always ends with DPDP Act 2023 disclaimer when not None
+    session_count: int
+    dimension_labels: dict[str, str]  # 9 dimension keys → band: strong|developing|building|emerging
+
+
+class LearnerContextSession(BaseModel):
+    """Current session engagement signals.
+
+    Derived from quiz_attempts, teachback_attempts, and ces_final.
+    """
+
+    quiz_accuracy: float | None = None  # correct / total; None when no attempts
+    quiz_total: int = 0
+    teachback_score: float | None = None  # avg score 0-100; None when no attempts
+    teachback_count: int = 0
+    ces_score: float | None = None  # from sessions.ces_final; None when still in progress
+
+
+class LearnerContext(BaseModel):
+    """Combined learner context for tutor prompt injection (Story F2-1).
+
+    Returned by GET /api/assessment/session/{session_id}/learner-context.
+    prompt_text is ready to prepend to an LLM system prompt — descriptive language only,
+    never raw numeric dimension values.
+    """
+
+    session_id: str
+    user_id: str
+    dna: LearnerContextDNA | None = None  # None when student has not completed onboarding
+    current_session: LearnerContextSession
+    prompt_text: str  # "" when no context exists; never null

@@ -25,8 +25,16 @@ from app.modules.assessment.onboarding_questions import (
     BADGE_THRESHOLDS,
     QUESTION_SUBDIMENSION_MAP,
 )
-from app.modules.assessment.prompts import generate_onboarding_profile, score_teachback
+from app.modules.assessment.prompts import (
+    _DIM_LABELS,
+    _dim_descriptor,
+    generate_onboarding_profile,
+    score_teachback,
+)
 from app.modules.assessment.schemas import (
+    LearnerContext,
+    LearnerContextDNA,
+    LearnerContextSession,
     OnboardingAnswer,
     OnboardingResult,
     QuizAnswer,
@@ -1959,3 +1967,181 @@ async def seed_personalized_ces_threshold(
             user_id,
             exc,
         )
+
+
+# ── Story F2-1 — Learner Context API for Tutor Prompt Injection ───────────────
+# R1: Removed _ALL_NINE_DIMS duplicate → use ALL_NINE_DIMENSIONS (already imported).
+# R1: Removed _DIM_HUMAN_LABELS duplicate → use _DIM_LABELS (imported from prompts.py).
+# R1: _dim_band is now a thin None-guard wrapper over prompts._dim_descriptor.
+
+# Valid badge label set for allowlist filtering in _build_learner_prompt_text.
+# BADGE_THRESHOLDS maps dim → badge_label; its values are the only valid labels.
+_VALID_BADGE_LABELS: frozenset[str] = frozenset(BADGE_THRESHOLDS.values())
+
+
+def _dim_band(value: float | None) -> str:
+    """Thin wrapper over prompts._dim_descriptor that handles None → 'emerging'."""
+    return _dim_descriptor(value if value is not None else 0.0)
+
+
+def _build_learner_prompt_text(
+    dna: LearnerContextDNA | None,
+    session: LearnerContextSession,
+) -> str:
+    """Build a pre-formatted string ready to inject into an LLM system prompt.
+
+    Descriptive language only — no raw numeric dimension values or floats.
+    badge_labels are allowlist-filtered before interpolation (prompt injection defence).
+    """
+    parts: list[str] = []
+
+    if dna is not None:
+        # Allowlist filter — only hardcoded badge strings from BADGE_THRESHOLDS reach the prompt
+        safe_badges = [b for b in dna.badge_labels if b in _VALID_BADGE_LABELS]
+        badge_str = ", ".join(safe_badges) if safe_badges else "none yet"
+        dim_lines = [f"  - {_DIM_LABELS.get(k, k)}: {v}" for k, v in dna.dimension_labels.items()]
+        dims_str = "\n".join(dim_lines)
+        parts.append(
+            f"**Student Learning Profile:**\n"
+            f"- Learning style badges: {badge_str}\n"
+            f"- Learning dimension strengths:\n{dims_str}\n"
+            f"- Sessions completed: {dna.session_count}"
+        )
+
+    session_lines: list[str] = []
+    if session.quiz_accuracy is not None:
+        label = _quiz_accuracy_label(session.quiz_accuracy, session.quiz_total)
+        session_lines.append(f"- Quiz performance: {label} ({session.quiz_total} questions)")
+    if session.teachback_score is not None:
+        tb_label = _score_to_label(session.teachback_score)
+        session_lines.append(f"- Teach-back quality: {tb_label}")
+    if session.ces_score is not None:
+        ces_label = _score_to_label(session.ces_score)
+        session_lines.append(f"- Overall engagement (CES): {ces_label}")
+
+    if session_lines:
+        parts.append("**Current Session:**\n" + "\n".join(session_lines))
+
+    if not parts:
+        return ""
+
+    parts.append("Use this context to personalise your explanation for this student.")
+    return "\n\n".join(parts)
+
+
+async def get_learner_context(
+    *,
+    session_id: str,
+    user_id: str,
+    supabase: Client,
+) -> LearnerContext:
+    """Return historical Learner DNA + current session signals for tutor prompt injection.
+
+    Story F2-1. Called by Dev 4's tutor state machine with the student's own JWT.
+    No LLM calls — pure data aggregation.
+
+    Raises:
+        HTTPException 404: session_id not found OR belongs to a different user.
+            Unified message prevents session-id enumeration (same as grade_quiz pattern).
+    """
+    _not_found = "Session not found or access denied."
+
+    # Step 1 — session ownership check (bounded: .maybe_single())
+    sess_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id, ces_final")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    sess_row = single_row(sess_resp)
+    if sess_row is None or str(sess_row["user_id"]) != str(user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_not_found)
+
+    ces_final = sess_row.get("ces_final")
+
+    # Step 2 — learner DNA (bounded: .maybe_single() on unique user_id column)
+    dna_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("learner_dna")
+            .select(
+                "badge_labels, profile_text, session_count, "
+                "pattern_recognition, logical_deduction, processing_speed, "
+                "frustration_tolerance, persistence, help_seeking, "
+                "goal_orientation, curiosity_index, study_independence"
+            )
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    dna_row = single_row(dna_resp)
+
+    learner_dna: LearnerContextDNA | None = None
+    if dna_row is not None:
+        dim_labels = {dim: _dim_band(dna_row.get(dim)) for dim in ALL_NINE_DIMENSIONS}
+        learner_dna = LearnerContextDNA(
+            badge_labels=dna_row.get("badge_labels") or [],
+            profile_text=dna_row.get("profile_text"),
+            session_count=int(dna_row.get("session_count") or 0),
+            dimension_labels=dim_labels,
+        )
+
+    # Step 3 — quiz attempts this session.
+    # BOUNDED: eq(session_id) + .limit(500). Upper bound derivation: 15 segments × 10
+    # questions × 3 retries = 450 rows per session (matches get_session_report cap).
+    quiz_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("quiz_attempts")
+            .select("is_correct")
+            .eq("session_id", session_id)
+            .limit(500)
+            .execute()
+        )
+    )
+    quiz_rows = rows(quiz_resp)
+    quiz_total = len(quiz_rows)
+    quiz_accuracy: float | None = None
+    if quiz_total > 0:
+        correct = sum(1 for r in quiz_rows if r.get("is_correct"))
+        quiz_accuracy = correct / quiz_total
+
+    # Step 4 — teachback attempts this session.
+    # BOUNDED: eq(session_id) + .limit(50). Upper bound: 1 attempt per segment, ~15 max
+    # (matches get_session_report cap).
+    tb_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("teachback_attempts")
+            .select("score")
+            .eq("session_id", session_id)
+            .limit(50)
+            .execute()
+        )
+    )
+    tb_rows = rows(tb_resp)
+    tb_count = len(tb_rows)
+    tb_score: float | None = None
+    if tb_count > 0:
+        scores = [r["score"] for r in tb_rows if r.get("score") is not None]
+        if scores:
+            tb_score = sum(scores) / len(scores)
+
+    current_session = LearnerContextSession(
+        quiz_accuracy=quiz_accuracy,
+        quiz_total=quiz_total,
+        teachback_score=tb_score,
+        teachback_count=tb_count,
+        ces_score=float(ces_final) if ces_final is not None else None,
+    )
+
+    prompt_text = _build_learner_prompt_text(learner_dna, current_session)
+
+    return LearnerContext(
+        session_id=session_id,
+        user_id=user_id,
+        dna=learner_dna,
+        current_session=current_session,
+        prompt_text=prompt_text,
+    )
