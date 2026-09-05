@@ -151,7 +151,7 @@ def insert_sessions(sb: Client, rows: list[dict]) -> list[dict]:
             .execute()
         )
         if resp.data:
-            session_id = resp.data[0]["id"]
+            session_id = resp.data[0]["session_id"]
             row["session_id"] = session_id
             created.append(row)
             print(f"  [OK] {row['tier']:4s} session {session_id[:8]}… ces={row['ces_final']}")
@@ -173,8 +173,7 @@ def insert_quiz_attempts(sb: Client, rows: list[dict]) -> None:
                 "session_id": sid,
                 "segment_id": f"seg-{i // 3 + 1}",
                 "question_id": f"q-{i + 1}",
-                "selected_option": "A" if answers[i] else "B",
-                "correct_option": "A",
+                "response_index": 0 if answers[i] else 1,
                 "is_correct": answers[i],
                 "attempt_number": 1,
                 "response_time_ms": _rng_int(1500, 25000),
@@ -196,8 +195,10 @@ def insert_teachback_attempts(sb: Client, rows: list[dict]) -> None:
                 "session_id": sid,
                 "segment_id": "seg-1",
                 "response_text": "Synthetic student explanation for calibration.",
-                "overall_score": row["tb_score"],
-                "score_source": "synthetic",
+                "score": round(row["tb_score"]),
+                # score_source CHECK constraint (F2-2) only allows llm/fallback/skipped —
+                # these synthetic scores stand in for an LLM-scored teach-back.
+                "score_source": "llm",
                 "attempt_number": 1,
             }
         ).execute()

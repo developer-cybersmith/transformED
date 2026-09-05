@@ -173,3 +173,24 @@ export const options = {
 
 ## Change Log
 - 2026-09-05: Story created (story-first gate)
+- 2026-09-05: Pre-merge review found the scripts had never been executed against the
+  real schema (binding rule 4 — validate table/column names against
+  `supabase/migrations/`, not assumption). Fixed before merge:
+  - `sessions` PK is `session_id`, not `id` — both `generate_synthetic_sessions.py`
+    and `ces_correlation_analysis.py` read `resp.data[0]["id"]` / `s["id"]`.
+  - `teachback_attempts` score column is `score` (int), not `overall_score` (that
+    name is the *API response* field on `TeachbackResult`, not the DB column) —
+    both scripts used the wrong one, and the generator also wrote
+    `score_source: "synthetic"`, which violates F2-2's `CHECK (score_source IN
+    ('llm','fallback','skipped'))` constraint. Changed to `score_source: "llm"`.
+  - `quiz_attempts` has no `selected_option`/`correct_option` columns — real
+    columns are `response_index`/`is_correct`.
+  - `k6_assessment_load_test.js` sent one malformed POST per question
+    (`selected_option`, no `lesson_id`/`answers` wrapper) instead of the real
+    batch `QuizSubmission{session_id, lesson_id, segment_id, answers: [...]}`
+    shape; the teachback POST was missing `lesson_id`; the complete-session URL
+    used `/sessions/{id}/complete` (plural) instead of the real
+    `/session/{id}/complete` (singular). All three would have 422/404'd on
+    first run. Fixed.
+  - Tasks T3/T5 (run against staging, verify) still require a human to actually
+    execute these scripts — not done as part of this fix.

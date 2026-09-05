@@ -33,7 +33,7 @@ def load_sessions(sb: Client) -> list[dict]:
     """Load completed sessions with ces_final."""
     resp = (
         sb.table("sessions")
-        .select("id,user_id,lesson_id,ces_final,ended_at")
+        .select("session_id,user_id,lesson_id,ces_final,ended_at")
         .not_.is_("ended_at", "null")
         .not_.is_("ces_final", "null")
         .limit(200)
@@ -70,15 +70,15 @@ def load_teachback_scores(sb: Client, session_ids: list[str]) -> dict[str, float
         return {}
     resp = (
         sb.table("teachback_attempts")
-        .select("session_id,overall_score")
+        .select("session_id,score")
         .in_("session_id", session_ids)
         .limit(1000)
         .execute()
     )
     by_session: dict[str, list[float]] = {}
     for row in (resp.data or []):
-        if row["overall_score"] is not None:
-            by_session.setdefault(row["session_id"], []).append(float(row["overall_score"]))
+        if row["score"] is not None:
+            by_session.setdefault(row["session_id"], []).append(float(row["score"]))
 
     return {
         sid: mean(scores) / 100.0   # normalise 0–100 → 0–1
@@ -113,7 +113,7 @@ def analyse(sessions: list[dict], quiz_acc: dict, tb_scores: dict, intv: dict) -
     """Print Pearson r for each component vs quiz accuracy (ground truth)."""
     records = []
     for s in sessions:
-        sid = s["id"]
+        sid = s["session_id"]
         q_acc = quiz_acc.get(sid)
         ces = s["ces_final"]
         if q_acc is None or ces is None:
@@ -207,7 +207,7 @@ def main() -> None:
     if not sessions:
         sys.exit("No completed sessions with ces_final found. Run generate_synthetic_sessions.py first.")
 
-    session_ids = [s["id"] for s in sessions]
+    session_ids = [s["session_id"] for s in sessions]
     print(f"Found {len(session_ids)} completed sessions with ces_final.")
 
     quiz_acc = load_quiz_accuracy(sb, session_ids)

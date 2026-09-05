@@ -58,10 +58,6 @@ function headers() {
   };
 }
 
-function randomOption() {
-  return ['A', 'B', 'C', 'D'][Math.floor(Math.random() * 4)];
-}
-
 function randomTeachback() {
   const responses = [
     "Photosynthesis is the process by which plants convert sunlight into glucose using carbon dioxide and water.",
@@ -102,34 +98,35 @@ export default function () {
   const sessionId = JSON.parse(sessionRes.body).session_id;
   sleep(0.5);
 
-  // --- 2. Submit 4 quiz questions ----------------------------------------
+  // --- 2. Submit 4 quiz questions (single batch POST, matches QuizSubmission) --
   const QUESTION_IDS = ['q-1', 'q-2', 'q-3', 'q-4'];
-  for (const questionId of QUESTION_IDS) {
-    const quizRes = http.post(
-      `${BASE_URL}/api/assessment/quiz`,
-      JSON.stringify({
-        session_id: sessionId,
-        segment_id: 'seg-1',
+  const quizRes = http.post(
+    `${BASE_URL}/api/assessment/quiz`,
+    JSON.stringify({
+      session_id: sessionId,
+      lesson_id: LESSON_ID,
+      segment_id: 'seg-1',
+      answers: QUESTION_IDS.map((questionId) => ({
         question_id: questionId,
-        selected_option: randomOption(),
+        response_index: Math.floor(Math.random() * 4),
         response_time_ms: Math.floor(Math.random() * 15000) + 2000,
-      }),
-      { headers: headers(), tags: { endpoint: 'quiz' } },
-    );
+      })),
+    }),
+    { headers: headers(), tags: { endpoint: 'quiz' } },
+  );
 
-    const quizOk = check(quizRes, {
-      'quiz: status 200': (r) => r.status === 200,
-      'quiz: has ces_contribution': (r) => {
-        try { return 'ces_contribution' in JSON.parse(r.body); } catch { return false; }
-      },
-    });
+  const quizOk = check(quizRes, {
+    'quiz: status 200': (r) => r.status === 200,
+    'quiz: has ces_contribution': (r) => {
+      try { return 'ces_contribution' in JSON.parse(r.body); } catch { return false; }
+    },
+  });
 
-    if (!quizOk) {
-      quizErrors.add(1);
-      console.warn(`[${vuId}] Quiz submission failed (${questionId}): ${quizRes.status}`);
-    }
-    sleep(0.2);
+  if (!quizOk) {
+    quizErrors.add(1);
+    console.warn(`[${vuId}] Quiz submission failed: ${quizRes.status} ${quizRes.body}`);
   }
+  sleep(0.2);
 
   // --- 3. Submit teachback (50% of VUs) ------------------------------------
   if (__VU % 2 === 0) {
@@ -137,6 +134,7 @@ export default function () {
       `${BASE_URL}/api/assessment/teachback`,
       JSON.stringify({
         session_id: sessionId,
+        lesson_id: LESSON_ID,
         segment_id: 'seg-1',
         response_text: randomTeachback(),
       }),
@@ -159,7 +157,7 @@ export default function () {
 
   // --- 4. Complete session -----------------------------------------------
   http.post(
-    `${BASE_URL}/api/assessment/sessions/${sessionId}/complete`,
+    `${BASE_URL}/api/assessment/session/${sessionId}/complete`,
     null,
     { headers: headers(), tags: { endpoint: 'complete' } },
   );
