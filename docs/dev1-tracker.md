@@ -1179,7 +1179,7 @@ Every node must:
     for full detail and `docs/DEFECT-REGISTER.md` D141/D142/D143 (renumbered 2026-09-02 from
     D138/D139/D140 to resolve a collision with main's own D138/D139, landed via PRs #170/#171).
 
-- [ ] **S4-6 Railway backups + disaster recovery tested**
+- [ ] **S4-6 Fly.io backups + disaster recovery tested** — renamed from "Railway backups" 2026-09-05 (D158); Railway was retired 2026-08-14, platform is Fly.io + Upstash Redis. DR work itself is still not started.
   - Test restore from latest backup; validate data integrity post-restore
   - **AC:** Recovery procedure documented; restore completes in <30 min; data integrity confirmed
 
