@@ -6,9 +6,10 @@ import { submitTutorQuestion } from '@/lib/assessment';
 import { FOCUS_RING } from '@/lib/a11y/focusRing';
 
 // Story 2-57 (BR-5): mounted whenever pauseReason === 'intervention' — see
-// Player.tsx. Capture-and-log only (D149) — there is no live AI Q&A backend
-// yet, confirmed with the user 2026-09-03. This panel never claims to answer
-// the question; it only confirms it was recorded.
+// Player.tsx. Capture-and-log only (D159, renumbered from D149) as of this
+// PR — a real Q&A backend now exists (D158, Story 4-28) but submitTutorQuestion()
+// hasn't been wired to it yet (tracked as D159's own follow-up). This panel
+// never claims to answer the question; it only confirms it was recorded.
 export function AskTutorPanel() {
   const play = usePlayerStore((s) => s.play);
   const sessionId = usePlayerStore((s) => s.sessionId);

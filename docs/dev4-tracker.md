@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-08-14 (PR #138 merged — Story 4-27 complete; SYNC-B frozen; behavioral_score JSDoc corrected to composite MediaPipe signal; all Dev 4 demo tasks complete)
-**Overall status:** 36/43 Completed · 5 Partial · 2 Not Started
+**Last updated:** 2026-09-04 (Phase 2 P2-1 added and completed — Tutor Q&A real backend, D158, closing D149)
+**Overall status:** 37/49 Completed · 6 Partial · 6 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -20,10 +20,11 @@
 | Sprint 1 | Weeks 2–3 | 7 | 7 | 0 | 0 |
 | Sprint 2 | Weeks 4–5 | 6 | 6 | 0 | 0 |
 | Sprint 3 | Weeks 6–7 | 9 | 9 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 9 | 4 | 5 | 0 |
+| Sprint 4 | Weeks 8–9 | 9 | 3 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **43** | **36** | **5** | **2** |
+| Bug Resolution | Feature Sprint 2 | 5 | 1 | 0 | 4 |
+| **Total** | | **48** | **36** | **6** | **6** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -733,6 +734,123 @@ MAX_DISTRACTION_PER_SESSION=3
   - Verify all 3 intervention types fire at least once across sessions
   - Verify cooldown and max-cap guards work in production Redis
   - **AC:** All 3 intervention types fire at least once; no guard violations observed in Sentry/Langfuse
+
+---
+
+## Bug Resolution — Feature Sprint 2
+
+> **Goal:** Adapt the live tutor/WS layer to variable-length human-recorded narration (replacing
+> fixed-duration TTS timing assumptions), close the standing Turnstile backend-verification gap.
+> Real-user Sprint 4 tuning tasks (threshold/cooldown/copy-review/load-test/reconnect — see Sprint 4
+> above) stay parked until real session data / a live deploy exist; this sprint runs in parallel on
+> work that doesn't need either.
+>
+> **Branch flow:** `dev4/master-bug-resolution` (off `main`) is the integration branch for this sprint.
+> Each task below branches from `dev4/master-bug-resolution` as
+> `dev4/master-bug-resolution/br-{N}-{slug}`, gets its own story-first commit (`docs/stories/br-{N}-*.md`,
+> pushed alone before implementation) followed by implementation commits, then one PR per task back into
+> `dev4/master-bug-resolution`. The master branch itself PRs into `main` only once all four tasks land.
+
+<!-- CHECK:br1_caption_cue_delivery -->
+- [Not Started] **WebSocket: progressive caption-cue delivery for live narration playback**
+  - Deliver caption cues incrementally over the WS connection, timed to the actual (variable-length,
+    human-recorded) narration audio position — not derived from a fixed TTS-duration assumption.
+  - **Frozen-contract note:** if this needs a new `ws.ts` message type (vs. reusing an existing one),
+    that requires the 4-dev PR per `packages/shared/types/ws.ts`'s frozen-contract rule — confirm scope
+    against the existing `CaptionOverlay.tsx` / `AudioTimeline.tsx` contract before adding one.
+  - Story: `docs/stories/br-1-caption-cue-delivery.md` (to be created)
+  - **AC:** TBD in story file — captured before implementation per the Story-First Gate.
+
+<!-- CHECK:br2_ces_timing_variable_narration -->
+- [Not Started] **Verify tutor intervention/CES timing still functions correctly with variable-length human-recorded narration**
+  - Confirm the 5s CES window, cooldown timers, and quiz/Q&A deadline math (Learner Mode tier durations)
+    don't assume a fixed segment length now that narration length varies per human recording.
+  - Story: `docs/stories/br-2-ces-timing-variable-narration.md` (to be created)
+  - **AC:** TBD in story file.
+
+<!-- CHECK:br3_voice_teachback_stt -->
+- [Not Started] **Voice teach-back: real-time mic capture integration in live session flow** — Low priority
+  - **Blocked on Dev 3's STT node** — scaffold the WS-side audio-chunk capture/dispatch path; full
+    wiring can't close until Dev 3's STT node exists. May land as Partial pending that dependency.
+  - Story: `docs/stories/br-3-voice-teachback-stt.md` (to be created)
+  - **AC:** TBD in story file.
+
+<!-- CHECK:br4_turnstile_verification -->
+- [Not Started] **Backend Cloudflare Turnstile verification on login + signup — reject low trust score before issuing session**
+  - Sheet originally said "reCAPTCHA v3"; confirmed with the user 2026-08-29 to verify **Cloudflare
+    Turnstile** instead, matching what `Turnstile.tsx` / `SignInForm.tsx` / `SignUpForm.tsx` already ship
+    on the frontend. No backend verification exists yet (`apps/api` has zero Turnstile/CAPTCHA references).
+  - Backend calls Cloudflare's `siteverify` endpoint with the token from the signup/login request; rejects
+    (no session issued) below the configured trust-score threshold.
+  - Story: `docs/stories/br-4-turnstile-verification.md` (to be created)
+  - **AC:** TBD in story file.
+
+<!-- CHECK:br5_deploy_secrets_verification -->
+- [Completed] **Deploy-time required-secrets verification — closes D146's residual gap** ✅ 2026-09-04
+  - Picked up opportunistically, not squarely WS/JWT/tutor-FSM domain: surfaced directly out of
+    D146's investigation (a 3-hour production crash-loop, 2026-09-03, after D49's correct startup
+    guard fired on every boot because `RATE_LIMIT_STORAGE_URL` was never set as a live Fly secret).
+    Local branch/story numbering only — distinct from the differently-prefixed `bug-resolution/br-5-*`
+    branch namespace another dev is using independently (no collision, confirmed via `git ls-remote`
+    before choosing this number).
+  - `scripts/check_fly_secrets_configured.py` — anti-drift required-secrets manifest (every
+    `app.config.Settings` field with no default, introspected live via `Settings.model_fields`, plus
+    `RATE_LIMIT_STORAGE_URL` hand-listed and source-scan-tested against D49's own guard) diffed
+    against `flyctl secrets list --app hie-api --json`
+  - Wired into `.github/workflows/deploy.yml` as its own step, before `flyctl deploy --remote-only`
+  - Registered as **D150** in `docs/DEFECT-REGISTER.md`, citing D146 (the incident) and D145 (the
+    sibling live-Fly-config-drift class)
+  - Story: `docs/stories/br-5-deploy-secrets-verification.md`
+  - **AC MET:** AC1–AC6 all satisfied — 14 tests in `apps/api/tests/test_check_fly_secrets_configured.py`
+    (pure diff logic, live anti-drift introspection, every subprocess failure mode incl. a real bug
+    found live while dev-verifying — `flyctl` not installed on the dev machine raises `FileNotFoundError`
+    directly, which the original implementation didn't catch — fixed and regression-locked), mutation-checked.
+    Full `apps/api/tests` unit suite re-run: 35 failed / 2243 passed / 32 skipped — all 35 pre-existing
+    (3 already-registered D143, rest stale eval-PDF fixtures/other pre-existing gaps), confirmed neither
+    this story's new test file nor D49's own guard tests appear in the failure list. `ruff` clean.
+
+---
+
+## Phase 2 — Post-MVP Features
+
+> **Goal:** PRD Phase 2 items CLAUDE.md already reserves env vars/exceptions for (`LLM_TUTOR`, the
+> query-time-embedding carve-out) but that were never started. Doesn't fit the numbered-sprint or
+> Bug-Resolution sections above — new section rather than forcing it into either, matching this
+> file's own established pattern.
+>
+> **Branch flow:** `phase2/p2-{N}-{slug}`, cut from `main`, story-first commit pushed alone before
+> implementation (`docs/stories/4-{NN}-*.md` — continues the existing Dev-4 story numbering, not a
+> new scheme), one PR per item straight into `main` (no shared integration branch — each item is
+> independently mergeable, unlike the Bug Resolution sprint's four originally-coupled tasks).
+
+<!-- CHECK:p2_1_tutor_qa_real_backend -->
+- [Completed] **Tutor Q&A: real backend (RAG + LLM_TUTOR) — closes D149/registered as D158** ✅ 2026-09-04
+  - Picked up opportunistically, cross-module (assessment/, not tutor/) — D149's proposed owner
+    was "TBD/Dev 3," never started; Dev 2's scoping email named the delivery/FSM/rate-limiting
+    calls as mine specifically.
+  - `POST /assessment/session/{session_id}/questions`: session ownership (SEC-006 pattern, 404
+    for both missing and foreign, no enumeration oracle) → per-session Redis rate cap (atomic
+    `INCR`) → pgvector retrieval via new `match_tutor_chunks` RPC, scoped to `chapter_id`/`book_id`
+    (never corpus-wide) → relevance gate (declines below threshold, no LLM call) → `LLM_TUTOR` call
+    via the provider factory → `session_events` log (answered or declined, every time).
+  - New, additive `LLMProvider.complete_with_meta()` (returns `finish_reason` + `cost_usd`,
+    `complete()` itself unchanged) — needed because tutor Q&A cost is a different unit of work
+    than the `$3.00`/lesson generation ceiling and must never be accumulated against it.
+  - FSM impact investigated, not assumed: confirmed directly against `process_attention_signal`
+    that no backend FSM change is needed at all — the frontend's existing pause already suspends
+    CES/fatigue monitoring without leaving `TEACHING`.
+  - Explicitly out of scope, named not silently dropped: frontend wiring (Dev 2's domain, contract
+    fully specified), WebSocket/streaming delivery (needs a 4-dev frozen-contract PR nobody could
+    hold this session — REST ships now instead), a dedicated cost-ceiling subsystem (bounded via
+    question-count cap + `max_tokens` instead).
+  - New migration: `20260905000000_match_tutor_chunks_rpc.sql` (RPC function only, no new
+    tables/columns).
+  - Story: `docs/stories/4-28-tutor-qa-real-backend.md`
+  - **AC MET:** AC1–AC7 all satisfied — 26 new tests (17 `test_tutor_question_endpoint.py` + 9
+    `test_complete_with_meta.py`), all external dependencies mocked, `ruff`/`mypy` clean.
+    Registered as **D158** in `docs/DEFECT-REGISTER.md` (D149 itself doesn't exist on `main` yet —
+    still on unmerged PR #182 — so this cross-references it rather than editing a row that isn't
+    here).
 
 ---
 

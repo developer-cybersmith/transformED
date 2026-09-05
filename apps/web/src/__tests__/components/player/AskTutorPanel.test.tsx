@@ -29,7 +29,7 @@ beforeEach(() => {
   });
 });
 
-describe('AskTutorPanel — Story 2-57 / BR-5, D149 (capture-and-log only)', () => {
+describe('AskTutorPanel — Story 2-57 / BR-5, D159 (capture-and-log only)', () => {
   it('disables submit until text is entered', async () => {
     render(<AskTutorPanel />);
     expect((screen.getByRole('button', { name: /submit/i }) as HTMLButtonElement).disabled).toBe(true);
@@ -38,7 +38,7 @@ describe('AskTutorPanel — Story 2-57 / BR-5, D149 (capture-and-log only)', () 
     expect((screen.getByRole('button', { name: /submit/i }) as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('submits with the documented D149 payload shape (segment_id, question_text, audio_position_ms)', async () => {
+  it('submits with the documented D159 payload shape (segment_id, question_text, audio_position_ms)', async () => {
     render(<AskTutorPanel />);
     await userEvent.type(screen.getByPlaceholderText("What's your question?"), 'Why does this work?');
     await userEvent.click(screen.getByRole('button', { name: /submit/i }));
@@ -57,7 +57,7 @@ describe('AskTutorPanel — Story 2-57 / BR-5, D149 (capture-and-log only)', () 
     await userEvent.click(screen.getByRole('button', { name: /submit/i }));
 
     expect(await screen.findByText(/noted/i)).not.toBeNull();
-    // D149: capture-and-log only -- there is no live AI Q&A backend. The
+    // D159: capture-and-log only -- there is no live AI Q&A backend. The
     // confirmation copy is explicit that no answer exists yet (the honest
     // copy itself contains the word "answer" as part of saying so) -- what
     // must NOT appear is anything that reads as a delivered answer.

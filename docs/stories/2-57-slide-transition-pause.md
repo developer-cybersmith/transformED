@@ -192,7 +192,7 @@ question itself.
   multi-slide segment before/shortly after this ships — not a reason to hold the story, since the
   mechanism itself (a single named constant) makes tuning or disabling trivial later.
 
-## Proposed Contract for Dev 3 (D149 — not built)
+## Proposed Contract for Dev 3 (D159 — not built)
 
 `POST /api/assessment/sessions/{session_id}/questions` (path/module a suggestion, Dev 3's call):
 
@@ -228,7 +228,7 @@ Proposed storage: one `session_events` row, `event_type: "tutor_question"`, payl
   transition couldn't ask a question without first resuming just to re-pause. Widened to also
   accept an existing `PAUSED` state of any other reason — see AC11's revised text.
 - **AC11-13 — DONE.** `AskTutorPanel.tsx` (new), `lib/assessment.ts::submitTutorQuestion()` (new
-  stub, mirrors `payment.service.ts::checkAccess`'s exact D136 pattern), registered as **D149**.
+  stub, mirrors `payment.service.ts::checkAccess`'s exact D136 pattern), registered as **D159**.
 - Two pre-existing tests needed updating, both named explicitly here per AC8's own requirement
   (not silently changed): `AudioTimeline.component.test.tsx`'s two virtual-clock ticking tests
   (`vi.advanceTimersByTime` across the whole segment in one call) now opt out via
@@ -251,14 +251,24 @@ Proposed storage: one `session_events` row, `event_type: "tutor_question"`, payl
   skip-pause checkbox
 - `apps/web/src/components/player/AskTutorPanel.tsx` — new
 - `apps/web/src/components/player/Player.tsx` — mounts `AskTutorPanel`
-- `apps/web/src/lib/assessment.ts` — `submitTutorQuestion()` stub (D149)
+- `apps/web/src/lib/assessment.ts` — `submitTutorQuestion()` stub (D159)
 - `apps/web/src/__tests__/stores/player.machine.test.ts` — 10 new tests
 - `apps/web/src/__tests__/components/player/AudioTimeline.test.ts` — 5 new tests
 - `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` — 4 new tests, 2
   existing tests updated (opt-out, named above)
 - `apps/web/src/__tests__/components/player/PlayerControls.test.tsx` — new file, 9 tests
 - `apps/web/src/__tests__/components/player/AskTutorPanel.test.tsx` — new file, 5 tests
-- `docs/DEFECT-REGISTER.md` — D149 registered
+- `docs/DEFECT-REGISTER.md` — D159 registered
+
+### Pre-merge review note (2026-09-05)
+
+- **ID renumbered D149 → D159**: correct when this story registered it, but D149 was independently
+  claimed by the Sarvam v3 batching fix, which merged to `main` while this branch was open.
+- **A real backend now exists**: Story 4-28 (D158, merged 2026-09-05) implements
+  `POST /api/assessment/session/{session_id}/questions` (singular "session" — this story's own
+  proposed contract above used the plural, never verified against real router conventions).
+  `submitTutorQuestion()` is still the D136-pattern stub; wiring it to the real endpoint and
+  rendering `answer` in `AskTutorPanel.tsx` is tracked as D159's own follow-up, not done in this PR.
 
 ## References
 

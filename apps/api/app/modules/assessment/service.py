@@ -25,13 +25,23 @@ from app.modules.assessment.onboarding_questions import (
     BADGE_THRESHOLDS,
     QUESTION_SUBDIMENSION_MAP,
 )
-from app.modules.assessment.prompts import generate_onboarding_profile, score_teachback
+from app.modules.assessment.prompts import (
+    _DIM_LABELS,
+    _dim_descriptor,
+    generate_onboarding_profile,
+    score_teachback,
+)
 from app.modules.assessment.schemas import (
+    LearnerContext,
+    LearnerContextDNA,
+    LearnerContextSession,
     OnboardingAnswer,
     OnboardingResult,
     QuizAnswer,
     QuizResult,
     TeachbackResult,
+    TutorQuestionResult,
+    TutorQuestionSubmission,
 )
 from app.providers.llm.openai import OpenAILLMProvider
 
@@ -97,6 +107,10 @@ _TIER_LABELS: dict[str, str] = {
     "T2": "Standard",
     "T3": "Refresher",
 }
+
+# Story F2-3 — explicit minute mapping so the 15/30/45 values are machine-checkable,
+# not just implied by the English label names.
+_TIER_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}
 
 
 def _quiz_accuracy_label(accuracy: float, total: int) -> str | None:
@@ -607,6 +621,7 @@ async def grade_teachback(
     response_text: str,
     user_id: str,
     supabase: Client,
+    is_skip: bool = False,
 ) -> TeachbackResult:
     """Score a student's typed teach-back response and persist to teachback_attempts.
 
@@ -618,7 +633,8 @@ async def grade_teachback(
         session_id: UUID of the live session.
         lesson_id: UUID of the lesson whose JSONB content contains the segment.
         segment_id: ID of the segment the student just completed.
-        response_text: Student's typed teach-back (no STT, no timer, no duration_seconds).
+        response_text: Student's teach-back text (typed, or Whisper transcript from
+            F2-4 audio path).
         user_id: User UUID from the decoded JWT (for ownership check).
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
 
@@ -661,7 +677,63 @@ async def grade_teachback(
             detail="Session does not belong to this lesson.",
         )
 
-    # Step 2 — Load lesson JSONB
+    # Step 2 (R2 fix) — Count existing attempts BEFORE any path branches.
+    # Runs for ALL three paths (llm, fallback, skipped) so attempt_number is
+    # always correct even when a student submits, gets a fallback, then submits again.
+    count_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("teachback_attempts")
+            .select("id", count=cast("Any", "exact"))
+            .eq("session_id", session_id)
+            .eq("segment_id", segment_id)
+            .execute()
+        )
+    )
+    attempt_number: int = (count_resp.count or 0) + 1
+
+    # ── F2-2: Skipped path ────────────────────────────────────────────────────
+    # AC6: is_skip=True → record the skip immediately after session check and
+    # count query; skip Steps 3–7 (no lesson load, no LLM call). Moving this
+    # branch before the lesson load ensures a skip always succeeds even when
+    # lesson content is missing or a segment was renamed post-generation.
+    if is_skip:
+        skip_row: dict[str, Any] = {
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "response_text": "",
+            "score": None,
+            "feedback_praise": None,
+            "feedback_correction": None,
+            "concepts_hit": [],
+            "concepts_missed": [],
+            "attempt_number": attempt_number,
+            "score_source": "skipped",
+        }
+        skip_insert_resp = await asyncio.to_thread(
+            lambda: supabase.table("teachback_attempts").insert(skip_row).execute()
+        )
+        skip_insert_error = getattr(skip_insert_resp, "error", None)
+        if skip_insert_error:
+            safe_err = str(skip_insert_error).replace("\n", " ").replace("\r", " ")
+            logger.error(
+                "teachback_attempts skip insert failed: session=%s error=%s",
+                session_id,
+                safe_err,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to record teachback skip.",
+            )
+        return TeachbackResult(
+            session_id=session_id,
+            rubric_scores={},
+            overall_score=0.0,
+            ces_contribution=0.0,
+            feedback="",
+            score_source="skipped",
+        )
+
+    # Step 3 — Load lesson JSONB (only needed for llm and fallback paths)
     lesson_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("lessons")
@@ -681,7 +753,7 @@ async def grade_teachback(
     content: dict[str, Any] = lesson_row["content"]
     segments: list[dict[str, Any]] = content.get("segments", [])
 
-    # Step 3 — Find the segment
+    # Step 4 — Find the segment
     target_segment: dict[str, Any] | None = next(
         (s for s in segments if s["segment_id"] == segment_id), None
     )
@@ -691,24 +763,14 @@ async def grade_teachback(
             detail=f"Segment {segment_id!r} not found in lesson {lesson_id!r}.",
         )
 
-    # Step 4 — Extract topic and key concepts from segment
+    # Step 5 — Extract topic and key concepts from segment
     topic: str = target_segment.get("title", "")
     key_concepts: list[str] = [j["term"] for j in target_segment.get("jargon", [])]
 
-    # Step 5 — Query existing attempt count to compute attempt_number
-    count_resp = await asyncio.to_thread(
-        lambda: (
-            supabase.table("teachback_attempts")
-            .select("id", count=cast("Any", "exact"))
-            .eq("session_id", session_id)
-            .eq("segment_id", segment_id)
-            .execute()
-        )
-    )
-    attempt_number: int = (count_resp.count or 0) + 1
-
     # Step 6 — Score via GPT-4o-mini through OpenAILLMProvider (cost tracked by provider)
     provider = OpenAILLMProvider(lesson_id=lesson_id)
+    _llm_failed = False
+    result = None
     try:
         result = await score_teachback(
             topic=topic,
@@ -716,19 +778,64 @@ async def grade_teachback(
             response_text=response_text,
             provider=provider,
         )
+        if result is None:
+            logger.warning(
+                "score_teachback returned None (fallback): session=%s",
+                session_id,
+            )
+            _llm_failed = True
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("score_teachback failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Scoring service unavailable.",
-        ) from exc
-    if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Scoring service unavailable.",
+        # F2-2 AC5: graceful degradation instead of 502; log at WARNING (not ERROR).
+        safe_msg = str(exc).replace("\n", " ").replace("\r", " ")
+        logger.warning(
+            "score_teachback failed (fallback): session=%s exc=%s",
+            session_id,
+            safe_msg,
         )
+        _llm_failed = True
+
+    # ── F2-2: Fallback path ───────────────────────────────────────────────────
+    if _llm_failed:
+        fallback_row: dict[str, Any] = {
+            "session_id": session_id,
+            "segment_id": segment_id,
+            "response_text": response_text,
+            "score": None,
+            "feedback_praise": None,
+            "feedback_correction": None,
+            "concepts_hit": [],
+            "concepts_missed": [],
+            "attempt_number": attempt_number,
+            "score_source": "fallback",
+        }
+        fallback_insert_resp = await asyncio.to_thread(
+            lambda: supabase.table("teachback_attempts").insert(fallback_row).execute()
+        )
+        fallback_insert_error = getattr(fallback_insert_resp, "error", None)
+        if fallback_insert_error:
+            safe_err = str(fallback_insert_error).replace("\n", " ").replace("\r", " ")
+            logger.error(
+                "teachback_attempts fallback insert failed: session=%s error=%s",
+                session_id,
+                safe_err,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to record teachback attempt.",
+            )
+        return TeachbackResult(
+            session_id=session_id,
+            rubric_scores={},
+            overall_score=0.0,
+            ces_contribution=0.0,
+            feedback="Scoring temporarily unavailable — your response has been saved.",
+            score_source="fallback",
+        )
+
+    # Reached only when _llm_failed is False (fallback block above returns early).
+    assert result is not None  # noqa: S101 — mypy type narrowing; runtime unreachable if fallback
 
     # Step 7 — Compute CES contribution
     # CES SCALE CONTRACT (communicate to Dev 4):
@@ -744,7 +851,7 @@ async def grade_teachback(
         result.praise if not result.correction else f"{result.praise}\n\n{result.correction}"
     )
 
-    # Step 9 — Persist to teachback_attempts
+    # Step 9 — Persist to teachback_attempts (llm path)
     row: dict[str, Any] = {
         "session_id": session_id,
         "segment_id": segment_id,
@@ -755,6 +862,7 @@ async def grade_teachback(
         "concepts_hit": result.concepts_hit,
         "concepts_missed": result.concepts_missed,
         "attempt_number": attempt_number,
+        "score_source": "llm",
     }
     insert_resp = await asyncio.to_thread(
         lambda: supabase.table("teachback_attempts").insert(row).execute()
@@ -808,7 +916,116 @@ async def grade_teachback(
         overall_score=float(result.score),
         ces_contribution=ces_contribution,
         feedback=feedback,
+        score_source="llm",
     )
+
+
+def _calculate_stt_cost(duration_seconds: float) -> float:
+    """Return the Whisper transcription cost in USD for *duration_seconds* of audio.
+
+    Cost = (duration_seconds / 60) * settings.stt_cost_per_min.
+    Called after transcription so the caller can accumulate via cost_tracker.
+    """
+    settings = get_settings()
+    return (duration_seconds / 60.0) * settings.stt_cost_per_min
+
+
+async def transcribe_and_score_audio(
+    *,
+    session_id: str,
+    segment_id: str,
+    audio_bytes: bytes,
+    filename: str,
+    user_id: str,
+    supabase: Client,
+) -> TeachbackResult:
+    """Transcribe a voice teach-back recording and score it via the LLM rubric.
+
+    On successful transcription: calls grade_teachback() with the transcript as
+    response_text and returns the result with score_source="llm".
+
+    On transcription failure (Whisper API error, timeout, unsupported format):
+    returns HTTP 200 with score_source="fallback" and neutral scores — never raises.
+
+    Args:
+        session_id: UUID of the live session.
+        segment_id: ID of the segment the student just completed.
+        audio_bytes: Raw audio file contents (WAV, MP3, MP4, WEBM, etc.).
+        filename: Original filename — Whisper uses extension for format detection.
+        user_id: User UUID from the decoded JWT.
+        supabase: Synchronous Supabase client.
+
+    Returns:
+        TeachbackResult with score_source "llm" or "fallback".
+    """
+    from app.core.cost_tracker import accumulate_cost  # noqa: PLC0415 — lazy to avoid circular
+    from app.providers.stt.whisper import WhisperProvider  # noqa: PLC0415
+
+    # Load lesson_id from the session row so we can call grade_teachback.
+    # grade_teachback will re-validate ownership — two reads is acceptable for MVP.
+    session_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("lesson_id, user_id")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    session_row = single_row(session_resp)
+    if session_row is None or str(session_row["user_id"]) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
+        )
+    lesson_id: str = str(session_row["lesson_id"])
+
+    settings = get_settings()
+    provider = WhisperProvider(settings=settings)
+
+    try:
+        transcript, duration_seconds = await provider.transcribe(audio_bytes, filename)
+        cost = _calculate_stt_cost(duration_seconds)
+        if cost > 0:
+            await accumulate_cost(lesson_id, cost)
+        elif duration_seconds == 0.0:
+            logger.warning(
+                "Voice teach-back: Whisper returned duration=0 for session=%s — cost not tracked",
+                session_id,
+            )
+
+        result = await grade_teachback(
+            session_id=session_id,
+            lesson_id=lesson_id,
+            segment_id=segment_id,
+            response_text=transcript,
+            user_id=user_id,
+            supabase=supabase,
+        )
+        return result
+
+    except HTTPException:
+        raise  # session/segment validation errors propagate as-is
+    except Exception:
+        logger.warning(
+            "Voice teach-back transcription failed — returning fallback result",
+            exc_info=True,
+        )
+        return TeachbackResult(
+            session_id=session_id,
+            rubric_scores={
+                "accuracy": "Developing",
+                "completeness": "Developing",
+                "clarity": "Developing",
+            },
+            overall_score=50.0,
+            ces_contribution=12.5,
+            feedback=(
+                "Your audio could not be transcribed. "
+                "Please try again or submit a typed response instead."
+            ),
+            score_source="fallback",
+        )
 
 
 async def compute_ces_from_session_aggregates(
@@ -988,28 +1205,36 @@ async def get_session_report(
     quiz_accuracy: float = (correct_count / total_quiz) if total_quiz > 0 else 0.0
 
     # Step 3 — Teachback stats from teachback_attempts
-    # BOUNDED: at most one attempt per segment (teach-back has no retry) → max ~15 rows.
-    # .limit(50) is a safety ceiling above the natural bound.
+    # BOUNDED: F2-2 adds skip and fallback rows per segment alongside llm rows,
+    # so the previous "one row per segment → max ~15 rows" assumption no longer holds.
+    # Worst case: 15 segments × (llm + fallback + skip) = up to ~45 rows per session;
+    # .limit(200) provides a safety ceiling well above the realistic maximum.
     # Story 2-48: widened select to include detail columns; .order("created_at") for ordering.
     tb_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("teachback_attempts")
             .select(
                 "segment_id, score, feedback_praise, feedback_correction,"
-                " concepts_hit, concepts_missed, attempt_number"
+                " concepts_hit, concepts_missed, attempt_number, score_source"
             )
             .eq("session_id", session_id)
             .order("created_at")
-            .limit(50)
+            .limit(200)
             .execute()
         )
     )
     tb_rows: list[dict[str, Any]] = rows(tb_resp)
     teachback_count = len(tb_rows)
     if teachback_count > 0:
-        sum_scores = sum(r.get("score", 0) or 0 for r in tb_rows)
-        avg_teachback: float = sum_scores / teachback_count
-        teachback_score: float | None = round(avg_teachback, 2)
+        # F2-2: exclude fallback/skipped rows (score is None) from the average.
+        # Including them would silently dilute real scores — a skip treated as 0
+        # would drag a genuine 80 down to 40 in a 2-row session.
+        scored_rows = [r for r in tb_rows if r.get("score") is not None]
+        if scored_rows:
+            avg_teachback: float = sum(r["score"] for r in scored_rows) / len(scored_rows)
+            teachback_score: float | None = round(avg_teachback, 2)
+        else:
+            teachback_score = None
         teachback_details: list[TeachbackDetail] | None = [
             TeachbackDetail(
                 segment_id=r.get("segment_id", ""),
@@ -1019,11 +1244,11 @@ async def get_session_report(
                 concepts_hit=r.get("concepts_hit") or [],
                 concepts_missed=r.get("concepts_missed") or [],
                 attempt_number=r.get("attempt_number", 1),
+                score_source=r.get("score_source", "llm"),
             )
             for r in tb_rows
         ]
     else:
-        avg_teachback = 0.0
         teachback_score = None
         teachback_details = None
 
@@ -1075,7 +1300,7 @@ async def get_session_report(
 
     # Step 5 — CES breakdown via D2 helper (proportional redistribution when teachback absent)
     settings = get_settings()
-    teachback_normalised = (avg_teachback / 100.0) if teachback_count > 0 else None
+    teachback_normalised = (teachback_score / 100.0) if teachback_score is not None else None
 
     # S3-42 (D9): read per-signal histories from Redis to populate real averages.
     # Graceful fallback to 0.0 when redis is None, key missing, or history empty.
@@ -1857,3 +2082,413 @@ async def seed_personalized_ces_threshold(
             user_id,
             exc,
         )
+
+
+# ── Story F2-1 — Learner Context API for Tutor Prompt Injection ───────────────
+# R1: Removed _ALL_NINE_DIMS duplicate → use ALL_NINE_DIMENSIONS (already imported).
+# R1: Removed _DIM_HUMAN_LABELS duplicate → use _DIM_LABELS (imported from prompts.py).
+# R1: _dim_band is now a thin None-guard wrapper over prompts._dim_descriptor.
+
+# Valid badge label set for allowlist filtering in _build_learner_prompt_text.
+# BADGE_THRESHOLDS maps dim → badge_label; its values are the only valid labels.
+_VALID_BADGE_LABELS: frozenset[str] = frozenset(BADGE_THRESHOLDS.values())
+
+
+def _dim_band(value: float | None) -> str:
+    """Thin wrapper over prompts._dim_descriptor that handles None → 'emerging'."""
+    return _dim_descriptor(value if value is not None else 0.0)
+
+
+def _build_learner_prompt_text(
+    dna: LearnerContextDNA | None,
+    session: LearnerContextSession,
+) -> str:
+    """Build a pre-formatted string ready to inject into an LLM system prompt.
+
+    Descriptive language only — no raw numeric dimension values or floats.
+    badge_labels are allowlist-filtered before interpolation (prompt injection defence).
+    """
+    parts: list[str] = []
+
+    if dna is not None:
+        # Allowlist filter — only hardcoded badge strings from BADGE_THRESHOLDS reach the prompt
+        safe_badges = [b for b in dna.badge_labels if b in _VALID_BADGE_LABELS]
+        badge_str = ", ".join(safe_badges) if safe_badges else "none yet"
+        dim_lines = [f"  - {_DIM_LABELS.get(k, k)}: {v}" for k, v in dna.dimension_labels.items()]
+        dims_str = "\n".join(dim_lines)
+        parts.append(
+            f"**Student Learning Profile:**\n"
+            f"- Learning style badges: {badge_str}\n"
+            f"- Learning dimension strengths:\n{dims_str}\n"
+            f"- Sessions completed: {dna.session_count}"
+        )
+
+    session_lines: list[str] = []
+    if session.quiz_accuracy is not None:
+        label = _quiz_accuracy_label(session.quiz_accuracy, session.quiz_total)
+        session_lines.append(f"- Quiz performance: {label} ({session.quiz_total} questions)")
+    if session.teachback_score is not None:
+        tb_label = _score_to_label(session.teachback_score)
+        session_lines.append(f"- Teach-back quality: {tb_label}")
+    if session.ces_score is not None:
+        ces_label = _score_to_label(session.ces_score)
+        session_lines.append(f"- Overall engagement (CES): {ces_label}")
+
+    if session_lines:
+        parts.append("**Current Session:**\n" + "\n".join(session_lines))
+
+    if not parts:
+        return ""
+
+    parts.append("Use this context to personalise your explanation for this student.")
+    return "\n\n".join(parts)
+
+
+async def get_learner_context(
+    *,
+    session_id: str,
+    user_id: str,
+    supabase: Client,
+) -> LearnerContext:
+    """Return historical Learner DNA + current session signals for tutor prompt injection.
+
+    Story F2-1. Called by Dev 4's tutor state machine with the student's own JWT.
+    No LLM calls — pure data aggregation.
+
+    Raises:
+        HTTPException 404: session_id not found OR belongs to a different user.
+            Unified message prevents session-id enumeration (same as grade_quiz pattern).
+    """
+    _not_found = "Session not found or access denied."
+
+    # Step 1 — session ownership check (bounded: .maybe_single())
+    sess_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id, ces_final")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    sess_row = single_row(sess_resp)
+    if sess_row is None or str(sess_row["user_id"]) != str(user_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=_not_found)
+
+    ces_final = sess_row.get("ces_final")
+
+    # Step 2 — learner DNA (bounded: .maybe_single() on unique user_id column)
+    dna_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("learner_dna")
+            .select(
+                "badge_labels, profile_text, session_count, "
+                "pattern_recognition, logical_deduction, processing_speed, "
+                "frustration_tolerance, persistence, help_seeking, "
+                "goal_orientation, curiosity_index, study_independence"
+            )
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    dna_row = single_row(dna_resp)
+
+    learner_dna: LearnerContextDNA | None = None
+    if dna_row is not None:
+        dim_labels = {dim: _dim_band(dna_row.get(dim)) for dim in ALL_NINE_DIMENSIONS}
+        learner_dna = LearnerContextDNA(
+            badge_labels=dna_row.get("badge_labels") or [],
+            profile_text=dna_row.get("profile_text"),
+            session_count=int(dna_row.get("session_count") or 0),
+            dimension_labels=dim_labels,
+        )
+
+    # Step 3 — quiz attempts this session.
+    # BOUNDED: eq(session_id) + .limit(500). Upper bound derivation: 15 segments × 10
+    # questions × 3 retries = 450 rows per session (matches get_session_report cap).
+    quiz_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("quiz_attempts")
+            .select("is_correct")
+            .eq("session_id", session_id)
+            .limit(500)
+            .execute()
+        )
+    )
+    quiz_rows = rows(quiz_resp)
+    quiz_total = len(quiz_rows)
+    quiz_accuracy: float | None = None
+    if quiz_total > 0:
+        correct = sum(1 for r in quiz_rows if r.get("is_correct"))
+        quiz_accuracy = correct / quiz_total
+
+    # Step 4 — teachback attempts this session.
+    # BOUNDED: eq(session_id) + .limit(50). Upper bound: 1 attempt per segment, ~15 max
+    # (matches get_session_report cap).
+    tb_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("teachback_attempts")
+            .select("score")
+            .eq("session_id", session_id)
+            .limit(50)
+            .execute()
+        )
+    )
+    tb_rows = rows(tb_resp)
+    tb_count = len(tb_rows)
+    tb_score: float | None = None
+    if tb_count > 0:
+        scores = [r["score"] for r in tb_rows if r.get("score") is not None]
+        if scores:
+            tb_score = sum(scores) / len(scores)
+
+    current_session = LearnerContextSession(
+        quiz_accuracy=quiz_accuracy,
+        quiz_total=quiz_total,
+        teachback_score=tb_score,
+        teachback_count=tb_count,
+        ces_score=float(ces_final) if ces_final is not None else None,
+    )
+
+    prompt_text = _build_learner_prompt_text(learner_dna, current_session)
+
+    return LearnerContext(
+        session_id=session_id,
+        user_id=user_id,
+        dna=learner_dna,
+        current_session=current_session,
+        prompt_text=prompt_text,
+    )
+
+
+# ── Tutor Q&A (Story 4-28, Phase 2 P2-1, closes D149) ───────────────────────────
+#
+# Real backend behind the already-shipped, currently-100%-mocked "Ask Tutor"
+# button (Story 2-57/BR-5). See docs/stories/4-28-tutor-qa-real-backend.md for
+# full ACs/Scale & Load. Deliberately in assessment/, not tutor/ — D149's own
+# proposed ownership, and this endpoint never touches the tutor FSM (the
+# story's Dev Notes explain why no FSM change is needed at all).
+
+
+async def _log_tutor_question_event(
+    *,
+    supabase: Client,
+    session_id: str,
+    payload: TutorQuestionSubmission,
+    answer: str | None,
+    declined: bool,
+    retrieved_chunk_ids: list[str],
+    model: str | None,
+    cost_usd: float,
+    finish_reason: str | None,
+) -> None:
+    """Write one session_events row — every question, answered or declined,
+    is on the record (AC6). Extends D149's originally-proposed payload shape
+    (chunk IDs, model, cost, finish_reason added) rather than replacing it.
+
+    Best-effort: a logging failure must never turn a successfully-computed
+    answer into a 500 for the student (matches this module's existing
+    non-fatal-side-effect convention, e.g. seed_personalized_ces_threshold's
+    own try/except).
+    """
+    try:
+        await asyncio.to_thread(
+            lambda: (
+                supabase.table("session_events")
+                .insert(
+                    {
+                        "session_id": session_id,
+                        "event_type": "tutor_question",
+                        "payload": {
+                            "segment_id": payload.segment_id,
+                            "question_text": payload.question_text,
+                            "audio_position_ms": payload.audio_position_ms,
+                            "answer": answer,
+                            "declined": declined,
+                            "retrieved_chunk_ids": retrieved_chunk_ids,
+                            "model": model,
+                            "cost_usd": cost_usd,
+                            "finish_reason": finish_reason,
+                        },
+                    }
+                )
+                .execute()
+            )
+        )
+    except Exception:
+        logger.exception(
+            "tutor_question session_events insert failed session=%s -- answer/decline "
+            "still returned to the caller, only the audit-log write was lost",
+            session_id,
+        )
+
+
+async def answer_tutor_question(
+    *,
+    session_id: str,
+    payload: TutorQuestionSubmission,
+    user_id: str,
+    supabase: Client,
+    redis: Redis,
+    settings: Settings | None = None,
+) -> TutorQuestionResult:
+    """Answer (or gracefully decline) one tutor question.
+
+    Order: ownership check -> rate-limit check -> retrieval-scope resolve ->
+    embed -> pgvector search -> relevance gate -> LLM_TUTOR call -> log.
+    Every exit writes exactly one session_events row (AC6) except the
+    ownership-check 404, which never reaches a real session to log against.
+
+    Raises:
+        HTTPException 404: session missing or belongs to a different user --
+            SEC-006 pattern (grade_quiz's own convention): both cases return
+            the SAME 404, never a 403, so a caller cannot distinguish "wrong
+            owner" from "doesn't exist" (no enumeration oracle).
+    """
+    if settings is None:
+        settings = get_settings()
+
+    # Step 1 -- session ownership (mirrors grade_quiz's exact SEC-006 pattern)
+    session_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("sessions")
+            .select("session_id, user_id, lesson_id")
+            .eq("session_id", session_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    session_row = single_row(session_resp)
+    if session_row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Session {session_id!r} not found.",
+        )
+    if str(session_row["user_id"]) != str(user_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found or access denied.",
+        )
+    lesson_id = session_row["lesson_id"]
+
+    # Step 2 -- rate limit: INCR is the atomic act itself (Scale & Load Q6) --
+    # the comparison happens on the atomically-returned post-increment value,
+    # never on a stale separate read.
+    count_key = f"session:{session_id}:tutor_question_count"
+    question_number = await redis.incr(count_key)
+    if question_number == 1:
+        await redis.expire(count_key, 86_400)
+    if question_number > settings.tutor_qa_max_questions_per_session:
+        await _log_tutor_question_event(
+            supabase=supabase,
+            session_id=session_id,
+            payload=payload,
+            answer=None,
+            declined=True,
+            retrieved_chunk_ids=[],
+            model=None,
+            cost_usd=0.0,
+            finish_reason="rate_limited",
+        )
+        return TutorQuestionResult(received=True, answer=None, declined=True)
+
+    # Step 3 -- resolve retrieval scope: lessons.chapter_id, fallback book_id
+    lesson_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("lessons")
+            .select("chapter_id, book_id")
+            .eq("lesson_id", lesson_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    lesson_row = single_row(lesson_resp) or {}
+    chapter_id = lesson_row.get("chapter_id")
+    book_id = lesson_row.get("book_id")
+
+    # Step 4 -- embed the question (query-time embedding -- explicitly
+    # permitted, CLAUDE.md's one deliberate exception to "chunk embeddings at
+    # ingestion only, never regenerated").
+    from app.providers.embeddings.openai import OpenAIEmbeddingsProvider
+
+    embeddings_provider = OpenAIEmbeddingsProvider()
+    embeddings, _embed_tokens = await embeddings_provider.embed_texts([payload.question_text])
+    query_embedding = embeddings[0]
+
+    # Step 5 -- retrieval: match_tutor_chunks RPC, scoped (never corpus-wide),
+    # top-K.
+    match_resp = await asyncio.to_thread(
+        lambda: supabase.rpc(
+            "match_tutor_chunks",
+            {
+                "query_embedding": query_embedding,
+                "p_chapter_id": chapter_id,
+                "p_book_id": book_id,
+                "p_match_count": settings.tutor_qa_top_k,
+            },
+        ).execute()
+    )
+    matched_chunks = rows(match_resp)
+    retrieved_chunk_ids = [str(c["chunk_id"]) for c in matched_chunks]
+    best_similarity = matched_chunks[0]["similarity"] if matched_chunks else 0.0
+
+    # Step 6 -- relevance gate (AC4): below threshold, decline WITHOUT calling
+    # LLM_TUTOR -- never answer from the model's general knowledge.
+    if not matched_chunks or best_similarity < settings.tutor_qa_relevance_threshold:
+        await _log_tutor_question_event(
+            supabase=supabase,
+            session_id=session_id,
+            payload=payload,
+            answer=None,
+            declined=True,
+            retrieved_chunk_ids=retrieved_chunk_ids,
+            model=None,
+            cost_usd=0.0,
+            finish_reason="low_relevance",
+        )
+        return TutorQuestionResult(received=True, answer=None, declined=True)
+
+    # Step 7 -- LLM_TUTOR call (deliberate, new exception to "no GPT call at
+    # intervention time" -- that rule was written for pre-generated
+    # interventions specifically, per CLAUDE.md's Tutor State Machine
+    # section, not this). Never a direct provider import at the call site --
+    # goes through the factory (CLAUDE.md's provider-abstraction rule).
+    from app.providers.llm.factory import get_llm_provider
+
+    context_text = "\n\n".join(c["content"] for c in matched_chunks)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are a tutor helping a student understand a lesson. Answer ONLY using "
+                "the provided lesson excerpts below. If the excerpts don't actually contain "
+                "the answer, say so honestly rather than guessing or using outside knowledge."
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Lesson excerpts:\n{context_text}\n\nStudent question: {payload.question_text}"
+            ),
+        },
+    ]
+    provider = get_llm_provider(settings.llm_tutor)
+    answer_text, finish_reason, cost_usd = await provider.complete_with_meta(
+        messages,
+        model=settings.llm_tutor,
+        max_tokens=settings.tutor_qa_max_answer_tokens,
+    )
+
+    await _log_tutor_question_event(
+        supabase=supabase,
+        session_id=session_id,
+        payload=payload,
+        answer=answer_text,
+        declined=False,
+        retrieved_chunk_ids=retrieved_chunk_ids,
+        model=settings.llm_tutor,
+        cost_usd=cost_usd,
+        finish_reason=finish_reason,
+    )
+    return TutorQuestionResult(received=True, answer=answer_text, declined=False)
