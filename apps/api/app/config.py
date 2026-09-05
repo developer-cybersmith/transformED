@@ -65,30 +65,41 @@ class Settings(BaseSettings):
 
     # ── TTS providers ─────────────────────────────────────────────────────────
     # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
-    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v2 API key — primary TTS")
+    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v3 API key — primary TTS")
     sarvam_voice_id: str = Field(
-        # D67: "meera" is not a valid Bulbul v2 speaker -- confirmed via a
-        # real, live call to api.sarvam.ai (400 invalid_request_error,
-        # listing the valid speakers). Every real TTS call through the
-        # primary provider was 400ing and silently degrading to the Azure
-        # fallback on 100% of narration. "anushka" verified via a second
-        # live call (200 OK, real audio) -- chosen for parity with the
-        # existing Azure fallback default (en-IN-NeerjaNeural, Indian
-        # English), matching this product's target market.
-        default="anushka",
-        description="Sarvam Bulbul v2 speaker name for narration synthesis",
+        # D67 (historical): "meera" is not a valid Bulbul v2 speaker --
+        # confirmed via a real, live call to api.sarvam.ai. "anushka" was
+        # verified valid for v2 and chosen for parity with the existing
+        # Azure fallback default (en-IN-NeerjaNeural, Indian English).
+        #
+        # D148 (2026-09-04): the request body never pinned an explicit
+        # `model`, so it silently rode Sarvam's server-side default, which
+        # drifted to `bulbul:v3` -- "anushka" is NOT a valid v3 speaker
+        # (confirmed live, 400 invalid_request_error). By the time this was
+        # fixed, `bulbul:v2` itself had been deprecated server-side too, so
+        # pinning back to v2 was no longer an option. "priya" verified live
+        # (200 OK, real audio) against `bulbul:v3` and chosen to preserve the
+        # same Indian-English-female-voice parity D67 originally chose --
+        # the specific voice CHARACTER has not been human-reviewed/listened
+        # to, only its validity confirmed; revisit if narration quality is
+        # ever flagged.
+        default="priya",
+        description="Sarvam Bulbul v3 speaker name for narration synthesis",
     )
     sarvam_narration_pace: float = Field(
         default=0.85,
         ge=0.3,
         le=3.0,
         description=(
-            "Sarvam Bulbul v2 `pace` parameter for narration synthesis -- controls "
-            "speaking speed (lower is slower; Sarvam's own valid range for bulbul:v2 "
-            "is 0.3-3.0, default 1.0). Sarvam's raw 1.0 default read as 'very fast' in "
-            "real stakeholder playback (D89); 0.85 is a reasoned, moderately-slower "
-            "starting value, not an exact scientifically-derived one -- tune via env "
-            "var without a code change, same as sarvam_voice_id above."
+            "Sarvam Bulbul v3 `pace` parameter for narration synthesis -- controls "
+            "speaking speed (lower is slower; Sarvam's valid range was 0.3-3.0, "
+            "default 1.0, for v2 -- unverified whether v3's range differs, not "
+            "re-checked live since D148's fix only needed a valid (speaker, model) "
+            "pair, not a pace-range re-verification). Sarvam's raw 1.0 default read "
+            "as 'very fast' in real stakeholder playback (D89); 0.85 is a reasoned, "
+            "moderately-slower starting value, not an exact scientifically-derived "
+            "one -- tune via env var without a code change, same as sarvam_voice_id "
+            "above."
         ),
     )
     azure_tts_key: str | None = Field(
@@ -350,6 +361,47 @@ class Settings(BaseSettings):
         default="gpt-4o",
         description=(
             "Model for Phase 2 tutor Q&A. Eval candidates: gpt-4o, claude-3-5-sonnet-20241022."
+        ),
+    )
+
+    # ── Tutor Q&A (Story 4-28, Phase 2 P2-1) ────────────────────────────────────
+    # All four defaults below are REASONED, not measured — no real session has
+    # ever asked a question yet (D149 was mocked until this story). Flagged as
+    # candidates for real-data tuning once usage exists (Scale & Load Q2).
+    tutor_qa_max_questions_per_session: int = Field(
+        default=10,
+        ge=1,
+        description=(
+            "Per-session cap on tutor questions, enforced via Redis INCR/EXPIRE "
+            "(session:{id}:tutor_question_count). Past it: explicit decline, no "
+            "embedding/LLM call made. Reasoned default (bounds worst-case "
+            "per-session Q&A spend at 10x one question's cost), not yet "
+            "calibrated against real session data."
+        ),
+    )
+    tutor_qa_top_k: int = Field(
+        default=5,
+        ge=1,
+        description="Top-K chunks retrieved per question via match_tutor_chunks RPC.",
+    )
+    tutor_qa_relevance_threshold: float = Field(
+        default=0.75,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Minimum cosine-similarity score (of the best retrieved chunk) required "
+            "to attempt an LLM_TUTOR answer. Below this, the question is declined "
+            "gracefully with no LLM call — never answered from the model's general "
+            "knowledge. Reasoned default, not yet calibrated against real questions."
+        ),
+    )
+    tutor_qa_max_answer_tokens: int = Field(
+        default=300,
+        ge=1,
+        description=(
+            "max_tokens cap on the LLM_TUTOR completion — bounds worst-case "
+            "per-question cost directly (this story's substitute for a dedicated "
+            "cost-ceiling subsystem; see Story 4-28 Scale & Load Q2)."
         ),
     )
 

@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-04 (BR-5 added and completed — deploy-time required-secrets verification, D150, closing D146's residual gap)
-**Overall status:** 36/48 Completed · 6 Partial · 6 Not Started
+**Last updated:** 2026-09-04 (Phase 2 P2-1 added and completed — Tutor Q&A real backend, D158, closing D149)
+**Overall status:** 37/49 Completed · 6 Partial · 6 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -808,6 +808,49 @@ MAX_DISTRACTION_PER_SESSION=3
     Full `apps/api/tests` unit suite re-run: 35 failed / 2243 passed / 32 skipped — all 35 pre-existing
     (3 already-registered D143, rest stale eval-PDF fixtures/other pre-existing gaps), confirmed neither
     this story's new test file nor D49's own guard tests appear in the failure list. `ruff` clean.
+
+---
+
+## Phase 2 — Post-MVP Features
+
+> **Goal:** PRD Phase 2 items CLAUDE.md already reserves env vars/exceptions for (`LLM_TUTOR`, the
+> query-time-embedding carve-out) but that were never started. Doesn't fit the numbered-sprint or
+> Bug-Resolution sections above — new section rather than forcing it into either, matching this
+> file's own established pattern.
+>
+> **Branch flow:** `phase2/p2-{N}-{slug}`, cut from `main`, story-first commit pushed alone before
+> implementation (`docs/stories/4-{NN}-*.md` — continues the existing Dev-4 story numbering, not a
+> new scheme), one PR per item straight into `main` (no shared integration branch — each item is
+> independently mergeable, unlike the Bug Resolution sprint's four originally-coupled tasks).
+
+<!-- CHECK:p2_1_tutor_qa_real_backend -->
+- [Completed] **Tutor Q&A: real backend (RAG + LLM_TUTOR) — closes D149/registered as D158** ✅ 2026-09-04
+  - Picked up opportunistically, cross-module (assessment/, not tutor/) — D149's proposed owner
+    was "TBD/Dev 3," never started; Dev 2's scoping email named the delivery/FSM/rate-limiting
+    calls as mine specifically.
+  - `POST /assessment/session/{session_id}/questions`: session ownership (SEC-006 pattern, 404
+    for both missing and foreign, no enumeration oracle) → per-session Redis rate cap (atomic
+    `INCR`) → pgvector retrieval via new `match_tutor_chunks` RPC, scoped to `chapter_id`/`book_id`
+    (never corpus-wide) → relevance gate (declines below threshold, no LLM call) → `LLM_TUTOR` call
+    via the provider factory → `session_events` log (answered or declined, every time).
+  - New, additive `LLMProvider.complete_with_meta()` (returns `finish_reason` + `cost_usd`,
+    `complete()` itself unchanged) — needed because tutor Q&A cost is a different unit of work
+    than the `$3.00`/lesson generation ceiling and must never be accumulated against it.
+  - FSM impact investigated, not assumed: confirmed directly against `process_attention_signal`
+    that no backend FSM change is needed at all — the frontend's existing pause already suspends
+    CES/fatigue monitoring without leaving `TEACHING`.
+  - Explicitly out of scope, named not silently dropped: frontend wiring (Dev 2's domain, contract
+    fully specified), WebSocket/streaming delivery (needs a 4-dev frozen-contract PR nobody could
+    hold this session — REST ships now instead), a dedicated cost-ceiling subsystem (bounded via
+    question-count cap + `max_tokens` instead).
+  - New migration: `20260905000000_match_tutor_chunks_rpc.sql` (RPC function only, no new
+    tables/columns).
+  - Story: `docs/stories/4-28-tutor-qa-real-backend.md`
+  - **AC MET:** AC1–AC7 all satisfied — 26 new tests (17 `test_tutor_question_endpoint.py` + 9
+    `test_complete_with_meta.py`), all external dependencies mocked, `ruff`/`mypy` clean.
+    Registered as **D158** in `docs/DEFECT-REGISTER.md` (D149 itself doesn't exist on `main` yet —
+    still on unmerged PR #182 — so this cross-references it rather than editing a row that isn't
+    here).
 
 ---
 
