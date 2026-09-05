@@ -38,7 +38,6 @@ SHIM_SQL = pathlib.Path(__file__).parent / "supabase_shim.sql"
 
 CONTAINER = "transformed-notification-log-test"
 IMAGE = "pgvector/pgvector:pg16"
-PORT = 55434  # distinct from test_migration_chapters_book_scoped.py's 55433
 DB = "transformed_notification_log_test"
 PASSWORD = "test_only_not_a_secret"  # noqa: S105 — throwaway container, loopback-only
 
@@ -50,6 +49,11 @@ PASSWORD = "test_only_not_a_secret"  # noqa: S105 — throwaway container, loopb
 # postgresql-client install, which is exactly the gap that caused this
 # integration test to be skipped-not-written for a while (see this story's
 # Completion Notes).
+#
+# No host port is published for the Postgres container (no -p flag): every
+# SQL call goes through `docker exec`, so there is nothing to collide with
+# other containers or the runner's own ephemeral-port pool. Mirrors
+# test_book_select_lists_against_postgrest.py's pattern exactly.
 
 
 def _docker_up() -> bool:
@@ -189,8 +193,6 @@ def pg_server() -> object:
                 f"POSTGRES_PASSWORD={PASSWORD}",
                 "-e",
                 "POSTGRES_DB=postgres",
-                "-p",
-                f"127.0.0.1:{PORT}:5432",
                 IMAGE,
             ],
             capture_output=True,

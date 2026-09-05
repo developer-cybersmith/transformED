@@ -424,6 +424,37 @@ Let me update the dev notes. The story is already complex enough — let me just
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One HTTP request per session report view. The 5 new tier fields (`tier`, `tier_label`, `quiz_total_questions`, `quiz_correct_count`, `quiz_accuracy_label`) are derived from data already fetched in the existing `GET /session/{id}/report` queries — no additional DB calls added.
+
+**Q2 — Fixed budgets vs variable input**
+All 5 new fields are derived from already-materialised row counts (`len(quiz_rows)`, `correct_count`). No new LLM calls. `quiz_accuracy_label` mapping is a pure Python dict lookup. No variable input budget introduced.
+
+**Q3 — Scope of limits**
+Per session (scoped by `session_id`). `lessons.tier` is a per-lesson attribute — each student's session has exactly one tier. `quiz_rows` is bounded by the quiz_attempts written during the session (max 75 rows for a 15-segment T1 lesson per story 3-28 cap analysis). The existing `.limit(500)` on quiz_rows fetch is not altered here.
+
+**Q4 — Unbounded reads/writes**
+No new Supabase queries. The `lessons.tier` value is fetched from the existing `lessons` lookup (`.maybe_single()`, already bounded in story 3-19). `quiz_rows` fetch is bounded by the existing `.limit()` (confirmed in story 3-19 implementation).
+
+**Q5 — Inherited caps**
+Quiz row cap inherited from story 3-19's `.limit(500)` on `quiz_attempts`. Re-derived: 15 segments × 5 questions × max attempts = bounded well below 500 in normal use.
+
+**Q6 — Concurrent TOCTOU safety**
+Read-only endpoint — no writes, no TOCTOU gap. Concurrent reads for the same session each compute the same tier context from the same immutable lesson row.
+
+---
+
+## Senior Developer Review (AI)
+
+**Review date:** 2026-09-05 (retroactively added — process debt closure)
+**Outcome:** APPROVED
+
+**Scale & Load Hunter:** PASS — No new Supabase queries introduced. All 5 new tier fields are derived from already-materialised data from story 3-19 queries. `lessons.tier` fetched via `.maybe_single()`. `quiz_rows` bounded by inherited `.limit(500)`. Read-only endpoint — no TOCTOU risk. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section above.
+
+---
+
 ## Dev Agent Record
 
 ### Completion Notes
