@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-01 (S4-13 DNA-personalized CES threshold done; S4-12 D137 reassessment EMA blend done — Sprint 4 now 8/11)
+**Last updated:** 2026-09-05 (F2-1 Learner Context API done — Bug Resolution Sprint task complete)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -21,8 +21,9 @@
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 11 | 8 | 1 | 2 |
+| Bug Resolution Sprint | Sep 2026 | 1 | 1 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **67** | **61** | **1** | **5** |
+| **Total** | | **68** | **62** | **1** | **5** |
 
 Update this table each time a task is checked off below.
 
@@ -1003,6 +1004,26 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `tutor/service.py:process_attention_signal` reads `session:{sid}:ces_threshold` from Redis (O(1) hot path)
   - 14 unit tests, all GREEN; zero regressions (978 passing vs 965 before)
   - Branch: `sprint4/s4-13-dna-ces-threshold` | Story: `docs/stories/4-13-dna-personalized-ces-threshold.md`
+
+---
+
+## Bug Resolution Sprint — Feature 2 (Sep 2026)
+
+> **Goal:** Resolve remaining bugs + deliver learner context API for tutor personalisation.
+
+- [x] **F2-1 — Learner Context API for tutor prompt injection** — ✓ 2026-09-05
+  - Story: `docs/stories/f2-1-dna-prompt-context-api.md` — 11 ACs, Scale & Load section ✓
+  - Branch: `feature2/f2-1-dna-prompt-context-api` — story-first commit (3d5ad00) before implementation (778888f) ✓
+  - New endpoint: `GET /api/assessment/session/{session_id}/learner-context` returns `LearnerContext` ✓
+  - IDOR-protected: 404 unified message for wrong-user or missing session (AC2) ✓
+  - `LearnerContextDNA`, `LearnerContextSession`, `LearnerContext` added to `schemas.py` + `__all__` (AC10) ✓
+  - `get_learner_context()` + `_build_learner_prompt_text()` in `service.py` — pure data aggregation, zero LLM calls (AC9) ✓
+  - `dimension_labels` uses descriptive bands (strong/developing/building/emerging) — no raw floats to callers (AC3/AC11) ✓
+  - `prompt_text` allowlist-filtered via `BADGE_THRESHOLDS.values()` — prompt injection defence ✓
+  - All DB reads bounded: `.maybe_single()` for sessions/dna; `.eq().limit(500)` for quiz_attempts; `.eq().limit(50)` for teachback_attempts (AC8) ✓
+  - 6-layer adversarial BMAD review run + R1–R3 patches applied (import dedup, asyncio.run(), .limit() mocks, DPDP endswith) ✓
+  - 14/14 unit tests GREEN; guard tests `test_unbounded_queries.py` + `test_node_return_shape.py` pass (21/22 — 1 pre-existing tinytag failure unrelated to F2-1) ✓
+  - Commits: story-first (3d5ad00), impl (778888f), R1 import (prev session), R1-R3 patches (4ae32b7) ✓
 
 ---
 
