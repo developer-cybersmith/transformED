@@ -257,18 +257,22 @@ Proposed storage: one `session_events` row, `event_type: "tutor_question"`, payl
 - `apps/web/src/__tests__/components/player/AudioTimeline.component.test.tsx` — 4 new tests, 2
   existing tests updated (opt-out, named above)
 - `apps/web/src/__tests__/components/player/PlayerControls.test.tsx` — new file, 9 tests
-- `apps/web/src/__tests__/components/player/AskTutorPanel.test.tsx` — new file, 5 tests
+- `apps/web/src/__tests__/components/player/AskTutorPanel.test.tsx` — 5 tests at initial
+  implementation, +2 added in the pre-merge pass wiring D159 to the real D158 backend (7 total)
 - `docs/DEFECT-REGISTER.md` — D159 registered
 
 ### Pre-merge review note (2026-09-05)
 
 - **ID renumbered D149 → D159**: correct when this story registered it, but D149 was independently
   claimed by the Sarvam v3 batching fix, which merged to `main` while this branch was open.
-- **A real backend now exists**: Story 4-28 (D158, merged 2026-09-05) implements
-  `POST /api/assessment/session/{session_id}/questions` (singular "session" — this story's own
-  proposed contract above used the plural, never verified against real router conventions).
-  `submitTutorQuestion()` is still the D136-pattern stub; wiring it to the real endpoint and
-  rendering `answer` in `AskTutorPanel.tsx` is tracked as D159's own follow-up, not done in this PR.
+- **A real backend now exists, and this PR now wires it up**: Story 4-28 (D158, merged 2026-09-05)
+  implements `POST /assessment/session/{session_id}/questions` (singular "session" — this story's
+  own proposed contract above used the plural, never verified against real router conventions).
+  `submitTutorQuestion()` was the D136-pattern stub at the time this story was originally written;
+  in this same pre-merge pass it now calls the real endpoint (`session_id` moved from the request
+  body to the URL path), and `AskTutorPanel.tsx` renders the real `answer`/`declined` response
+  instead of only ever showing a static "noted" card. D159 is closed by this change — see its
+  updated `docs/DEFECT-REGISTER.md` row.
 
 ## References
 

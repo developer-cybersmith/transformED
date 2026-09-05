@@ -133,27 +133,31 @@ export interface SubmitTutorQuestionPayload {
   audio_position_ms: number;
 }
 
+// Matches apps/api/app/modules/assessment/schemas.py::TutorQuestionResult
+// exactly (Story 4-28 / D158). `answer` is null when declined (below-threshold
+// retrieval relevance or the per-session rate cap) -- `declined` distinguishes
+// that from "answered normally".
 export interface SubmitTutorQuestionResult {
   received: boolean;
+  answer: string | null;
+  declined: boolean;
 }
 
 // D159 (docs/DEFECT-REGISTER.md, renumbered from this story's original D149,
-// which collided with an unrelated Sarvam fix merged in the meantime): still a
-// stub as of this PR. A real backend now exists (Story 4-28 / D158, merged
-// 2026-09-05) at POST /api/assessment/session/{session_id}/questions --
-// singular "session", not the plural this comment originally assumed, and
-// returning {received, answer, declined}, not just {received}. Mocked here
-// (mirrors paymentService.checkAccess's exact stub-for-a-missing-endpoint
-// pattern, D136) so the Ask-Tutor UI flow (button -> pause -> type -> submit
-// -> "noted" confirmation) was buildable and testable before the real backend
-// existed. Wiring this to the real endpoint is D159's own tracked follow-up,
-// not done in this PR. Proposed storage:
-// one session_events row, event_type "tutor_question", payload {segment_id,
-// question_text, audio_position_ms} -- see Story 2-57's proposed contract.
+// which collided with an unrelated Sarvam fix merged in the meantime): wired
+// to the real backend (Story 4-28 / D158) in this same PR. `session_id` is a
+// path segment on the real endpoint, not a body field -- destructured out of
+// the payload before the request is built so the payload shape callers already
+// use (matching AskTutorPanel.tsx) doesn't need to change.
 export async function submitTutorQuestion(
-  _payload: SubmitTutorQuestionPayload
+  payload: SubmitTutorQuestionPayload
 ): Promise<SubmitTutorQuestionResult> {
-  return Promise.resolve({ received: true });
+  const { session_id, ...body } = payload;
+  const { data } = await api.post<SubmitTutorQuestionResult>(
+    `/assessment/session/${encodeURIComponent(session_id)}/questions`,
+    body
+  );
+  return data;
 }
 
 // ── DPDP consent (Story 3-32 / D29) ─────────────────────────────────────────

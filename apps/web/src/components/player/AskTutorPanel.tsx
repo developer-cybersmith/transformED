@@ -2,14 +2,14 @@
 
 import { useState } from 'react';
 import { usePlayerStore } from '@/stores/player.machine';
-import { submitTutorQuestion } from '@/lib/assessment';
+import { submitTutorQuestion, type SubmitTutorQuestionResult } from '@/lib/assessment';
 import { FOCUS_RING } from '@/lib/a11y/focusRing';
 
 // Story 2-57 (BR-5): mounted whenever pauseReason === 'intervention' — see
-// Player.tsx. Capture-and-log only (D159, renumbered from D149) as of this
-// PR — a real Q&A backend now exists (D158, Story 4-28) but submitTutorQuestion()
-// hasn't been wired to it yet (tracked as D159's own follow-up). This panel
-// never claims to answer the question; it only confirms it was recorded.
+// Player.tsx. Wired to the real Q&A backend (D158, Story 4-28) as of this PR
+// (D159) — renders the real `answer` when one comes back, and a graceful
+// "no answer" message when the backend declines (relevance gate or rate cap),
+// but never fabricates an answer client-side.
 export function AskTutorPanel() {
   const play = usePlayerStore((s) => s.play);
   const sessionId = usePlayerStore((s) => s.sessionId);
@@ -20,6 +20,7 @@ export function AskTutorPanel() {
   const [text, setText] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [result, setResult] = useState<SubmitTutorQuestionResult | null>(null);
 
   const segment = lesson?.segments[currentSegmentIndex];
 
@@ -28,12 +29,13 @@ export function AskTutorPanel() {
 
     setIsSubmitting(true);
     try {
-      await submitTutorQuestion({
+      const res = await submitTutorQuestion({
         session_id: sessionId,
         segment_id: segment.segment_id,
         question_text: text.trim(),
         audio_position_ms: audioPositionMs,
       });
+      setResult(res);
       setSubmitted(true);
     } catch {
       // API unavailable — don't strand the student behind a form that can't
@@ -57,12 +59,20 @@ export function AskTutorPanel() {
               Ask Tutor
             </span>
             <p className="font-serif text-neutral-900 text-xl font-semibold">
-              Got it — noted.
+              {result?.answer ? 'Here you go' : 'Got it — noted.'}
             </p>
           </div>
           <div className="mx-6 my-4 px-4 py-3 rounded-xl bg-neutral-50 border border-neutral-200 text-sm text-neutral-600">
-            Your question has been recorded. We don&apos;t have a live answer for you yet, but
-            we&apos;ll follow up.
+            {result?.answer ? (
+              result.answer
+            ) : result?.declined ? (
+              "We can't answer that one right now, but your question has been recorded and we'll follow up."
+            ) : (
+              <>
+                Your question has been recorded. We don&apos;t have a live answer for you yet, but
+                we&apos;ll follow up.
+              </>
+            )}
           </div>
           <div className="px-6 pb-6 flex justify-end">
             <button
