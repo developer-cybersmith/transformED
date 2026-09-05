@@ -386,21 +386,21 @@ def test_teachback_too_long_response_text_returns_422() -> None:
 
 @pytest.mark.unit
 def test_teachback_transcript_field_silently_ignored(monkeypatch) -> None:
-    """AC4: transcript field in body → 200, silently discarded (not 422).
+    """AC4: transcript field in typed-submit body → 200, silently discarded (not 422).
 
-    STT is permanently banned (CLAUDE.md). transcript is not in TeachbackSubmission.
-    Pydantic extra='ignore' discards it before the handler runs.
-    Dev 2 will NOT get a 422 if transcript is accidentally included.
+    Voice STT uses the dedicated audio endpoint (F2-4). The typed-submit path
+    (TeachbackSubmission) never carries transcript. Pydantic extra='ignore' silently
+    discards any extra field, so Dev 2 sending transcript accidentally gets 200, not 422.
     The transcript value is NOT passed to grade_teachback (service-call invariant).
     """
 
     async def _fake_grade_teachback(**kwargs):
-        # AC4 service-call invariant: Pydantic must strip transcript before the handler
-        # forwards kwargs to grade_teachback. If this assertion fires, the schema was
-        # accidentally widened to include transcript and is plumbing it to the scorer.
+        # AC4 service-call invariant: Pydantic strips transcript before the handler
+        # forwards kwargs to grade_teachback. If this assertion fires, the typed-submit
+        # schema was accidentally widened to include transcript.
         assert "transcript" not in kwargs, (
-            "AC4 violation: transcript reached grade_teachback kwargs. "
-            "TeachbackSubmission must never accept transcript — STT is permanently banned."
+            "AC4 violation: transcript reached grade_teachback kwargs from typed submit. "
+            "TeachbackSubmission must never plumb transcript — audio endpoint handles STT (F2-4)."
         )
         return TeachbackResult(
             session_id="sess-001",

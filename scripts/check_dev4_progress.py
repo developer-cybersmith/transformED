@@ -329,6 +329,30 @@ def _build_checks() -> dict[str, object]:
             "payload",
             "learner_tier",
         ),
+        # ── Bug Resolution — Feature Sprint 2 ────────────────────────────────────
+        # BR-1: progressive caption-cue delivery timed to actual narration position.
+        "br1_caption_cue_delivery": lambda: any_file_contains(
+            "apps/api/app/**/*.py",
+            "caption_cue",
+        ),
+        # BR-2: CES/intervention timing verified against variable-length narration —
+        # detected by a dedicated test module, not production code (this is a verification task).
+        "br2_ces_timing_variable_narration": lambda: any_file_contains(
+            "apps/api/tests/**/*.py",
+            "variable_length",
+            "narration",
+        ),
+        # BR-3: WS-side audio-chunk capture/dispatch scaffold for voice teach-back.
+        "br3_voice_teachback_stt": lambda: any_file_contains(
+            "apps/api/app/**/*.py",
+            "teachback_audio",
+        ),
+        # BR-4: backend Cloudflare Turnstile siteverify check before issuing a session.
+        "br4_turnstile_verification": lambda: any_file_contains(
+            "apps/api/app/**/*.py",
+            "siteverify",
+            "turnstile",
+        ),
     }
 
 
@@ -456,6 +480,12 @@ SPRINT_TAGS: dict[str, list[str]] = {
         "ws_launch_stability",
         "interventions_production",
     ],
+    "Bug Resolution": [
+        "br1_caption_cue_delivery",
+        "br2_ces_timing_variable_narration",
+        "br3_voice_teachback_stt",
+        "br4_turnstile_verification",
+    ],
 }
 
 TASK_LABELS: dict[str, str] = {
@@ -498,6 +528,10 @@ TASK_LABELS: dict[str, str] = {
     "learner_tier_runtime": "Session runtime reads tier; sets Q&A phase length",
     "learner_qa_phase_length": "Q&A phase length per tier enforced in state machine",
     "learner_ws_tier": "Learner tier included in WebSocket session-start message",
+    "br1_caption_cue_delivery": "Progressive caption-cue delivery for live narration",
+    "br2_ces_timing_variable_narration": "CES/intervention timing verified vs variable-length narration",
+    "br3_voice_teachback_stt": "Voice teach-back real-time mic capture (blocked on Dev 3 STT)",
+    "br4_turnstile_verification": "Backend Cloudflare Turnstile verification",
 }
 
 
