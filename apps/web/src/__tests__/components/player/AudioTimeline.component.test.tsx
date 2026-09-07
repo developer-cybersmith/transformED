@@ -3,7 +3,7 @@ import { render, fireEvent, act, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/server';
 import { API_BASE } from '@/test/handlers';
-import { AudioTimeline, processTimeUpdate } from '@/components/player/AudioTimeline';
+import { AudioTimeline, processTimeUpdate, DEFAULT_SLIDE_TRANSITION_PAUSE_MS } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
@@ -73,7 +73,7 @@ describe('AudioTimeline — slide-transition pause auto-resume timer (Story 2-57
       expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
 
       act(() => {
-        vi.advanceTimersByTime(2000);
+        vi.advanceTimersByTime(DEFAULT_SLIDE_TRANSITION_PAUSE_MS);
       });
 
       expect(usePlayerStore.getState().status).toBe('PLAYING');
@@ -105,7 +105,7 @@ describe('AudioTimeline — slide-transition pause auto-resume timer (Story 2-57
       // The original (now-cleaned-up) timer firing later must not do
       // anything surprising -- e.g. re-trigger a stale resume.
       act(() => {
-        vi.advanceTimersByTime(2000);
+        vi.advanceTimersByTime(DEFAULT_SLIDE_TRANSITION_PAUSE_MS);
       });
       expect(usePlayerStore.getState().status).toBe('PLAYING');
     } finally {
@@ -134,7 +134,7 @@ describe('AudioTimeline — slide-transition pause auto-resume timer (Story 2-57
       expect(usePlayerStore.getState().pauseReason).toBe('intervention');
 
       act(() => {
-        vi.advanceTimersByTime(2000);
+        vi.advanceTimersByTime(DEFAULT_SLIDE_TRANSITION_PAUSE_MS);
       });
 
       // The original transition timer's cleanup (pauseReason changed away
