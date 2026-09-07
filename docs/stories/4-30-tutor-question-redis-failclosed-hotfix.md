@@ -139,3 +139,33 @@ reusing the exact response shape already used for a real cap breach, not inventi
   fixtures this story's new tests extend
 - [Source: docs/DEFECT-REGISTER.md, D162] — the underlying Redis exhaustion this is a second,
   distinct symptom of
+
+## Follow-up (same PR, 2026-09-07)
+
+### CI fix
+
+First CI run on this PR failed `ruff format --check` — `tests/unit/test_tutor_question_endpoint.py`
+was `ruff check`-clean (linting) but not `ruff format`-clean (formatting); the two are separate
+checks and only the latter was skipped locally before the first push. Fixed by running
+`ruff format` on the file; no behavior change, re-verified all 20 tests in the file still pass.
+
+### Dashboard link (unrelated to D164, bundled into this PR per explicit user direction)
+
+User-reported gap, unrelated to the Redis fix: the lesson player had no way back to the dashboard
+during an active lesson (`IDLE`/`PLAYING`/`PAUSED`/`QUIZ`/`TEACH_BACK`) — only the `ENDED`
+lesson-complete screen had a "Back to Dashboard" link. Added a persistent small link
+(top-right corner, mirrors the existing tier-badge's floating-pill style, top-left) in
+`Player.tsx`, hidden once `status === 'ENDED'` to avoid duplicating that screen's own prominent
+CTA. Progress is already saved continuously (`saveProgress()`/`restoreProgress()`), so leaving
+mid-lesson was already safe — this only adds a way to actually do it without closing the tab.
+
+3 new tests in `Player.test.tsx`: link present and points to `/dashboard` while `PLAYING`;
+present across `IDLE`/`PAUSED`/`QUIZ`/`TEACH_BACK`; hidden (exactly one dashboard link, the
+ENDED screen's own) once `ENDED`. Full frontend suite re-run: 93 files / 1142 tests, zero
+regressions. `tsc --noEmit`/`eslint` clean.
+
+#### File List (this follow-up)
+
+- `apps/api/tests/unit/test_tutor_question_endpoint.py` — `ruff format` applied, no logic change
+- `apps/web/src/components/player/Player.tsx` — new Dashboard link
+- `apps/web/src/__tests__/components/player/Player.test.tsx` — 3 new tests

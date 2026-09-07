@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
 import posthog from 'posthog-js';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 import { usePlayerStore } from '@/stores/player.machine';
@@ -293,6 +294,25 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             {TIER_LABELS[lesson.metadata.tier ?? 'T2'] ?? TIER_LABELS.T2}
           </span>
         </div>
+
+        {/* Dashboard link — previously the ONLY way back to the dashboard
+            during an active lesson was closing the tab; nothing existed while
+            IDLE/PLAYING/PAUSED/QUIZ/TEACH_BACK. Progress is already saved
+            continuously (saveProgress()/restoreProgress()), so leaving
+            mid-lesson is always safe. Hidden once ENDED -- that screen already
+            has its own "Back to Dashboard" as a prominent CTA; showing both
+            would be redundant. */}
+        {status !== 'ENDED' && (
+          <div className="absolute top-3 right-3 z-10">
+            <Link
+              href="/dashboard"
+              className="flex items-center gap-1 px-3 py-1 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs font-medium hover:bg-white transition-colors"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              Dashboard
+            </Link>
+          </div>
+        )}
 
         {segment?.slides.map((slide) => (
           <SlideRenderer

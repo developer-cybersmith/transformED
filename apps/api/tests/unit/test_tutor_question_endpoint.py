@@ -248,9 +248,7 @@ async def test_redis_incr_failure_declines_gracefully_instead_of_500() -> None:
     never surface as an unhandled exception/500."""
     supabase = _supabase_mock()
     redis = _redis_mock()
-    redis.incr.side_effect = Exception(
-        "max requests limit exceeded. Limit: 500000, Usage: 500000."
-    )
+    redis.incr.side_effect = Exception("max requests limit exceeded. Limit: 500000, Usage: 500000.")
 
     (embed_patch, llm_patch, embed_mock, complete_mock) = _patch_embeddings_and_llm()
     with embed_patch, llm_patch:
