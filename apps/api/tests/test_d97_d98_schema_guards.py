@@ -13,12 +13,13 @@ these tests fail CI immediately.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from app.core.redis import get_redis
 from app.dependencies import get_current_user, get_settings
 from app.modules.assessment.router import router
 
@@ -33,9 +34,15 @@ def _approved_settings() -> MagicMock:
     return s
 
 
+# D163: create_session_endpoint takes `redis: Annotated[Redis, Depends(get_redis)]`
+# -- FastAPI resolves declared dependencies before body validation surfaces as a
+# 422, so an invalid /sessions payload would still 500 on the unmocked real
+# get_redis() (this bare app never runs init_redis()) instead of 422ing as these
+# tests expect. Matches test_session_create_endpoint.py's own established fix.
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
 _app.dependency_overrides[get_settings] = _approved_settings
+_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _app.include_router(router, prefix="/api/assessment")
 _client = TestClient(_app, raise_server_exceptions=False)
 
