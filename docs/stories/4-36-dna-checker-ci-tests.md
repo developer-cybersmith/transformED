@@ -1,7 +1,7 @@
 ---
 id: "4-36"
 title: "CI tests for dna_profile_quality_check.py + fix banned-term false positive"
-status: "in-progress"
+status: "done"
 sprint: 4
 story_points: 2
 owner: Dev3
@@ -40,57 +40,57 @@ profile passes all 5 criteria.
 
 ## Acceptance Criteria
 
-- [ ] **AC 1.** `apps/api/tests/test_s4_36_dna_quality_check.py` exists with ≥ 15
+- [x] **AC 1.** `apps/api/tests/test_s4_36_dna_quality_check.py` exists with ≥ 15
   `@pytest.mark.unit` tests, all passing in < 5 seconds with zero Supabase calls.
 
-- [ ] **AC 2.** A fully valid profile (DPDP disclaimer present, no banned terms in body,
+- [x] **AC 2.** A fully valid profile (DPDP disclaimer present, no banned terms in body,
   no raw scores, length 100–500 chars, plain-English badge labels) → all 5 criteria
   return `"PASS"`.
 
-- [ ] **AC 3.** Profile with no DPDP disclaimer → criterion `"DPDP disclaimer"` returns
+- [x] **AC 3.** Profile with no DPDP disclaimer → criterion `"DPDP disclaimer"` returns
   `"FAIL"`.
 
-- [ ] **AC 4.** Profile with `"iq"` in body text (outside disclaimer) → criterion
+- [x] **AC 4.** Profile with `"iq"` in body text (outside disclaimer) → criterion
   `"No banned terms"` returns `"FAIL"`.
 
-- [ ] **AC 5.** Profile where `"clinical"` appears **only inside the DPDP disclaimer
+- [x] **AC 5.** Profile where `"clinical"` appears **only inside the DPDP disclaimer
   suffix** → criterion `"No banned terms"` returns `"PASS"` (disclaimer is excluded
   from the banned-term scan — **this is the bug fix AC**).
 
-- [ ] **AC 6.** Profile with `"clinical"` in the body text (before the disclaimer) →
+- [x] **AC 6.** Profile with `"clinical"` in the body text (before the disclaimer) →
   criterion `"No banned terms"` returns `"FAIL"`.
 
-- [ ] **AC 7.** Profile with banned term in a `badge_label` entry (e.g. `"iq"`) →
+- [x] **AC 7.** Profile with banned term in a `badge_label` entry (e.g. `"iq"`) →
   criterion `"No banned terms"` returns `"FAIL"`.
 
-- [ ] **AC 8.** Profile with raw score pattern `"87/100"` in body → criterion
+- [x] **AC 8.** Profile with raw score pattern `"87/100"` in body → criterion
   `"No raw scores"` returns `"WARN"`.
 
-- [ ] **AC 9.** Profile with year `"2026"` in body (false-positive case) → criterion
+- [x] **AC 9.** Profile with year `"2026"` in body (false-positive case) → criterion
   `"No raw scores"` returns `"PASS"` (year is NOT flagged).
 
-- [ ] **AC 10.** Profile with `profile_text` shorter than 50 chars → criterion
+- [x] **AC 10.** Profile with `profile_text` shorter than 50 chars → criterion
   `"Length (50–800 chars)"` returns `"WARN"`.
 
-- [ ] **AC 11.** Profile with `profile_text` longer than 800 chars → criterion
+- [x] **AC 11.** Profile with `profile_text` longer than 800 chars → criterion
   `"Length (50–800 chars)"` returns `"WARN"`.
 
-- [ ] **AC 12.** Profile with badge label `"IQ: 87"` → criterion
+- [x] **AC 12.** Profile with badge label `"IQ: 87"` → criterion
   `"Badge labels plain English"` returns `"FAIL"`.
 
-- [ ] **AC 13.** Profile with `profile_text=None` → no `AttributeError`; criterion
+- [x] **AC 13.** Profile with `profile_text=None` → no `AttributeError`; criterion
   `"DPDP disclaimer"` returns `"FAIL"`; criterion `"Length (50–800 chars)"` returns
   `"WARN"` (0 chars).
 
-- [ ] **AC 14.** `print_report()` called with at least one `"FAIL"` result → returns
+- [x] **AC 14.** `print_report()` called with at least one `"FAIL"` result → returns
   `True`.
 
-- [ ] **AC 15.** `print_report()` called with all `"PASS"` results → returns `False`.
+- [x] **AC 15.** `print_report()` called with all `"PASS"` results → returns `False`.
 
-- [ ] **AC 16.** `ruff check` clean on `scripts/dna_profile_quality_check.py` (after
+- [x] **AC 16.** `ruff check` clean on `scripts/dna_profile_quality_check.py` (after
   bug-fix edit) and on the new test file.
 
-- [ ] **AC 17.** Guard tests `tests/unit/test_unbounded_queries.py` and
+- [x] **AC 17.** Guard tests `tests/unit/test_unbounded_queries.py` and
   `tests/unit/test_node_return_shape.py` pass (the script's `.limit(500)` satisfies
   the unbounded-query guard; no LangGraph nodes touched).
 
