@@ -1,7 +1,7 @@
 # On-Call Runbook
 
 **Scope:** the single Fly.io deployment of `hie-api` (`bom`/Mumbai per `fly.toml`; Redis is
-Upstash — the India-region migration completed 2026-08-14, ADR-001/D158; **D145 is a known,
+Upstash — the India-region migration completed 2026-08-14 per ADR-001; **D145 is a known,
 still-open exception: the live region list has been observed drifted to `sin`/Singapore**). Any
 host/dashboard link below is this-environment-only; re-verify after any future region change
 rather than assuming it still applies.
