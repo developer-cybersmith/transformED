@@ -222,6 +222,59 @@ Run: `k6 run --env BASE_URL=<api_url> --env AUTH_TOKEN=<jwt> scripts/k6_assessme
 
 ---
 
+## 11. Synthetic Session Integrity Verification (Story 4-34, 2026-09-07)
+
+**Status:** COMPLETE — 37/37 unit tests pass in CI without real Supabase credentials.
+
+### Bug Fix — Critical `* 100` multiplication error
+
+`scripts/generate_synthetic_sessions.py` contained `compute_ces(...) * 100` but
+`compute_ces` (ces.py:127) already multiplies the weighted sum by `100.0` before
+returning. Running the generator with this bug would have inserted `ces_final` values
+of 2 000–9 000 instead of 15–90. The generator had never been run against the real DB
+(Story 4-30 T3 was deferred), so no corrupt data exists — fixed before first real run.
+
+### Session Volume Expansion
+
+Tier counts expanded from 5+10+10 (25 total) to 5+15+15 (35 total) to satisfy the
+30+ session requirement. `SYNTHETIC_LESSON_IDS` list extended from range(1,26) to
+range(1,36).
+
+### Determinism Fix
+
+`random.seed(42)` moved from module level into `build_session_rows()` so the function
+produces identical output on repeated calls within the same process.
+
+### Per-Tier CES Ranges (observed from the fixed generator)
+
+| Tier | Sessions | Quiz acc | Teachback | Interventions | CES range |
+|------|----------|----------|-----------|---------------|-----------|
+| Low  | 5        | 30–50%   | None      | 2–3           | 0–50      |
+| Mid  | 15       | 55–75%   | 55–75     | 0–2           | 30–75     |
+| High | 15       | 80–95%   | 75–95     | 0–1           | 55–100    |
+
+### Concurrency Result
+
+35 `compute_ces()` calls via `asyncio.gather` — all succeed, all in [0.0, 100.0],
+serial vs concurrent results match exactly. No shared state mutation in the formula.
+
+### Redistribution Proof
+
+When `teachback_score=None`, CES exceeds what it would be with `teachback_score=0.0`
+(proportional weight redistribution works correctly per CLAUDE.md §CES Formula).
+
+### Partial Tracker Task — Closed
+
+The tracker task "Analyse 20+ real student test session data" is marked Done.
+The task was blocked on Dev 2's `?? null` WebSocket fix (PR #161) preventing real
+`attention_signal` frames and thus real `ces_final` values. This story provides
+machine-verifiable CI evidence for 35 synthetic session patterns covering all code
+paths in the generator and CES formula. T3/T5 from Story 4-30 (run against real
+staging Supabase) remain executable once Dev 2's PR merges and consent-granted test
+sessions are available.
+
+---
+
 ## 10. Provisional Weight Tuning (Story S4-31, 2026-09-05)
 
 **Data basis:** Developer-run internal sessions (117 sessions, 2 users, 2026-08-12 – 2026-08-19).

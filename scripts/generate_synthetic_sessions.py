@@ -11,9 +11,8 @@ Idempotent: re-running skips sessions whose synthetic lesson_id already exists.
 """
 
 import os
-import sys
 import random
-import uuid
+import sys
 from datetime import datetime, timedelta, timezone
 
 # ---------------------------------------------------------------------------
@@ -21,19 +20,20 @@ from datetime import datetime, timedelta, timezone
 # ---------------------------------------------------------------------------
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "apps", "api"))
 
-from supabase import create_client, Client  # type: ignore[import]
-from app.modules.assessment.ces import compute_ces
+from supabase import Client, create_client  # type: ignore[import]
+
 from app.config import get_settings
+from app.modules.assessment.ces import compute_ces
 
 # ---------------------------------------------------------------------------
 # Fixed test identifiers (idempotency anchors)
 # ---------------------------------------------------------------------------
 SYNTHETIC_USER_ID = "00000000-0000-0000-0000-000000000099"
 
-# 25 deterministic lesson UUIDs — one per synthetic session
+# 35 deterministic lesson UUIDs — one per synthetic session (5+15+15 per Story 4-34)
 SYNTHETIC_LESSON_IDS = [
     f"00000000-0000-0000-0000-{str(i).zfill(12)}"
-    for i in range(1, 26)
+    for i in range(1, 36)
 ]
 
 # ---------------------------------------------------------------------------
@@ -41,15 +41,14 @@ SYNTHETIC_LESSON_IDS = [
 # ---------------------------------------------------------------------------
 TIERS = [
     # (tier_name, count, quiz_acc_range, teachback_range_or_None, intervention_range)
+    # Expanded to 35 total (5+15+15) per Story 4-34 AC 2.
     ("low",  5,  (0.30, 0.50), None,           (2, 3)),
-    ("mid",  10, (0.55, 0.75), (55.0, 75.0),   (0, 2)),
-    ("high", 10, (0.80, 0.95), (75.0, 95.0),   (0, 1)),
+    ("mid",  15, (0.55, 0.75), (55.0, 75.0),   (0, 2)),
+    ("high", 15, (0.80, 0.95), (75.0, 95.0),   (0, 1)),
 ]
 
 QUESTIONS_PER_SESSION = (4, 12)   # min, max
 SESSION_DURATION_MINUTES = (8, 45)
-
-random.seed(42)  # reproducible synthetic data
 
 
 def _rng_float(lo: float, hi: float) -> float:
@@ -66,6 +65,9 @@ def _now_utc() -> datetime:
 
 def build_session_rows() -> list[dict]:
     """Return list of session dicts across all tiers."""
+    # Reset seed per call so build_session_rows() is deterministic regardless
+    # of how many times it has been called in the same process (Story 4-34 AC 2).
+    random.seed(42)
     rows = []
     lesson_iter = iter(SYNTHETIC_LESSON_IDS)
     settings = get_settings()
@@ -86,6 +88,10 @@ def build_session_rows() -> list[dict]:
             interventions = _rng_int(*intv_range)
             behavioral = round(1.0 - (interventions / 3.0), 4)
 
+            # compute_ces already returns a value on the 0–100 POINT scale
+            # (ces.py:127 multiplies the weighted sum by 100.0 internally).
+            # Do NOT multiply by 100 again here — that would produce values
+            # like 5 975 instead of 59.75 (Story 4-34 AC 1 bug fix).
             ces_final = round(
                 compute_ces(
                     quiz_accuracy=quiz_acc,
@@ -94,8 +100,7 @@ def build_session_rows() -> list[dict]:
                     head_pose=0.5,   # assumed partial consent
                     blink=0.5,
                     settings=settings,
-                )
-                * 100,  # compute_ces returns 0–1; CES is stored as 0–100
+                ),
                 2,
             )
 
@@ -230,8 +235,9 @@ def print_summary(rows: list[dict]) -> None:
     for row in rows:
         sid = row.get("session_id", "SKIPPED")[:8] + "…"
         tb = f"{row['tb_score']:.1f}" if row["tb_score"] else "—"
+        ces = row["ces_final"]
         print(
-            f"{sid:<12} {row['tier']:<6} {row['quiz_acc']:>10.3f} {tb:>10} {row['ces_final']:>10.1f}"
+            f"{sid:<12} {row['tier']:<6} {row['quiz_acc']:>10.3f} {tb:>10} {ces:>10.1f}"
         )
     print("=" * 80)
     print(f"Total sessions created: {len(rows)}")
@@ -244,7 +250,7 @@ def main() -> None:
         sys.exit("Error: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.")
 
     sb = create_client(url, key)
-    print("Connected to Supabase. Generating 25 synthetic sessions…\n")
+    print("Connected to Supabase. Generating 35 synthetic sessions…\n")
 
     all_rows = build_session_rows()
     created = insert_sessions(sb, all_rows)
