@@ -339,6 +339,22 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
           <AskTutorPanel />
         )}
 
+        {/* Slide-transition pause pill (Story 2-57 follow-up) — the only
+            visual cue for this auto-pause used to be the transport button's
+            icon swap (PlayerControls' Next button), which a student easily
+            never notices. Styled after the buffering indicator below. Text is
+            static, not branched on canAskTutor: within this exact mount
+            condition (status PAUSED, reason 'slide-transition') that helper's
+            own formula is always true, since 'slide-transition' !== 'intervention'. */}
+        {status === 'PAUSED' && pauseReason === 'slide-transition' && (
+          <div
+            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs"
+            data-testid="slide-transition-pause-pill"
+          >
+            New slide — paused briefly. Tap Next to continue, or Ask Tutor to ask a question.
+          </div>
+        )}
+
         {/* Lesson complete screen */}
         {status === 'ENDED' && (
           <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 p-6 bg-white/95 backdrop-blur-sm">
