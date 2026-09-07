@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-07 (S4-32 env vars done; S4-34 synthetic session analysis done; S4-35 EMA mock regression fixed; S4-36 DNA checker CI tests done; tracker triple-PR double-count reconciled — duplicate S4-34 bullet removed, "Analyse 20+" marked done, dashboard corrected)
+**Last updated:** 2026-09-07 (S4-34: 35 synthetic sessions + 37-test CI suite done; "Analyse 20+" partial → done; S4-35 EMA MagicMock regression fixed — 10 tests restored, 58/58 pass; S4-32 CES weights applied to Fly.io env vars; S4-36 DNA quality checker CI tests + false-positive fix, 20/20 pass)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,10 +20,10 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 14 | 13 | 0 | 1 |
+| Sprint 4 | Weeks 8–9 | 13 | 12 | 0 | 1 |
 | Bug Resolution Sprint | Sep 2026 | 4 | 4 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **74** | **71** | **0** | **3** |
+| **Total** | | **73** | **70** | **0** | **3** |
 
 Update this table each time a task is checked off below.
 
@@ -913,7 +913,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Look for: score distribution anomalies, CES formula outliers, Learner DNA convergence patterns
   - Document findings in `docs/sprint4-ces-calibration-notes.md`
   - **AC:** Analysis doc written; at least 3 concrete calibration observations documented
-  - **Status:** `docs/sprint4-ces-calibration-notes.md` written with 6+ observations. D116 FIXED 2026-08-31. Dev 2 PR #161 merged 2026-09-01. Synthetic test suite (35 sessions, 37 CI tests) closes this task with machine-verifiable evidence (Story 4-34).
+  - **Status:** `docs/sprint4-ces-calibration-notes.md` written with 6+ observations. Blocked by 1 remaining bug: behavioral/attention WebSocket signals not reaching Redis ces_history (Dev 2 must apply `?? null` fix in `useAttentionMonitor.ts`). **D116 FIXED 2026-08-31** — ces_final now written on session end. Once Dev 2's fix merges, run 20 sessions and update doc.
 
 - [x] **D116: Wire complete_session → dispatch_event so ces_final is written (Story 4-6)** — ✓ 2026-08-31
   - Root cause: `complete_session` and `_finalize_session` built independently, never connected. ces_final NULL on all 117 sessions.
@@ -987,20 +987,6 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Branch: `sprint4/s4-11-session-dedup-ces-calibration` → merged to `master-sprint4-dev3`
   - Story: `docs/stories/4-11-session-dedup-ces-calibration.md` — status: done
 
-- [x] **Fix 10-test EMA/mock regression introduced by D137 merge (Story S4-35)** — ✓ 2026-09-07
-  - Root cause 1: `_apply_ema()` received `MagicMock` instead of `float` — added `dna_ema_retain=0.7` to all `_fake_settings()` mocks
-  - Root cause 2: D137's `_fetch_existing_dna()` added as FIRST Supabase call — prepended `dna_select_mock` (data=None) to all `_build_onboarding_supabase()` side_effect lists
-  - Root cause 3: F2-2 moved teachback_attempts COUNT query before lesson load — swapped `lesson_m`/`count_m` order in `_build_teachback_supabase()`
-  - 59/59 tests GREEN across `test_onboarding_endpoint.py` + `test_posthog_events.py`; ruff clean
-  - Branch: `sprint4/s4-35-fix-ema-mock-regression` | Story: `docs/stories/4-35-fix-ema-mock-regression.md` | PR open (Dev 2 reviewing)
-
-- [x] **CI tests for Learner DNA profile quality checker + false-positive fix (Story S4-36)** — ✓ 2026-09-07
-  - Fixed bug in `check_profile()`: DPDP disclaimer stripped before banned-term scan — "clinical" in disclaimer no longer triggers FAIL on criterion 2
-  - Removed dead `suspicious` variable (F841); ruff I001 import order fixed; unused `Client` import removed (F401)
-  - 20/20 unit tests GREEN in `apps/api/tests/test_s4_36_dna_quality_check.py` (2.73s, zero Supabase calls)
-  - BMAD 6-layer review complete (2026-09-07): 0 patch findings, 1 defer finding (D166 registered)
-  - Branch: `sprint4/s4-36-dna-checker-ci-tests` | Story: `docs/stories/4-36-dna-checker-ci-tests.md` | PR open (Dev 2 reviewing)
-
 - [x] **D137 — reassessment EMA blend fix (Story S4-12)** — ✓ 2026-09-01
   - Fixed `process_onboarding()` overwriting existing learner_dna with new scores instead of blending
   - `dna_fusion.py._apply_ema()` now called during reassessment; blend = 0.7×old + 0.3×new
@@ -1018,6 +1004,20 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - `tutor/service.py:process_attention_signal` reads `session:{sid}:ces_threshold` from Redis (O(1) hot path)
   - 14 unit tests, all GREEN; zero regressions (978 passing vs 965 before)
   - Branch: `sprint4/s4-13-dna-ces-threshold` | Story: `docs/stories/4-13-dna-personalized-ces-threshold.md`
+
+- [x] **Fix _apply_ema MagicMock regression (Story S4-35)** — ✓ 2026-09-07
+  - Root cause: D137 EMA blend (Story S4-12) added `_fetch_existing_dna()` as FIRST table call in `process_onboarding()`, shifting the `side_effect` index of all subsequent mock calls by +1
+  - Simultaneously, D137 added `get_settings().dna_ema_retain` inside `_apply_ema()` — test mocks that didn't set this field caused `TypeError: '>' not supported between instances of 'MagicMock' and 'float'`
+  - **4 fixes applied:** (1) `_fake_settings()` in `test_onboarding_endpoint.py`: added `settings.dna_ema_retain = 0.7`; (2) `_build_onboarding_supabase()` in both test files: prepended `dna_select_mock` (data=None) as `side_effect[0]`; (3) `_build_teachback_supabase()` in `test_posthog_events.py`: swapped `lesson_m`/`count_m` to match actual call order; (4) Two inline test mocks for `test_process_onboarding_session_count_is_zero` and `test_process_onboarding_insert_row_payload_mapping`: same dna_select_mock prepend
+  - 58/58 tests pass (10 regressions restored + 48 pre-existing); 26/26 CES guard tests pass; ruff clean
+  - Branch: `sprint4/s4-35-fix-ema-mock-regression` | Story: `docs/stories/4-35-fix-ema-mock-regression.md`
+
+- [x] **CI tests for Learner DNA profile quality checker + false-positive fix (Story S4-36)** — ✓ 2026-09-07
+  - Fixed bug in `check_profile()`: DPDP disclaimer stripped before banned-term scan — "clinical" in disclaimer no longer triggers FAIL on criterion 2
+  - Removed dead `suspicious` variable (F841); ruff I001 import order fixed; unused `Client` import removed (F401)
+  - 20/20 unit tests GREEN in `apps/api/tests/test_s4_36_dna_quality_check.py` (2.73s, zero Supabase calls)
+  - BMAD 6-layer review complete (2026-09-07): 0 patch findings, 1 defer finding (D166 registered)
+  - Branch: `sprint4/s4-36-dna-checker-ci-tests` | Story: `docs/stories/4-36-dna-checker-ci-tests.md`
 
 - [x] **Learner Mode tier label verify (Story F2-3)** — ✓ 2026-09-04
   - Verified T1="Full-Depth" (45 min), T2="Standard" (30 min), T3="Refresher" (15 min) — labels were correct
