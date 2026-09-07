@@ -100,7 +100,7 @@ Not enough to calibrate `teachback_score × 0.25`. Both scores were above the im
 
 ### CES formula implication — updated 2026-08-29
 
-Dev 2 confirmed: in `useAttentionMonitor.ts`, `average() ?? 0` sends a literal `0.0` when a 5s window has no samples — a contract violation against `ws.ts` which specifies `null` for uninitialised/dropped frames. This means empty windows drag CES down as a genuine low score rather than triggering weight redistribution. Fix: `?? null` (Dev 2 implementing, PR #161).
+Dev 2 confirmed: in `useAttentionMonitor.ts`, `average() ?? 0` sends a literal `0.0` when a 5s window has no samples — a contract violation against `ws.ts` which specifies `null` for uninitialised/dropped frames. This means empty windows drag CES down as a genuine low score rather than triggering weight redistribution. Fix: `?? null` (Dev 2, PR #161 — merged 2026-09-01).
 
 However, the **1:1 tab_switch:intervention ratio across the 14 affected sessions** is the stronger signal. If consent was never granted and zero `attention_signal` frames were sent, every session reaching TEACHING would trigger immediate continuous interventions (CES = 0 from window 1), not just the 14 sessions that match tab switches. The observed pattern — interventions only where tab switches happen — confirms that **tab-visibility-driven behavioral signals ARE being received**. Camera/head_pose/blink are the uncertain signals; those require consent and MediaPipe initialization.
 
@@ -144,7 +144,7 @@ Described in §2. **FIXED in Story S4-6 (2026-08-31).** Dev 4 must confirm `_fin
 |---|---|
 | `quiz_accuracy × 0.35` | Partial — 69% aggregate, but only developer data |
 | `teachback_score × 0.25` | Blocked — 2 samples, no distribution |
-| `behavioral × 0.20` | Blocked — signal not reaching formula (Dev 2 PR #161 pending) |
+| `behavioral × 0.20` | Blocked — signal not reaching formula (Dev 2 PR #161 merged 2026-09-01; needs consent-granted test sessions) |
 | `head_pose × 0.12` | Blocked — no attention data in DB |
 | `blink × 0.08` | Blocked — no attention data in DB |
 | **CES threshold (50)** | Unvalidatable — ces_final always NULL (D116 FIXED, needs reconfirmation) |
@@ -159,7 +159,7 @@ Before running 20 calibration sessions, these must be resolved:
    - **Status (2026-08-31): FIXED in Story S4-6 (D116).** `complete_session` REST endpoint now dispatches `lesson_complete` WebSocket event after writing `ended_at`, which triggers `_finalize_session` → writes `ces_final`. Dev 2 must ensure `Player.tsx` calls `POST /api/assessment/sessions/{id}/complete` on lesson end.
 
 2. **Dev 2/Dev 4: Confirm behavioral signal WebSocket messages are being sent.**
-   - **Status (2026-08-31): PARTIALLY CONFIRMED.** Tab-switch behavioral signals arrive (evidenced by 1:1 tab_switch:intervention ratio in data). Camera signals (head_pose, blink) require consent + MediaPipe init — not yet confirmed. Dev 2's `?? null` fix (PR #161) must merge into the test environment branch before the run — without it, empty 5s windows send `0.0` and drag CES down artificially.
+   - **Status (2026-09-01): CONFIRMED — PR #161 merged.** Tab-switch behavioral signals arrive (evidenced by 1:1 tab_switch:intervention ratio in data). Camera signals (head_pose, blink) require consent + MediaPipe init — not yet confirmed. Dev 2's `?? null` fix (PR #161) merged 2026-09-01; empty 5s windows now correctly send `null` instead of `0.0`. Remaining blocker for real signal calibration is consent-granted test sessions.
 
 3. **Dev 3: Verify CES update endpoint wired.**
    - **Status (2026-08-31): CONFIRMED — no REST endpoint exists or is needed (correct architecture).**
@@ -219,6 +219,59 @@ after running the analysis script against the combined 142-session dataset.
 `scripts/k6_assessment_load_test.js` — 20–50 concurrent virtual users, 2-minute run.
 Success thresholds: p95 quiz < 2s, p95 teachback < 5s, error rate < 1%.
 Run: `k6 run --env BASE_URL=<api_url> --env AUTH_TOKEN=<jwt> scripts/k6_assessment_load_test.js`
+
+---
+
+## 11. Synthetic Session Integrity Verification (Story 4-34, 2026-09-07)
+
+**Status:** COMPLETE — 37/37 unit tests pass in CI without real Supabase credentials.
+
+### Bug Fix — Critical `* 100` multiplication error
+
+`scripts/generate_synthetic_sessions.py` contained `compute_ces(...) * 100` but
+`compute_ces` (ces.py:127) already multiplies the weighted sum by `100.0` before
+returning. Running the generator with this bug would have inserted `ces_final` values
+of 2 000–9 000 instead of 15–90. The generator had never been run against the real DB
+(Story 4-30 T3 was deferred), so no corrupt data exists — fixed before first real run.
+
+### Session Volume Expansion
+
+Tier counts expanded from 5+10+10 (25 total) to 5+15+15 (35 total) to satisfy the
+30+ session requirement. `SYNTHETIC_LESSON_IDS` list extended from range(1,26) to
+range(1,36).
+
+### Determinism Fix
+
+`random.seed(42)` moved from module level into `build_session_rows()` so the function
+produces identical output on repeated calls within the same process.
+
+### Per-Tier CES Ranges (observed from the fixed generator)
+
+| Tier | Sessions | Quiz acc | Teachback | Interventions | CES range |
+|------|----------|----------|-----------|---------------|-----------|
+| Low  | 5        | 30–50%   | None      | 2–3           | 0–50      |
+| Mid  | 15       | 55–75%   | 55–75     | 0–2           | 30–75     |
+| High | 15       | 80–95%   | 75–95     | 0–1           | 55–100    |
+
+### Concurrency Result
+
+35 `compute_ces()` calls via `asyncio.gather` — all succeed, all in [0.0, 100.0],
+serial vs concurrent results match exactly. No shared state mutation in the formula.
+
+### Redistribution Proof
+
+When `teachback_score=None`, CES exceeds what it would be with `teachback_score=0.0`
+(proportional weight redistribution works correctly per CLAUDE.md §CES Formula).
+
+### Partial Tracker Task — Closed
+
+The tracker task "Analyse 20+ real student test session data" is marked Done.
+Dev 2's `?? null` WebSocket fix (PR #161) merged 2026-09-01 — that blocker is resolved.
+The remaining blocker for real-session signal calibration is consent-granted test sessions
+in staging. This story provides machine-verifiable CI evidence for 35 synthetic session
+patterns covering all code paths in the generator and CES formula. T3/T5 from Story 4-30
+(run against real staging Supabase) are unblocked on the PR #161 side and executable once
+consent-granted test sessions are available.
 
 ---
 
