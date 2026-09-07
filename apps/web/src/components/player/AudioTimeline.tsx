@@ -13,7 +13,7 @@ export { binarySearchTimestamps };
 // Story 2-57 AC2/AC10: a single named constant, not a student/admin-facing
 // setting for v1 — confirm with the team before building a real settings UI
 // around this if "configurable" turns out to mean that.
-export const DEFAULT_SLIDE_TRANSITION_PAUSE_MS = 2000;
+export const DEFAULT_SLIDE_TRANSITION_PAUSE_MS = 5000;
 
 /**
  * Core audio-tick handler. Reads Zustand store via getState() to avoid stale closures

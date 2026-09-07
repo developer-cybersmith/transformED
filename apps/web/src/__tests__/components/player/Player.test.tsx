@@ -372,6 +372,48 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
   });
 });
 
+describe('Player — slide-transition pause pill (Story 2-57 follow-up)', () => {
+  it('shows the pill when paused for a slide-transition', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'slide-transition' });
+    });
+
+    expect(screen.getByTestId('slide-transition-pause-pill')).not.toBeNull();
+  });
+
+  it('does not show the pill for a manual pause', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'manual' });
+    });
+
+    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+  });
+
+  it('does not show the pill for an intervention pause (AskTutorPanel owns that state instead)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'intervention' });
+    });
+
+    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+  });
+
+  it('does not show the pill while PLAYING', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING', pauseReason: null });
+    });
+
+    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+  });
+});
+
 describe('Player — audio buffering / error retry UI (S2-26)', () => {
   it('shows the buffering indicator when isBuffering is true and status is PLAYING', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
