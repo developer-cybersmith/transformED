@@ -1,6 +1,6 @@
 ---
 title: "Story 4-30 — Hotfix: Ask-Tutor 500s when Redis rate-limit check fails (D164)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: hotfix
 ---
