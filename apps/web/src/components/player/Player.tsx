@@ -9,6 +9,7 @@ import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { trackEvent } from '@/lib/analytics';
 import { completeSession, createSession } from '@/lib/assessment';
 import type { LessonStatusResponse } from '@/services/upload.service';
+import { AskTutorPanel } from './AskTutorPanel';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
 import { CaptionOverlay } from './CaptionOverlay';
@@ -61,6 +62,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   const sessionId = usePlayerStore((s) => s.sessionId);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
+  const pauseReason = usePlayerStore((s) => s.pauseReason);
   const isBuffering = usePlayerStore((s) => s.isBuffering);
   const audioError = usePlayerStore((s) => s.audioError);
   const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
@@ -327,6 +329,30 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             prompt={segment.teachback_prompt}
             segmentTitle={segment.title}
           />
+        )}
+
+        {/* Ask Tutor panel (Story 2-57 / BR-5) — mounts when the student
+            manually paused to ask a question, distinct from the auto-triggered
+            slide-transition pause (PlayerControls' Next button handles that
+            one; this panel never mounts for it). */}
+        {status === 'PAUSED' && pauseReason === 'intervention' && segment && (
+          <AskTutorPanel />
+        )}
+
+        {/* Slide-transition pause pill (Story 2-57 follow-up) — the only
+            visual cue for this auto-pause used to be the transport button's
+            icon swap (PlayerControls' Next button), which a student easily
+            never notices. Styled after the buffering indicator below. Text is
+            static, not branched on canAskTutor: within this exact mount
+            condition (status PAUSED, reason 'slide-transition') that helper's
+            own formula is always true, since 'slide-transition' !== 'intervention'. */}
+        {status === 'PAUSED' && pauseReason === 'slide-transition' && (
+          <div
+            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs"
+            data-testid="slide-transition-pause-pill"
+          >
+            New slide — paused briefly. Tap Next to continue, or Ask Tutor to ask a question.
+          </div>
         )}
 
         {/* Lesson complete screen */}

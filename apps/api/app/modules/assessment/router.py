@@ -12,9 +12,11 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
+from redis.asyncio import Redis
 
 from app.config import Settings
 from app.core.posthog_client import capture_event
+from app.core.redis import get_redis
 from app.dependencies import ApprovedUser, CurrentUser, get_settings
 
 # All request/response models live in schemas.py so service.py can import them
@@ -31,8 +33,11 @@ from app.modules.assessment.schemas import (
     SessionCompleted,
     SessionCreate,
     SessionCreated,
+    SessionSummary,
     TeachbackResult,
     TeachbackSubmission,
+    TutorQuestionResult,
+    TutorQuestionSubmission,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,6 +136,7 @@ class LearnerDNA(BaseModel):
 async def create_session_endpoint(
     body: SessionCreate,
     current_user: CurrentUser,
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> SessionCreated:
     """Create the `sessions` row for this lesson attempt and return its id.
 
@@ -142,7 +148,6 @@ async def create_session_endpoint(
     """
     from app.config import get_settings
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
-    from app.core.redis import get_redis
     from app.modules.assessment.service import create_session, seed_personalized_ces_threshold
 
     supabase = get_supabase()
@@ -152,14 +157,54 @@ async def create_session_endpoint(
         supabase=supabase,
     )
     # Story 4-13 — non-fatal threshold seeding; session creation always succeeds
+    # D163: two compounding bugs fixed here.
+    # (1) `created["id"]` -> `created["session_id"]` -- create_session() never
+    #     returns an "id" key (verified across all three of its return paths).
+    #     This raised KeyError unconditionally, on EVERY call, silently breaking
+    #     every feature gated on a real session_id (quiz, teach-back, Ask-Tutor,
+    #     CES tracking) -- each of those guards on `sessionId` truthiness and
+    #     no-ops rather than crashing loudly, so this was invisible in the UI.
+    # (2) `redis=await get_redis()` -> a real FastAPI `Depends(get_redis)`
+    #     parameter. `get_redis()` is a plain sync function returning a Redis
+    #     client directly (see its own docstring's Depends(get_redis) usage
+    #     example) -- `await get_redis()` was awaiting a non-awaitable Redis
+    #     instance (TypeError). This was unreached in production only because
+    #     Python evaluates keyword-argument expressions in the order written,
+    #     so bug (1)'s KeyError always fired first. Fixing (1) alone would have
+    #     traded one 500 for another. Matches `submit_tutor_question`'s own
+    #     established `Depends(get_redis)` pattern in this same file, not a new
+    #     convention introduced here.
     await seed_personalized_ces_threshold(
-        session_id=created["id"],
+        session_id=created["session_id"],
         user_id=current_user["sub"],
-        redis=await get_redis(),
+        redis=redis,
         supabase=supabase,
         settings=get_settings(),
     )
     return SessionCreated(**created)
+
+
+@router.get(
+    "/sessions",
+    response_model=list[SessionSummary],
+    summary="List the current user's own sessions, most recent first (Story 2-58, BR-7)",
+)
+async def list_sessions_endpoint(
+    current_user: CurrentUser,
+) -> list[SessionSummary]:
+    """Backs the `/reports` index page — the "Reports" nav link has pointed at
+    `/reports` since the sidebar was first built, with no route or backend list
+    behind it (404 from the beginning). Returns at most the caller's own most
+    recent `_SESSION_LIST_LIMIT` sessions — see `list_sessions`'s docstring for
+    the bound and ownership scoping.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import list_sessions
+
+    return await list_sessions(
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(
@@ -186,6 +231,36 @@ async def complete_session_endpoint(
         supabase=get_supabase(),
     )
     return SessionCompleted(**completed)
+
+
+@router.post(
+    "/session/{session_id}/questions",
+    response_model=TutorQuestionResult,
+    summary="Ask the tutor a question mid-lesson (Story 4-28, closes D149)",
+)
+async def submit_tutor_question(
+    session_id: str,
+    body: TutorQuestionSubmission,
+    current_user: CurrentUser,
+    redis: Annotated[Redis, Depends(get_redis)],
+) -> TutorQuestionResult:
+    """Real backend for the already-shipped "Ask Tutor" button (D149).
+
+    Path uses singular "session" to match this router's own existing
+    convention (`/session/{id}/complete`, `/session/{id}/report`) — D149's
+    originally-proposed contract used plural "sessions", never verified
+    against the real code (see Story 4-28's Background section).
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import answer_tutor_question
+
+    return await answer_tutor_question(
+        session_id=session_id,
+        payload=body,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+        redis=redis,
+    )
 
 
 @router.post(

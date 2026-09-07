@@ -167,6 +167,69 @@ describe('processTimeUpdate — segment boundary + quiz guard', () => {
   });
 });
 
+describe('processTimeUpdate — slide-transition pause (Story 2-57 / BR-5)', () => {
+  it('AC1: pauses and reveals the new slide when crossing a real within-segment slide boundary', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING' });
+
+    // seg_0: sl_0_0 (0-35000ms) -> sl_0_1 (35000-92000ms), well short of the
+    // 92000ms segment end so this is purely a slide boundary, not a quiz one.
+    processTimeUpdate(40000);
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+  });
+
+  it('AC10: does NOT pause when skipTransitionPauseForSegment is true, but still reveals the new slide', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING', skipTransitionPauseForSegment: true });
+
+    processTimeUpdate(40000);
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+  });
+
+  it('AC4: does NOT pause on the segment\'s first slide (currentSlideId already matches on load, no transition happened)', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING' });
+
+    // Still within sl_0_0's own range (0-35000ms) -- never left the first slide.
+    processTimeUpdate(3000);
+
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+  });
+
+  it('Review finding: a slide boundary that coincides with the segment end fires the quiz, not a transition pause (enterQuiz() guards on status===PLAYING and would silently no-op if the pause ran first)', () => {
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PLAYING', currentSlideId: 'sl_0_0' });
+
+    // seg_0's LAST slide (sl_0_1) boundary (35000ms) coincides with reaching
+    // ms=92000, the segment's own end -- jumping straight there (as a real
+    // audio timeupdate tick legitimately can, e.g. after a long buffering
+    // stall) crosses both boundaries on the same tick.
+    processTimeUpdate(92000);
+
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+  });
+
+  it('does NOT pause on a deliberate seek (syncSlideToPosition is a separate function, never calls pauseForSlideTransition)', async () => {
+    const { syncSlideToPosition } = await import('@/components/player/AudioTimeline');
+    usePlayerStore.getState().loadLesson(mockLessonPackage);
+    usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'manual' });
+
+    syncSlideToPosition(40000);
+
+    expect(usePlayerStore.getState().currentSlideId).toBe('sl_0_1');
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('manual');
+  });
+});
+
 describe('processTimeUpdate — status guards (no-op cases)', () => {
   it('is a no-op when status is QUIZ', () => {
     usePlayerStore.getState().loadLesson(mockLessonPackage);

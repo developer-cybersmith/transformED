@@ -68,6 +68,28 @@ class LLMProvider(ABC):
         """
         ...
 
+    async def complete_with_meta(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> tuple[str, str | None, float]:
+        """Return (content, finish_reason, cost_usd) for one completion.
+
+        Concrete (not abstract), with a safe default — Story 4-28: callers
+        that need truncation visibility and a per-call cost figure not tied
+        to any lesson's cost-ceiling accumulation (tutor Q&A) can call this
+        on ANY LLMProvider without every future provider being forced to
+        implement it (the factory's own extensibility promise — "adding a
+        new vendor is a pure addition... zero node-code changes" — would
+        break if this were `@abstractmethod`). The default falls back to
+        `complete()` with `finish_reason=None` and `cost_usd=0.0` — callers
+        that need real values (this story does) should prefer a provider
+        that overrides this, currently `OpenAILLMProvider`.
+        """
+        content = await self.complete(messages, model, **kwargs)
+        return content, None, 0.0
+
 
 class TTSProvider(ABC):
     """Abstract interface for text-to-speech synthesis."""

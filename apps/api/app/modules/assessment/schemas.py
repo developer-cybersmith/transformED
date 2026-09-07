@@ -26,6 +26,9 @@ __all__ = [
     "SessionCreate",
     "SessionCreated",
     "SessionCompleted",
+    "SessionSummary",
+    "TutorQuestionSubmission",
+    "TutorQuestionResult",
     "LearnerContextDNA",
     "LearnerContextSession",
     "LearnerContext",
@@ -96,6 +99,25 @@ class SessionCompleted(BaseModel):
 
     session_id: str
     ended_at: str
+
+
+class SessionSummary(BaseModel):
+    """One row of `GET /sessions` — Story 2-58 (BR-7).
+
+    Deliberately lighter than `SessionReport` (router.py): enough to render a
+    list card and link to `/reports/{session_id}` for the full report, not a
+    second copy of the full report's own fields.
+    """
+
+    session_id: str
+    lesson_id: str
+    lesson_title: str | None = None
+    tier: str
+    tier_label: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    completed: bool
+    ces_score: float | None = None
 
 
 class QuizAnswer(BaseModel):
@@ -210,6 +232,31 @@ class ConsentRecord(BaseModel):
     consent_type: str
     policy_version: str
     consented_at: str | None = None
+
+
+# ── Tutor Q&A schemas (Story 4-28, Phase 2 P2-1, closes D149) ──────────────────
+#
+# Field names match apps/web/src/lib/assessment.ts's SubmitTutorQuestionPayload/
+# SubmitTutorQuestionResult exactly (D149's currently-mocked frontend stub) —
+# so swapping the frontend's stub body for a real api.post(...) call needs no
+# payload-shape translation on either side.
+
+
+class TutorQuestionSubmission(BaseModel):
+    """Request body for POST /assessment/session/{session_id}/questions."""
+
+    segment_id: str
+    question_text: str = Field(min_length=1, max_length=2000)
+    audio_position_ms: int = Field(ge=0)
+
+
+class TutorQuestionResult(BaseModel):
+    """Response — real answer, graceful decline (relevance or rate-cap), or both absent
+    only in the declined case."""
+
+    received: bool = True
+    answer: str | None = None
+    declined: bool = False
 
 
 # ── Learner context schemas (Story F2-1) ───────────────────────────────────────
