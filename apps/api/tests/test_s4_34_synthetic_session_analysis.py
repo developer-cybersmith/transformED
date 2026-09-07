@@ -45,6 +45,7 @@ if str(_API_DIR) not in sys.path:
 # Lazy import of the generator and the canonical CES function.
 # ---------------------------------------------------------------------------
 
+
 def _import_generator() -> types.ModuleType:
     """Import generate_synthetic_sessions without running main()."""
     import importlib
@@ -69,6 +70,7 @@ def _get_settings():  # type: ignore[return]
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(scope="module")
 def generator():
     return _import_generator()
@@ -89,6 +91,7 @@ def session_rows(generator, settings):  # noqa: ARG001 — settings loaded for s
 # CLASS 1 — Row count and structure
 # ---------------------------------------------------------------------------
 
+
 class TestSyntheticSessionRows:
     def test_row_count_is_35(self, session_rows: list[dict]) -> None:
         assert len(session_rows) == 35, (
@@ -104,9 +107,19 @@ class TestSyntheticSessionRows:
         assert counts["high"] == 15
 
     def test_all_rows_have_required_session_columns(self, session_rows: list[dict]) -> None:
-        required = {"lesson_id", "started_at", "ended_at", "ces_final", "tier",
-                    "quiz_acc", "n_questions", "tb_score", "tb_normalised",
-                    "interventions", "behavioral"}
+        required = {
+            "lesson_id",
+            "started_at",
+            "ended_at",
+            "ces_final",
+            "tier",
+            "quiz_acc",
+            "n_questions",
+            "tb_score",
+            "tb_normalised",
+            "interventions",
+            "behavioral",
+        }
         for i, row in enumerate(session_rows):
             missing = required - set(row.keys())
             assert not missing, f"Row {i} missing keys: {missing}"
@@ -117,9 +130,8 @@ class TestSyntheticSessionRows:
 
     def test_lesson_ids_are_valid_uuid_format(self, session_rows: list[dict]) -> None:
         import re
-        pattern = re.compile(
-            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-        )
+
+        pattern = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
         for row in session_rows:
             assert pattern.match(row["lesson_id"]), (
                 f"lesson_id {row['lesson_id']!r} is not a valid UUID"
@@ -142,6 +154,7 @@ class TestSyntheticSessionRows:
 # CLASS 2 — CES final value integrity (core bug-fix verification)
 # ---------------------------------------------------------------------------
 
+
 class TestCESFinalIntegrity:
     """AC 5: ces_final must be in [0.0, 100.0], NOT [0, 10 000]."""
 
@@ -158,9 +171,7 @@ class TestCESFinalIntegrity:
         worst = max(r["ces_final"] for r in session_rows)
         assert worst <= 100.0, f"Maximum ces_final is {worst} — bug not fixed"
 
-    def test_ces_final_matches_direct_compute_ces(
-        self, session_rows: list[dict], settings
-    ) -> None:
+    def test_ces_final_matches_direct_compute_ces(self, session_rows: list[dict], settings) -> None:
         """Each stored ces_final must equal compute_ces(...) directly (no extra *100)."""
         compute_ces = _import_compute_ces()
         for i, row in enumerate(session_rows):
@@ -215,7 +226,7 @@ class TestCESFinalIntegrity:
         )
         ces_zero = compute_ces(
             quiz_accuracy=0.70,
-            teachback_score=0.0,   # counted as 0, drags result down
+            teachback_score=0.0,  # counted as 0, drags result down
             behavioral=0.80,
             head_pose=0.5,
             blink=0.5,
@@ -242,6 +253,7 @@ class TestCESFinalIntegrity:
 # ---------------------------------------------------------------------------
 # CLASS 3 — DB column name invariants
 # ---------------------------------------------------------------------------
+
 
 class TestDBColumnNames:
     """AC 4: verify column names match the real schema in supabase/migrations/."""
@@ -274,8 +286,13 @@ class TestDBColumnNames:
 
         # All required columns from the real schema must be present
         required_cols = {
-            "session_id", "segment_id", "question_id",
-            "response_index", "is_correct", "attempt_number", "response_time_ms",
+            "session_id",
+            "segment_id",
+            "question_id",
+            "response_index",
+            "is_correct",
+            "attempt_number",
+            "response_time_ms",
         }
         for record in batch:
             missing = required_cols - set(record.keys())
@@ -310,9 +327,7 @@ class TestDBColumnNames:
             )
             # AC 7: score must be int in [0, 100]
             assert isinstance(record["score"], int), "score must be int"
-            assert 0 <= record["score"] <= 100, (
-                f"score={record['score']} outside [0, 100]"
-            )
+            assert 0 <= record["score"] <= 100, f"score={record['score']} outside [0, 100]"
             # No banned columns (schema history — 'overall_score' was a prior wrong name)
             assert "overall_score" not in record
             # score_source must NOT be "synthetic" (not in CHECK list)
@@ -359,6 +374,7 @@ class TestDBColumnNames:
 # CLASS 4 — Idempotency SELECT bound (AC 11)
 # ---------------------------------------------------------------------------
 
+
 class TestIdempotencyBound:
     """AC 11: The dedup SELECT in insert_sessions uses .limit(50) — AST guard."""
 
@@ -391,6 +407,7 @@ class TestIdempotencyBound:
 # CLASS 5 — Concurrent CES computation (AC 10)
 # ---------------------------------------------------------------------------
 
+
 class TestConcurrentCESComputation:
     """35 asyncio tasks computing compute_ces in parallel — proves no shared state."""
 
@@ -412,9 +429,7 @@ class TestConcurrentCESComputation:
 
         return asyncio.run(_gather())
 
-    def test_35_concurrent_ces_calls_all_succeed(
-        self, session_rows: list[dict], settings
-    ) -> None:
+    def test_35_concurrent_ces_calls_all_succeed(self, session_rows: list[dict], settings) -> None:
         results = self._all_ces_async(session_rows, settings)
         assert len(results) == 35
 
@@ -423,13 +438,9 @@ class TestConcurrentCESComputation:
     ) -> None:
         results = self._all_ces_async(session_rows, settings)
         for i, v in enumerate(results):
-            assert 0.0 <= v <= 100.0, (
-                f"Concurrent result {i}: {v} is outside [0.0, 100.0]"
-            )
+            assert 0.0 <= v <= 100.0, f"Concurrent result {i}: {v} is outside [0.0, 100.0]"
 
-    def test_concurrent_results_match_serial(
-        self, session_rows: list[dict], settings
-    ) -> None:
+    def test_concurrent_results_match_serial(self, session_rows: list[dict], settings) -> None:
         """Same inputs → same output regardless of execution order (no shared state)."""
         compute_ces = _import_compute_ces()
 
@@ -447,13 +458,9 @@ class TestConcurrentCESComputation:
         concurrent = self._all_ces_async(session_rows, settings)
 
         for i, (s, c) in enumerate(zip(serial, concurrent, strict=False)):
-            assert s == c, (
-                f"Row {i}: serial={s}, concurrent={c} — compute_ces is not pure!"
-            )
+            assert s == c, f"Row {i}: serial={s}, concurrent={c} — compute_ces is not pure!"
 
-    def test_no_exception_on_concurrent_run(
-        self, session_rows: list[dict], settings
-    ) -> None:
+    def test_no_exception_on_concurrent_run(self, session_rows: list[dict], settings) -> None:
         """asyncio.gather must not raise for any of the 35 rows."""
         try:
             self._all_ces_async(session_rows, settings)
@@ -474,14 +481,16 @@ class TestConcurrentCESComputation:
             return list(
                 await asyncio.gather(
                     *[
-                        asyncio.coroutine(lambda r=r: compute_ces(  # type: ignore[attr-defined]
-                            quiz_accuracy=r["quiz_acc"],
-                            teachback_score=r["tb_normalised"],
-                            behavioral=r["behavioral"],
-                            head_pose=None,
-                            blink=None,
-                            settings=settings,
-                        ))()
+                        asyncio.coroutine(
+                            lambda r=r: compute_ces(  # type: ignore[attr-defined]
+                                quiz_accuracy=r["quiz_acc"],
+                                teachback_score=r["tb_normalised"],
+                                behavioral=r["behavioral"],
+                                head_pose=None,
+                                blink=None,
+                                settings=settings,
+                            )
+                        )()
                         for r in rows
                     ]
                 )
@@ -510,6 +519,7 @@ class TestConcurrentCESComputation:
 # ---------------------------------------------------------------------------
 # CLASS 6 — Quiz accuracy within tier bounds
 # ---------------------------------------------------------------------------
+
 
 class TestQuizAccuracyBounds:
     def test_low_tier_quiz_acc_range(self, session_rows: list[dict]) -> None:
@@ -564,6 +574,7 @@ class TestQuizAccuracyBounds:
 # CLASS 7 — Teachback score properties
 # ---------------------------------------------------------------------------
 
+
 class TestTeachbackScore:
     def test_mid_teachback_in_range_when_present(self, session_rows: list[dict]) -> None:
         mid_tb = [r for r in session_rows if r["tier"] == "mid" and r["tb_score"] is not None]
@@ -603,6 +614,7 @@ class TestTeachbackScore:
 # ---------------------------------------------------------------------------
 # CLASS 8 — Determinism (random.seed(42) guarantee)
 # ---------------------------------------------------------------------------
+
 
 class TestDeterminism:
     def test_build_session_rows_is_deterministic(self, generator) -> None:
