@@ -141,6 +141,17 @@
         "end_ms": { "type": "integer", "minimum": 0 }
       }
     },
+    "CaptionLine": {
+      "type": "object",
+      "required": ["text", "start_ms", "end_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string" },
+        "start_ms": { "type": "integer", "minimum": 0 },
+        "end_ms": { "type": "integer", "minimum": 0 }
+      },
+      "description": "One timed caption line within a segment's narration audio. Story 4-29 (BR-6)."
+    },
     "Narration": {
       "type": "object",
       "required": ["script", "audio_url", "audio_provider", "timestamps"],
@@ -155,6 +166,11 @@
         "timestamps": {
           "type": "array",
           "items": { "$ref": "#/definitions/NarrationTimestamp" }
+        },
+        "caption_lines": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CaptionLine" },
+          "description": "Line-level caption timing. Story 4-29 (BR-6). Not in required — retroactive field; defaults to [] so existing lesson records validate without migration."
         }
       }
     },

@@ -45,11 +45,24 @@ export interface NarrationTimestamp {
   end_ms: number;
 }
 
+// Story 4-29 (BR-6): line-level timing for caption sync + karaoke highlight.
+// caption_lines is estimated server-side at lesson-generation time, distributed
+// proportionally by character count from the real tinytag-measured audio duration.
+// Empty array when duration is unknown (browser-fallback path / tinytag failure).
+// Schema shape is intentionally line-level; swapping to real forced-alignment
+// values later (Option 2) is a values-only change — same shape, no schema PR.
+export interface CaptionLine {
+  text: string;
+  start_ms: number;
+  end_ms: number;
+}
+
 export interface Narration {
   script: string;
   audio_url: string;
   audio_provider: AudioProvider;
   timestamps: NarrationTimestamp[];
+  caption_lines: CaptionLine[];
 }
 
 export interface QuizQuestion {
