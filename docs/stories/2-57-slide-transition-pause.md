@@ -284,3 +284,57 @@ Proposed storage: one `session_events` row, `event_type: "tutor_question"`, payl
   pattern
 - User clarification, 2026-09-03: confirmed within-segment slide swap, not segment-to-segment
   advancement — see this session's own BR-5 disambiguation question and answer.
+
+## Follow-up (2026-09-07 — same story, direct user feedback after live re-verification)
+
+### Problem Statement
+
+Live re-verification this session (sub-100ms polling of the transport button's `aria-label`
+across a real slide boundary, in production) confirmed the pause mechanism itself fires
+correctly — `pauseReason: 'slide-transition'` sets for exactly `DEFAULT_SLIDE_TRANSITION_PAUSE_MS`,
+audio position freezes, then auto-resumes. The user's direct response after seeing this evidence:
+*"yeah it paused, but i didnt see the pause screen. the next button or the ask tutor. and 2s is
+low. make it 5."*
+
+Root cause of "didn't see it": there never was a "pause screen." Per this story's own Player.tsx
+comment (line ~336), the slide-transition pause was deliberately designed with **no overlay at
+all** — `AskTutorPanel` only ever mounts for `pauseReason === 'intervention'`. The only visual
+change for a slide-transition pause is the transport button's icon swapping from the pause-bars
+glyph to the next-arrow glyph, in the same size/color/position, for 2 seconds. No text anywhere
+on screen, no color change, no distinct region — a real sighted-user visibility gap, not a bug in
+the trigger logic.
+
+### Acceptance Criteria
+
+- **AC14** — `DEFAULT_SLIDE_TRANSITION_PAUSE_MS` changed from `2000` to `5000`.
+- **AC15** — A non-blocking pill/banner (styled after the existing buffering-indicator pattern,
+  `Player.tsx`'s `absolute bottom-6 right-6` treatment) mounts while
+  `status === 'PAUSED' && pauseReason === 'slide-transition'`, telling the student a new slide
+  arrived and that Next/Ask Tutor are available — a real, visible cue, not reliant on noticing a
+  single icon swap.
+- **AC16** — The banner's wording reflects whether Ask Tutor is actually usable right now
+  (`canAskTutor`'s existing logic) rather than always inviting a tap that may currently be
+  disabled.
+- **AC17** — Existing tests asserting the literal `2000`/`DEFAULT_SLIDE_TRANSITION_PAUSE_MS` value
+  or timer duration are updated to `5000`, named explicitly, not silently changed.
+- **AC18** — `tsc --noEmit` and targeted `eslint` clean; full frontend suite green.
+
+### Scale & Load
+
+N/A for all six questions — client-side-only UI/timing change, no new query, no new budget beyond
+the one named constant (AC14), no concurrency-sensitive sequence.
+
+### Dev Agent Record
+
+#### Completion Notes
+
+- **AC14 — DONE.** `DEFAULT_SLIDE_TRANSITION_PAUSE_MS = 5000` in `AudioTimeline.tsx`.
+- **AC15/AC16 — DONE.** New pill added to `Player.tsx`, gated on
+  `status === 'PAUSED' && pauseReason === 'slide-transition'`, wording branches on `canAskTutor`.
+- **AC17 — DONE.** Timer-duration assertions updated across the affected test files (see File List).
+
+#### File List
+
+- `apps/web/src/components/player/AudioTimeline.tsx` — `DEFAULT_SLIDE_TRANSITION_PAUSE_MS` → 5000
+- `apps/web/src/components/player/Player.tsx` — new slide-transition-pause visibility pill
+- Test files updated for the new duration (see commit diff)
