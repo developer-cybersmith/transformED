@@ -136,6 +136,7 @@ class LearnerDNA(BaseModel):
 async def create_session_endpoint(
     body: SessionCreate,
     current_user: CurrentUser,
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> SessionCreated:
     """Create the `sessions` row for this lesson attempt and return its id.
 
@@ -147,7 +148,6 @@ async def create_session_endpoint(
     """
     from app.config import get_settings
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
-    from app.core.redis import get_redis
     from app.modules.assessment.service import create_session, seed_personalized_ces_threshold
 
     supabase = get_supabase()
@@ -157,10 +157,27 @@ async def create_session_endpoint(
         supabase=supabase,
     )
     # Story 4-13 — non-fatal threshold seeding; session creation always succeeds
+    # D163: two compounding bugs fixed here.
+    # (1) `created["id"]` -> `created["session_id"]` -- create_session() never
+    #     returns an "id" key (verified across all three of its return paths).
+    #     This raised KeyError unconditionally, on EVERY call, silently breaking
+    #     every feature gated on a real session_id (quiz, teach-back, Ask-Tutor,
+    #     CES tracking) -- each of those guards on `sessionId` truthiness and
+    #     no-ops rather than crashing loudly, so this was invisible in the UI.
+    # (2) `redis=await get_redis()` -> a real FastAPI `Depends(get_redis)`
+    #     parameter. `get_redis()` is a plain sync function returning a Redis
+    #     client directly (see its own docstring's Depends(get_redis) usage
+    #     example) -- `await get_redis()` was awaiting a non-awaitable Redis
+    #     instance (TypeError). This was unreached in production only because
+    #     Python evaluates keyword-argument expressions in the order written,
+    #     so bug (1)'s KeyError always fired first. Fixing (1) alone would have
+    #     traded one 500 for another. Matches `submit_tutor_question`'s own
+    #     established `Depends(get_redis)` pattern in this same file, not a new
+    #     convention introduced here.
     await seed_personalized_ces_threshold(
-        session_id=created["id"],
+        session_id=created["session_id"],
         user_id=current_user["sub"],
-        redis=await get_redis(),
+        redis=redis,
         supabase=supabase,
         settings=get_settings(),
     )
