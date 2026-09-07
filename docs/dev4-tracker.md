@@ -3,8 +3,8 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-04 (BR-5 added and completed — deploy-time required-secrets verification, D150, closing D146's residual gap)
-**Overall status:** 36/48 Completed · 6 Partial · 6 Not Started
+**Last updated:** 2026-09-07 (BR-6 added — caption_lines schema + pipeline estimation, code done, awaiting 4-dev frozen-contract PR review)
+**Overall status:** 36/49 Completed · 7 Partial · 6 Not Started
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
 
@@ -23,8 +23,8 @@
 | Sprint 4 | Weeks 8–9 | 9 | 3 | 6 | 0 |
 | Learner Mode | Feature Sprint | 3 | 3 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| Bug Resolution | Feature Sprint 2 | 5 | 1 | 0 | 4 |
-| **Total** | | **48** | **36** | **6** | **6** |
+| Bug Resolution | Feature Sprint 2 | 6 | 1 | 1 | 4 |
+| **Total** | | **49** | **36** | **7** | **6** |
 
 Each task below is labelled `[Not Started]`, `[Partial]`, or `[Completed]`. Update this table whenever a task's label changes.
 
@@ -784,6 +784,20 @@ MAX_DISTRACTION_PER_SESSION=3
     (no session issued) below the configured trust-score threshold.
   - Story: `docs/stories/br-4-turnstile-verification.md` (to be created)
   - **AC:** TBD in story file.
+
+<!-- CHECK:br6_caption_lines_schema_pipeline -->
+- [Partial] **`caption_lines` schema + server-side line-level timestamp estimation** ⚠️ PARTIAL — code merged to branch, awaiting 4-dev frozen-contract PR review before `[Completed]` ✅ 2026-09-07
+  - Picked up opportunistically — prerequisite for BR-1 (WS caption-cue delivery) and karaoke-style
+    slide-text highlight. Dev 1 approved Dev 4 taking the pipeline work (2026-09-07). Dev 2 confirmed
+    line-level is sufficient (no word-level needed) and validated the schema shape.
+  - `CaptionLine` interface + `caption_lines: CaptionLine[]` on `Narration` in `lesson.ts`,
+    `schemas/lesson.py` (default `[]`), `lesson_package.schema.json` (not in `required` —
+    retroactive-field pattern); `_split_into_caption_lines()` in `graph.py` wired into
+    `package_builder_node` alongside `_estimate_slide_timestamps`.
+  - 13 unit tests in `apps/api/tests/test_caption_lines.py` (AC6a–AC6f); 1 pre-existing test
+    updated (`test_audio_duration_s3_38`) to reflect new Narration key set.
+  - Story: `docs/stories/4-29-caption-lines-schema-pipeline.md`
+  - **AC:** AC1–AC8. AC8 (4-dev PR review) is the merge gate — not complete until signed off.
 
 <!-- CHECK:br5_deploy_secrets_verification -->
 - [Completed] **Deploy-time required-secrets verification — closes D146's residual gap** ✅ 2026-09-04
