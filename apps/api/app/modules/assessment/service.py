@@ -2441,9 +2441,38 @@ async def answer_tutor_question(
     # the comparison happens on the atomically-returned post-increment value,
     # never on a stale separate read.
     count_key = f"session:{session_id}:tutor_question_count"
-    question_number = await redis.incr(count_key)
-    if question_number == 1:
-        await redis.expire(count_key, 86_400)
+    try:
+        question_number = await redis.incr(count_key)
+        if question_number == 1:
+            await redis.expire(count_key, 86_400)
+    except Exception as exc:
+        # D164: this rate-limit check is a real cost/abuse guard (every
+        # answered question makes a real LLM_TUTOR call), not cosmetic
+        # telemetry like seed_personalized_ces_threshold's own Redis fallback
+        # above -- so a failure here must fail CLOSED, never open. Decline
+        # exactly like a genuine over-cap hit (same response shape, no
+        # embedding/LLM call) rather than bypassing the limiter because its
+        # own backing store is unavailable (e.g. D162's Redis quota
+        # exhaustion). finish_reason is distinct from "rate_limited" so
+        # admin/observability can tell the two apart.
+        logger.warning(
+            "answer_tutor_question: redis rate-limit check failed session=%s: %s -- "
+            "declining (fail-closed, not bypassing the per-session question cap)",
+            session_id,
+            exc,
+        )
+        await _log_tutor_question_event(
+            supabase=supabase,
+            session_id=session_id,
+            payload=payload,
+            answer=None,
+            declined=True,
+            retrieved_chunk_ids=[],
+            model=None,
+            cost_usd=0.0,
+            finish_reason="redis_unavailable",
+        )
+        return TutorQuestionResult(received=True, answer=None, declined=True)
     if question_number > settings.tutor_qa_max_questions_per_session:
         await _log_tutor_question_event(
             supabase=supabase,
