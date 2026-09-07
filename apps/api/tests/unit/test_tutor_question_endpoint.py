@@ -239,6 +239,79 @@ async def test_first_question_sets_expire_ttl() -> None:
     redis.expire.assert_awaited_once_with("session:sess-001:tutor_question_count", 86_400)
 
 
+# ── Redis rate-limit check itself failing (D164) ────────────────────────────────
+
+
+async def test_redis_incr_failure_declines_gracefully_instead_of_500() -> None:
+    """D164: a Redis outage (e.g. D162's Upstash quota exhaustion) hitting the
+    rate-limit INCR must fail CLOSED (decline, like a real over-cap hit),
+    never surface as an unhandled exception/500."""
+    supabase = _supabase_mock()
+    redis = _redis_mock()
+    redis.incr.side_effect = Exception("max requests limit exceeded. Limit: 500000, Usage: 500000.")
+
+    (embed_patch, llm_patch, embed_mock, complete_mock) = _patch_embeddings_and_llm()
+    with embed_patch, llm_patch:
+        result = await answer_tutor_question(
+            session_id="sess-001",
+            payload=_PAYLOAD,
+            user_id="user-001",
+            supabase=supabase,
+            redis=redis,
+        )
+
+    assert result.received is True
+    assert result.declined is True
+    assert result.answer is None
+    embed_mock.assert_not_called()
+    complete_mock.assert_not_called()
+
+
+async def test_redis_incr_failure_logs_a_distinct_finish_reason() -> None:
+    """Must be distinguishable from a genuine 'rate_limited' decline in the
+    session_events record, per AC2."""
+    supabase = _supabase_mock()
+    redis = _redis_mock()
+    redis.incr.side_effect = Exception("max requests limit exceeded")
+
+    (embed_patch, llm_patch, _e, _c) = _patch_embeddings_and_llm()
+    with embed_patch, llm_patch:
+        await answer_tutor_question(
+            session_id="sess-001",
+            payload=_PAYLOAD,
+            user_id="user-001",
+            supabase=supabase,
+            redis=redis,
+        )
+
+    inserted = supabase.table("session_events").insert.call_args.args[0]
+    assert inserted["payload"]["declined"] is True
+    assert inserted["payload"]["answer"] is None
+    assert inserted["payload"]["finish_reason"] == "redis_unavailable"
+
+
+async def test_redis_expire_failure_also_declines_gracefully() -> None:
+    """The expire() call (first-question TTL set) is inside the same guarded
+    block as incr() -- a failure there must degrade the same way, not 500."""
+    supabase = _supabase_mock()
+    redis = _redis_mock(question_number=1)
+    redis.expire.side_effect = Exception("max requests limit exceeded")
+
+    (embed_patch, llm_patch, embed_mock, complete_mock) = _patch_embeddings_and_llm()
+    with embed_patch, llm_patch:
+        result = await answer_tutor_question(
+            session_id="sess-001",
+            payload=_PAYLOAD,
+            user_id="user-001",
+            supabase=supabase,
+            redis=redis,
+        )
+
+    assert result.declined is True
+    embed_mock.assert_not_called()
+    complete_mock.assert_not_called()
+
+
 # ── Relevance gate (AC4) ─────────────────────────────────────────────────────────
 
 
