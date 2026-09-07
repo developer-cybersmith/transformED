@@ -124,14 +124,20 @@ No TOCTOU concern.
 
 ## Tasks
 
-- [ ] T1 — Story file (this file), committed, pushed (story-first gate)
-- [ ] T2 — Fix `check_profile()` in `scripts/dna_profile_quality_check.py`:
-  strip DPDP disclaimer from `profile_text` before banned-term scan (AC 5 bug fix)
-- [ ] T3 — Write `apps/api/tests/test_s4_36_dna_quality_check.py` (RED → GREEN)
-- [ ] T4 — Run all 15+ tests: confirm 0 failures
-- [ ] T5 — Run guard tests: `tests/unit/test_unbounded_queries.py` + `test_node_return_shape.py`
-- [ ] T6 — `ruff check` clean on both modified files
-- [ ] T7 — Commit, push, open PR
+- [x] T1 — Story file (this file), committed, pushed (story-first gate) — ✓ 2026-09-07
+- [x] T2 — Fix `check_profile()` in `scripts/dna_profile_quality_check.py`:
+  strip DPDP disclaimer from `profile_text` before banned-term scan (AC 5 bug fix) — ✓ 2026-09-07
+- [x] T3 — Write `apps/api/tests/test_s4_36_dna_quality_check.py` (RED → GREEN) — ✓ 2026-09-07
+- [x] T4 — Run all 15+ tests: confirm 0 failures — ✓ 2026-09-07 (20/20 pass, 2.73s)
+- [x] T5 — Run guard tests: `tests/unit/test_unbounded_queries.py` + `test_node_return_shape.py` — ✓ 2026-09-07 (21/22; tinytag pre-existing)
+- [x] T6 — `ruff check` clean on both modified files — ✓ 2026-09-07
+- [x] T7 — Commit, push, open PR — ✓ 2026-09-07
+
+### Review Findings (2026-09-07 — 6-layer BMAD code review)
+
+Layers run: Story Quality | Blind Hunter | Test Coverage | AC Completeness | Process Integrity | Scale & Load Hunter
+
+- [x] [Review][Defer] `.limit(500)` silently excludes `learner_dna` profiles #501–N from quality report [scripts/dna_profile_quality_check.py:181] — deferred, pre-existing from Story 4-33; **D166** registered; needs re-derive before real-student launch. Owner: Dev 3. Trigger: student count approaches 500.
 
 ## Dev Notes
 
