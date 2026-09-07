@@ -22,12 +22,13 @@ before merge). A deliberate crossing of CLAUDE.md §5.4, not an oversight.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from app.core.redis import get_redis
 from app.dependencies import get_current_user
 from app.modules.assessment.router import router
 
@@ -41,8 +42,16 @@ async def _fake_user() -> dict:
     return {"sub": USER_ID, "email": "student@example.com"}
 
 
+# D163: create_session_endpoint now takes `redis: Annotated[Redis, Depends(get_redis)]`
+# (Story 4-13's seed_personalized_ces_threshold call needs one) -- this bare test app
+# never runs the real app's lifespan (init_redis() is never called), so the real
+# get_redis() would raise "Redis pool is not initialised" for every request, including
+# ones that 404 before ever reaching the seed call (FastAPI resolves declared
+# dependencies before the endpoint body runs). Matches test_tutor_question_endpoint.py's
+# own established override pattern for this exact dependency.
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
+_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _app.include_router(router, prefix="/api/assessment")
 _client = TestClient(_app, raise_server_exceptions=False)
 
@@ -515,6 +524,36 @@ def test_a_minted_session_is_accepted_by_grade_quiz_ownership_check() -> None:
         f"expected to reach answer validation (422), got {outcome} — the ownership "
         "check should have passed for a minted session"
     )
+
+
+# ── D163: the real seed_personalized_ces_threshold() path must actually run ──
+
+
+@pytest.mark.unit
+def test_ces_threshold_seeding_is_exercised_for_real_not_mocked_away(mock_to_thread: None) -> None:
+    """Guards against both D163 bugs recurring: `created["id"]` (KeyError, since
+    create_session() only ever returns "session_id") and `await get_redis()`
+    (TypeError, since get_redis() is a plain sync function) both only ever
+    surfaced in production because NOTHING in this test file's history called
+    `seed_personalized_ces_threshold` for real -- `binding rule 2`'s "conversation
+    with a mock" pattern, in the one place it would have caught a real endpoint-level
+    crash. This test asserts the real function actually reached its own body (by
+    checking it called `redis.get` for the DNA cache, Story 4-13 AC3) rather than
+    merely asserting the endpoint's HTTP response shape, which the other tests in
+    this file already do without proving the seed call was ever reached at all.
+    """
+    redis_mock = AsyncMock()
+    redis_mock.get.return_value = None  # cache miss -> falls through to Supabase, still non-fatal
+    _app.dependency_overrides[get_redis] = lambda: redis_mock
+
+    sb = _supabase()
+    resp = _post(sb)
+
+    _app.dependency_overrides[get_redis] = lambda: AsyncMock()  # restore the module default
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["session_id"] == MINTED_SESSION_ID
+    redis_mock.get.assert_called_once_with(f"user:{USER_ID}:dna")
 
 
 # ── A failed insert must not look like success ───────────────────────────────
