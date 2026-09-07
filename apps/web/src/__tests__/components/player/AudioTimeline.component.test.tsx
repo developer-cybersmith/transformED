@@ -3,7 +3,7 @@ import { render, fireEvent, act, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/server';
 import { API_BASE } from '@/test/handlers';
-import { AudioTimeline } from '@/components/player/AudioTimeline';
+import { AudioTimeline, processTimeUpdate } from '@/components/player/AudioTimeline';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
@@ -54,6 +54,122 @@ describe('AudioTimeline — play/pause follows status', () => {
 
     expect(pauseMock).toHaveBeenCalled();
     expect(playMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('AudioTimeline — slide-transition pause auto-resume timer (Story 2-57 / BR-5)', () => {
+  it('AC2: auto-resumes exactly DEFAULT_SLIDE_TRANSITION_PAUSE_MS after a slide-transition pause', () => {
+    vi.useFakeTimers();
+    try {
+      usePlayerStore.getState().loadLesson(mockLessonPackage);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+      render(<AudioTimeline />);
+
+      act(() => {
+        processTimeUpdate(40000); // seg_0: crosses sl_0_0 -> sl_0_1 at 35000ms
+      });
+      expect(usePlayerStore.getState().status).toBe('PAUSED');
+      expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      expect(usePlayerStore.getState().status).toBe('PLAYING');
+      expect(usePlayerStore.getState().pauseReason).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('AC3: calling play() before the timer fires (the manual Next button\'s exact action) resumes immediately, and the original timer does not fire a second time later', () => {
+    vi.useFakeTimers();
+    try {
+      usePlayerStore.getState().loadLesson(mockLessonPackage);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+      render(<AudioTimeline />);
+
+      act(() => {
+        processTimeUpdate(40000);
+      });
+      expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+
+      act(() => {
+        usePlayerStore.getState().play(); // PlayerControls' "Next" button calls this directly
+      });
+      expect(usePlayerStore.getState().status).toBe('PLAYING');
+      expect(usePlayerStore.getState().pauseReason).toBeNull();
+
+      // The original (now-cleaned-up) timer firing later must not do
+      // anything surprising -- e.g. re-trigger a stale resume.
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+      expect(usePlayerStore.getState().status).toBe('PLAYING');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('AC5: a manual intervention pause during the transition-pause window is not clobbered by the auto-resume timer', () => {
+    vi.useFakeTimers();
+    try {
+      usePlayerStore.getState().loadLesson(mockLessonPackage);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+      render(<AudioTimeline />);
+
+      act(() => {
+        processTimeUpdate(40000);
+      });
+      expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+
+      // Student clicks Ask Tutor while already auto-paused (the exact
+      // scenario the pauseForIntervention() guard revision handles).
+      act(() => {
+        usePlayerStore.getState().pauseForIntervention();
+      });
+      expect(usePlayerStore.getState().pauseReason).toBe('intervention');
+
+      act(() => {
+        vi.advanceTimersByTime(2000);
+      });
+
+      // The original transition timer's cleanup (pauseReason changed away
+      // from 'slide-transition' before it fired) must have cancelled it --
+      // it must not resolve playback out from under the intervention pause.
+      expect(usePlayerStore.getState().status).toBe('PAUSED');
+      expect(usePlayerStore.getState().pauseReason).toBe('intervention');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT start a resume timer for a manual pause (only "slide-transition" triggers the effect)', () => {
+    vi.useFakeTimers();
+    try {
+      usePlayerStore.getState().loadLesson(mockLessonPackage);
+      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0 });
+
+      render(<AudioTimeline />);
+
+      act(() => {
+        usePlayerStore.getState().pause();
+      });
+      expect(usePlayerStore.getState().pauseReason).toBe('manual');
+
+      act(() => {
+        vi.advanceTimersByTime(5000);
+      });
+
+      // No timer exists for a manual pause -- status must not change on its own.
+      expect(usePlayerStore.getState().status).toBe('PAUSED');
+      expect(usePlayerStore.getState().pauseReason).toBe('manual');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -128,7 +244,17 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
         ],
       };
       usePlayerStore.getState().loadLesson(lessonWithScriptOnly);
-      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+      // Story 2-57: seg_0 has a real internal slide boundary at 35000ms
+      // (sl_0_0 -> sl_0_1) that would otherwise pause the virtual clock
+      // there via the new slide-transition pause -- this test is about the
+      // quiz-firing mechanism at the SEGMENT boundary, not the new pause
+      // feature (which has its own dedicated tests), so it opts out.
+      usePlayerStore.setState({
+        status: 'PLAYING',
+        currentSegmentIndex: 0,
+        quizFiredForSegment: new Set(),
+        skipTransitionPauseForSegment: true,
+      });
 
       render(<AudioTimeline />);
 
@@ -269,7 +395,15 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
         ],
       };
       usePlayerStore.getState().loadLesson(singleSegmentLesson);
-      usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+      // Story 2-57: opt out of the new slide-transition pause -- this test is
+      // about handleEnded-vs-processTimeUpdate quiz-firing, not the pause
+      // feature (same reasoning as the sibling test above).
+      usePlayerStore.setState({
+        status: 'PLAYING',
+        currentSegmentIndex: 0,
+        quizFiredForSegment: new Set(),
+        skipTransitionPauseForSegment: true,
+      });
 
       render(<AudioTimeline />);
 

@@ -9,6 +9,7 @@ import { useLessonSocket } from '@/hooks/useLessonSocket';
 import { trackEvent } from '@/lib/analytics';
 import { completeSession, createSession } from '@/lib/assessment';
 import type { LessonStatusResponse } from '@/services/upload.service';
+import { AskTutorPanel } from './AskTutorPanel';
 import { AudioTimeline } from './AudioTimeline';
 import { AvatarOverlay } from './AvatarOverlay';
 import { CaptionOverlay } from './CaptionOverlay';
@@ -61,6 +62,7 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   const sessionId = usePlayerStore((s) => s.sessionId);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
   const currentSlideId = usePlayerStore((s) => s.currentSlideId);
+  const pauseReason = usePlayerStore((s) => s.pauseReason);
   const isBuffering = usePlayerStore((s) => s.isBuffering);
   const audioError = usePlayerStore((s) => s.audioError);
   const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
@@ -327,6 +329,14 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             prompt={segment.teachback_prompt}
             segmentTitle={segment.title}
           />
+        )}
+
+        {/* Ask Tutor panel (Story 2-57 / BR-5) — mounts when the student
+            manually paused to ask a question, distinct from the auto-triggered
+            slide-transition pause (PlayerControls' Next button handles that
+            one; this panel never mounts for it). */}
+        {status === 'PAUSED' && pauseReason === 'intervention' && segment && (
+          <AskTutorPanel />
         )}
 
         {/* Lesson complete screen */}

@@ -276,6 +276,15 @@ describe('SessionReport', () => {
     expect(screen.getByText(/No teach-back this session/i)).not.toBeNull();
   });
 
+  it('shows a "Back to Reports" link to /reports (Story 2-59/BR-8) — the index page has no way back to it otherwise', () => {
+    useSessionReportMock.mockReturnValue({ report: FULL_REPORT, isLoading: false, error: undefined });
+
+    render(<SessionReport sessionId="sess_1" />);
+
+    const link = screen.getByRole('link', { name: /back to reports/i });
+    expect(link.getAttribute('href')).toBe('/reports');
+  });
+
   it('"Study Again" links to /lesson/{lesson_id} from the report response', () => {
     useSessionReportMock.mockReturnValue({ report: FULL_REPORT, isLoading: false, error: undefined });
 

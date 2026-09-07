@@ -10,6 +10,11 @@ import { refreshSignedUrl } from '@/lib/media/refreshSignedUrl';
 import { binarySearchTimestamps } from '@/lib/binarySearch';
 export { binarySearchTimestamps };
 
+// Story 2-57 AC2/AC10: a single named constant, not a student/admin-facing
+// setting for v1 — confirm with the team before building a real settings UI
+// around this if "configurable" turns out to mean that.
+export const DEFAULT_SLIDE_TRANSITION_PAUSE_MS = 2000;
+
 /**
  * Core audio-tick handler. Reads Zustand store via getState() to avoid stale closures
  * in the onTimeUpdate callback (fires at ~30 Hz). Exported for unit testing.
@@ -21,8 +26,10 @@ export function processTimeUpdate(ms: number): void {
     currentSegmentIndex,
     currentSlideId,
     quizFiredForSegment,
+    skipTransitionPauseForSegment,
     updateAudioPosition,
     setCurrentSlide,
+    pauseForSlideTransition,
     setTutorState,
     wsSendControl,
     enterQuiz,
@@ -43,8 +50,9 @@ export function processTimeUpdate(ms: number): void {
 
   const idx = binarySearchTimestamps(timestamps, ms);
   const targetSlideId = timestamps[idx].slide_id;
+  const slideChanged = targetSlideId !== currentSlideId;
 
-  if (targetSlideId !== currentSlideId) {
+  if (slideChanged) {
     setCurrentSlide(targetSlideId);
   }
 
@@ -52,11 +60,31 @@ export function processTimeUpdate(ms: number): void {
   // backend tutor FSM (segment_complete) and optimistically mirror CHECKING_IN
   // locally in the same tick — see CheckingInTransition / Dev Notes "Timing
   // constraint" for why this can't wait for the backend's state_change echo.
+  // Deliberately checked BEFORE the slide-transition pause below (Story
+  // 2-57 review finding): the segment's LAST slide boundary and its own
+  // end-of-segment boundary routinely coincide on the same tick, and
+  // enterQuiz() itself guards on status === 'PLAYING' — if the transition
+  // pause ran first and flipped status to PAUSED, this call would silently
+  // no-op and the quiz would never fire at all.
   const segmentEnd = timestamps.at(-1)!.end_ms;
   if (ms >= segmentEnd && !quizFiredForSegment.has(segment.segment_id)) {
     setTutorState('CHECKING_IN');
     wsSendControl?.({ type: 'segment_complete' });
     enterQuiz();
+    return;
+  }
+
+  // Story 2-57 AC1/AC4/AC10: only reachable from natural forward playback
+  // crossing a real within-segment slide boundary that ISN'T also the
+  // segment's own end (handled above) — never from a seek
+  // (syncSlideToPosition, below, is a separate function that never calls
+  // this), and never on a segment's first slide (loadLesson/advanceSegment
+  // already initialize currentSlideId to that first slide's real id, so
+  // slideChanged is false on that very first tick — no extra gating needed).
+  // The new slide is already visible via setCurrentSlide above; only
+  // continued playback is held.
+  if (slideChanged && !skipTransitionPauseForSegment) {
+    pauseForSlideTransition();
   }
 }
 
@@ -122,6 +150,7 @@ export function AudioTimeline() {
   const seekRequestMs = usePlayerStore((s) => s.seekRequestMs);
   const playbackRate = usePlayerStore((s) => s.playbackRate);
   const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
+  const pauseReason = usePlayerStore((s) => s.pauseReason);
 
   const segment = lesson?.segments[currentSegmentIndex] ?? null;
   // Story 2-45: prefer a successfully re-signed URL for THIS segment over
@@ -451,6 +480,23 @@ export function AudioTimeline() {
     }
     usePlayerStore.getState().clearSeekRequest();
   }, [seekRequestMs, hasAudio, hasScript]);
+
+  // Story 2-57 (BR-5): auto-resume a slide-transition pause after
+  // DEFAULT_SLIDE_TRANSITION_PAUSE_MS. Depends on pauseReason itself (not a
+  // boolean) so this effect only owns the 'slide-transition' case -- a
+  // manual pause() or pauseForIntervention() sets a DIFFERENT pauseReason
+  // value, so this effect's condition is false and no timer starts; the
+  // cleanup below still correctly cancels an in-flight timer if the reason
+  // changes again before it fires (student manually intervenes, seeks past
+  // it, or the Next button in PlayerControls calls play() early -- all of
+  // which clear pauseReason via play() itself, see player.machine.ts).
+  useEffect(() => {
+    if (pauseReason !== 'slide-transition') return;
+    const timer = setTimeout(() => {
+      usePlayerStore.getState().play();
+    }, DEFAULT_SLIDE_TRANSITION_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [pauseReason]);
 
   // Keep audio playback rate in sync
   useEffect(() => {

@@ -12,12 +12,13 @@ All tests: @pytest.mark.unit — no real Supabase, Redis, or LLM connections req
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from app.core.redis import get_redis
 from app.dependencies import get_current_user, get_settings
 from app.modules.assessment.router import router
 from app.modules.assessment.schemas import QuizResult, TeachbackResult
@@ -61,22 +62,31 @@ def _denied_settings() -> MagicMock:
 # _client         — sessions + quiz (CurrentUser, approved settings harmless)
 # _approved_client — teachback happy path (approved email)
 # _denied_client   — teachback 403 path (non-approved email)
+#
+# D163: create_session_endpoint takes `redis: Annotated[Redis, Depends(get_redis)]`
+# (Story 4-13's seed_personalized_ces_threshold needs one) -- none of these bare
+# apps run the real app's lifespan (init_redis() is never called), so the real
+# get_redis() raises "Redis pool is not initialised" for every request through
+# this router. Matches test_session_create_endpoint.py's own established fix.
 
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
 _app.dependency_overrides[get_settings] = _approved_settings
+_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _app.include_router(router, prefix="/api/assessment")
 _client = TestClient(_app, raise_server_exceptions=False)
 
 _approved_app = FastAPI()
 _approved_app.dependency_overrides[get_current_user] = _fake_user
 _approved_app.dependency_overrides[get_settings] = _approved_settings
+_approved_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _approved_app.include_router(router, prefix="/api/assessment")
 _approved_client = TestClient(_approved_app, raise_server_exceptions=False)
 
 _denied_app = FastAPI()
 _denied_app.dependency_overrides[get_current_user] = _non_approved_user
 _denied_app.dependency_overrides[get_settings] = _denied_settings
+_denied_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _denied_app.include_router(router, prefix="/api/assessment")
 _denied_client = TestClient(_denied_app, raise_server_exceptions=False)
 
