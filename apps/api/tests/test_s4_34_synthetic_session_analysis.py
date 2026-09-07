@@ -446,7 +446,7 @@ class TestConcurrentCESComputation:
         ]
         concurrent = self._all_ces_async(session_rows, settings)
 
-        for i, (s, c) in enumerate(zip(serial, concurrent)):
+        for i, (s, c) in enumerate(zip(serial, concurrent, strict=False)):
             assert s == c, (
                 f"Row {i}: serial={s}, concurrent={c} — compute_ces is not pure!"
             )
@@ -610,7 +610,7 @@ class TestDeterminism:
         rows_a = generator.build_session_rows()
         rows_b = generator.build_session_rows()
         assert len(rows_a) == len(rows_b) == 35
-        for i, (a, b) in enumerate(zip(rows_a, rows_b)):
+        for i, (a, b) in enumerate(zip(rows_a, rows_b, strict=False)):
             assert a["ces_final"] == b["ces_final"], (
                 f"Row {i}: non-deterministic ces_final: {a['ces_final']} vs {b['ces_final']}"
             )
