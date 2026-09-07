@@ -1,7 +1,7 @@
 ---
 id: "4-35"
 title: "Fix _apply_ema MagicMock regression — patch dna_ema_retain in test mocks"
-status: "in-progress"
+status: "done"
 sprint: 4
 story_points: 1
 owner: Dev3
@@ -51,19 +51,19 @@ The production code path is correct. Only the test mocks are missing the field.
 
 ## Acceptance Criteria
 
-- [ ] **AC 1.** `_fake_settings()` in `test_onboarding_endpoint.py` (line ~43)
+- [x] **AC 1.** `_fake_settings()` in `test_onboarding_endpoint.py` (line ~43)
   sets `settings.dna_ema_retain = 0.7`.
-- [ ] **AC 2.** Every `with patch("app.modules.assessment.service.get_settings")`
+- [x] **AC 2.** Every `with patch("app.modules.assessment.service.get_settings")`
   block in `test_onboarding_endpoint.py` sets
   `mock_settings.return_value.dna_ema_retain = 0.7`.
-- [ ] **AC 3.** The `_mock_settings` fixture in `test_posthog_events.py` sets
+- [x] **AC 3.** The `_mock_settings` fixture in `test_posthog_events.py` sets
   `mock_s.dna_ema_retain = 0.7`.
-- [ ] **AC 4.** After the fix, `test_onboarding_endpoint.py` has **0 failures**
+- [x] **AC 4.** After the fix, `test_onboarding_endpoint.py` has **0 failures**
   (all previously-passing tests still pass, 6 regressions restored).
-- [ ] **AC 5.** After the fix, `test_posthog_events.py` has **0 failures**
+- [x] **AC 5.** After the fix, `test_posthog_events.py` has **0 failures**
   (all previously-passing tests still pass, 4 regressions restored).
-- [ ] **AC 6.** `tests/test_ces.py` guard — all 26 tests still pass.
-- [ ] **AC 7.** `ruff` check clean on both modified files.
+- [x] **AC 6.** `tests/test_ces.py` guard — all 26 tests still pass.
+- [x] **AC 7.** `ruff` check clean on both modified files.
 
 ## Scale & Load
 
@@ -82,13 +82,13 @@ unit of work; no scale dimension applies.
 
 ## Tasks
 
-- [ ] T1 — Story file created (this file), committed, pushed
-- [ ] T2 — Run failing tests to confirm exact failure set before patching
-- [ ] T3 — Patch `test_onboarding_endpoint.py`: `_fake_settings` + every `service.get_settings` mock block
-- [ ] T4 — Patch `test_posthog_events.py`: `_mock_settings` fixture
-- [ ] T5 — Run both test files: confirm 0 failures
-- [ ] T6 — Run `tests/test_ces.py` guard
-- [ ] T7 — Commit, push, open PR
+- [x] T1 — Story file created (this file), committed, pushed — ✓ 2026-09-07
+- [x] T2 — Run failing tests to confirm exact failure set before patching — ✓ 2026-09-07
+- [x] T3 — Patch `test_onboarding_endpoint.py`: `_fake_settings` + every `service.get_settings` mock block — ✓ 2026-09-07
+- [x] T4 — Patch `test_posthog_events.py`: `_mock_settings` fixture — ✓ 2026-09-07
+- [x] T5 — Run both test files: confirm 0 failures — ✓ 2026-09-07
+- [x] T6 — Run `tests/test_ces.py` guard — ✓ 2026-09-07
+- [x] T7 — Commit, push, open PR — ✓ 2026-09-07
 
 ## Change Log
 - 2026-09-07: Story created (story-first BMAD gate)
