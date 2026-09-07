@@ -125,13 +125,54 @@ Pure frontend layout/CSS change — five of six questions are genuinely N/A, sta
   original implementation — not introduced by this story, fixed here because it was found live while
   verifying this story's own changes and the fix was a one-line change in files already being edited.
 
+### Follow-up (same story, same-day direct user feedback after reviewing the live redesign)
+
+Two concrete problems reported after using the first pass:
+
+1. **`SessionReport.tsx`**: on a session with no `ces_timeline` (no chart), the main column held only
+   `TeachbackDetailSection` while the side column held `DnaSnapshotSection` + the "Keep Going" CTA
+   stacked — the side column ran taller, leaving a visible empty gap below Teach-Back Detail in the
+   main column. **Fix**: removed the main/side "sidebar" concept entirely. New layout: the chart (when
+   present) gets its own full-width row; Teach-Back Detail and Learner DNA Snapshot are paired
+   side-by-side in a `lg:grid-cols-2` row when both exist (both are list-shaped content of comparable
+   density, so this pairing rarely produces a lopsided gap) — either one alone takes the full row
+   instead of sitting in a half-empty column; "Study Again" moved out of the sidebar into its own
+   always-full-width closing block, so it never competes for height against DNA/chart content.
+   Document order (teach-back detail before DNA snapshot) still holds — verified by re-running the
+   existing DOM-order tests, all still pass unchanged. Live-verified with a real no-chart fixture
+   (the exact reported scenario) and a full-data fixture (chart + teach-back + DNA all present):
+   both screenshots show no unexplained empty space.
+2. **`ReportsIndex.tsx`**: a flat wall of every session at once "looks too exhausted" — reported
+   directly after seeing 50 real sessions render as one undifferentiated grid. **Fix, all three
+   directions the user asked for, together**: filter tabs (All / Completed / In Progress, each with a
+   live count, defaulting to "All"), recency grouping ("This Week" / "Earlier" section headers,
+   computed against a `now` snapshotted once via `useState(() => Date.now())` — not a bare `Date.now()`
+   call during render, which React's `react-hooks/purity` lint rule correctly rejects as impure), and
+   pagination (`INITIAL_VISIBLE = 9`, a "Load more" button revealing `LOAD_MORE_STEP = 9` more at a
+   time, resetting to the initial count whenever the active filter tab changes). A filter that matches
+   zero sessions shows a distinct "No sessions match this filter" message rather than a blank grid.
+   9 new tests added (filter-tab selection + counts, recency-heading presence in each direction, "no
+   match" state, initial-9/Load-more-reveals-rest/no-button-under-10 for pagination). Live-verified
+   with a 12-session fixture spanning both recency windows and both completion states: screenshots
+   confirm tabs/counts/grouping/pagination all work as designed, including a real button click via
+   Playwright revealing the remaining 3 sessions.
+
+Both fixes verified live via the same temporary-and-reverted Playwright technique as the original
+pass (stub the two hooks with realistic fixture data, bypass `proxy.ts` locally, revert both + confirm
+zero diff before committing). Full frontend suite re-run after: 93 files / 1139 tests green, zero
+regressions. `tsc --noEmit` and `eslint` clean (`eslint` caught the `Date.now()` purity issue directly,
+fixed before commit — not something a human reviewer would necessarily have caught either).
+
 ### File List
 
 - `apps/web/src/components/reports/ReportsIndex.tsx` — full redesign (summary block, card grid) +
-  D161 locale fix
+  D161 locale fix; follow-up: filter tabs, recency grouping, "Load more" pagination
 - `apps/web/src/components/reports/SessionReport.tsx` — full redesign (header block, stats block,
-  two-region layout, "Back to Reports" link) + D161 locale fix
+  "Back to Reports" link) + D161 locale fix; follow-up: removed the sidebar concept in favor of a
+  full-width chart row + a Teach-Back/DNA paired row + a full-width closing CTA block
 - `apps/web/src/__tests__/components/reports/SessionReport.test.tsx` — 1 new test (AC3)
+- `apps/web/src/__tests__/components/reports/ReportsIndex.test.tsx` — 9 new tests (follow-up: filter
+  tabs, recency grouping, pagination)
 
 ## References
 

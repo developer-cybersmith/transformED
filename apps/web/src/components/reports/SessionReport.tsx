@@ -315,48 +315,46 @@ export function SessionReport({ sessionId }: SessionReportProps) {
         />
       </div>
 
-      {/* Main region + side region — a wide two-column layout on desktop, one
-          column on mobile. Document order (chart -> teach-back detail ->
-          DNA snapshot) is preserved regardless of which region visually
-          groups a block, since nesting doesn't change DOM order. */}
-      {(hasChart || hasTeachbackDetail || hasDna) && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          <div className="lg:col-span-2 flex flex-col gap-6">
-            {hasChart && (
-              <AttentionChart timeline={report.ces_timeline} interventions={report.intervention_events} />
-            )}
-            {hasTeachbackDetail && <TeachbackDetailSection details={report.teachback_details!} />}
-          </div>
-          <div className="lg:col-span-1 flex flex-col gap-6">
-            {hasDna && <DnaSnapshotSection snapshot={report.learner_dna_snapshot!} />}
-            <div className={`flex flex-col gap-3 p-5 ${BLOCK_CLASS}`}>
-              <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
-                Keep Going
-              </span>
-              <p className="text-neutral-600 text-sm">
-                Revisit this lesson any time to reinforce what you&apos;ve learned.
-              </p>
-              <Link
-                href={`/lesson/${report.lesson_id}`}
-                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary text-sm font-semibold hover:brightness-105 transition-all"
-              >
-                <RotateCcw className="w-4 h-4" />
-                Study Again
-              </Link>
-            </div>
-          </div>
+      {/* Chart, full width when present -- gets its own row rather than being
+          squeezed into a 2/3 column, since it's the primary visual insight. */}
+      {hasChart && (
+        <AttentionChart timeline={report.ces_timeline} interventions={report.intervention_events} />
+      )}
+
+      {/* Teach-Back Detail and Learner DNA Snapshot, paired side-by-side when
+          both exist (both are list-shaped content of comparable density, so
+          this pairing rarely produces the lopsided-height gap a chart-vs-DNA
+          pairing did) -- either one alone takes the full row instead of being
+          stranded in a half-empty column. Document order (teach-back detail
+          before DNA snapshot) still holds regardless, since it's literally
+          first in this markup either way. */}
+      {(hasTeachbackDetail || hasDna) && (
+        <div
+          className={
+            hasTeachbackDetail && hasDna
+              ? 'grid grid-cols-1 lg:grid-cols-2 gap-6 items-start'
+              : 'grid grid-cols-1 gap-6'
+          }
+        >
+          {hasTeachbackDetail && <TeachbackDetailSection details={report.teachback_details!} />}
+          {hasDna && <DnaSnapshotSection snapshot={report.learner_dna_snapshot!} />}
         </div>
       )}
 
-      {!(hasChart || hasTeachbackDetail || hasDna) && (
+      {/* Closing action, always full-width -- never competes for height
+          against DNA/chart/teach-back content above it. */}
+      <div className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-6 ${BLOCK_CLASS}`}>
+        <p className="text-neutral-600 text-sm">
+          Revisit this lesson any time to reinforce what you&apos;ve learned.
+        </p>
         <Link
           href={`/lesson/${report.lesson_id}`}
-          className="self-start inline-flex items-center gap-2 px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary text-sm font-semibold hover:brightness-105 transition-all"
+          className="self-start sm:self-auto inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary text-sm font-semibold hover:brightness-105 transition-all"
         >
           <RotateCcw className="w-4 h-4" />
           Study Again
         </Link>
-      )}
+      </div>
     </div>
   );
 }

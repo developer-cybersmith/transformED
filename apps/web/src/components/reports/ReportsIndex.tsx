@@ -1,7 +1,8 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { CheckCircle2, Clock3, Inbox, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Clock3, Inbox, AlertCircle, SearchX } from 'lucide-react';
 import { useSessionReports } from '@/hooks/useSessionReports';
 import { cesScoreColor, formatCesLabel } from '@/lib/utils';
 import type { SessionSummary } from '@/types/assessment';
@@ -11,10 +12,17 @@ import type { SessionSummary } from '@/types/assessment';
 // beginning. This page (and GET /assessment/sessions behind it) is the fix.
 // Story 2-59 (BR-8): widened from a single narrow column into a full-width,
 // block-divided layout (summary row + card grid) per direct user feedback.
+// Follow-up (same story, same-day feedback): a flat wall of every session at
+// once "looks too exhausted" for anyone with more than a handful -- added
+// filter tabs, recency grouping, and a "Load more" reveal so the page reads
+// as organized, not overwhelming.
 // Standalone page, no dashboard shell -- matches the existing convention for
 // /reports/[sessionId] (SessionReport.tsx), which is also sidebar-less.
 
 const BLOCK_CLASS = 'rounded-2xl bg-white border border-neutral-100 shadow-sm';
+const INITIAL_VISIBLE = 9;
+const LOAD_MORE_STEP = 9;
+const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 // D161: `toLocaleDateString(undefined, ...)` uses the RUNTIME's default locale --
 // SSR (Node) and the browser can disagree (e.g. Node defaults to en-US, a
@@ -27,6 +35,23 @@ function formatSessionDate(isoString: string | null): string | null {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return null;
   return date.toLocaleDateString('en-US', { dateStyle: 'medium' });
+}
+
+// `now` is a parameter (not a bare `Date.now()` call inside) so tests can pin
+// it via a fixed reference instead of depending on real wall-clock time.
+function isWithinLastWeek(isoString: string | null, now: number): boolean {
+  if (!isoString) return false;
+  const t = new Date(isoString).getTime();
+  if (Number.isNaN(t)) return false;
+  return t <= now && now - t < ONE_WEEK_MS;
+}
+
+type FilterKey = 'all' | 'completed' | 'in-progress';
+
+function matchesFilter(session: SessionSummary, filter: FilterKey): boolean {
+  if (filter === 'completed') return session.completed;
+  if (filter === 'in-progress') return !session.completed;
+  return true;
 }
 
 function LoadingState() {
@@ -84,13 +109,15 @@ function EmptyState() {
 }
 
 // Story 2-59 (BR-8): a quick summary block above the grid — counts derived
-// client-side from the already-fetched list, no new network call.
+// client-side from the already-fetched list, no new network call. Always
+// reflects the FULL list regardless of the active filter tab below it (a
+// global overview, not a filtered one).
 function SummaryBlock({ sessions }: { sessions: SessionSummary[] }) {
   const completedCount = sessions.filter((s) => s.completed).length;
   const inProgressCount = sessions.length - completedCount;
 
   return (
-    <div className={`grid grid-cols-2 sm:grid-cols-3 gap-4`}>
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
       <div className={`flex flex-col gap-1 p-5 ${BLOCK_CLASS}`}>
         <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
           Total Sessions
@@ -111,6 +138,43 @@ function SummaryBlock({ sessions }: { sessions: SessionSummary[] }) {
         </span>
         <span className="text-neutral-900 font-semibold text-2xl">{inProgressCount}</span>
       </div>
+    </div>
+  );
+}
+
+function FilterTabs({
+  sessions,
+  active,
+  onChange,
+}: {
+  sessions: SessionSummary[];
+  active: FilterKey;
+  onChange: (filter: FilterKey) => void;
+}) {
+  const tabs: { key: FilterKey; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: sessions.length },
+    { key: 'completed', label: 'Completed', count: sessions.filter((s) => s.completed).length },
+    { key: 'in-progress', label: 'In Progress', count: sessions.filter((s) => !s.completed).length },
+  ];
+
+  return (
+    <div role="tablist" className="flex items-center gap-2 flex-wrap">
+      {tabs.map((tab) => (
+        <button
+          key={tab.key}
+          type="button"
+          role="tab"
+          aria-selected={active === tab.key}
+          onClick={() => onChange(tab.key)}
+          className={`px-4 py-2 rounded-full text-sm font-medium transition-colors ${
+            active === tab.key
+              ? 'bg-[var(--accent-secondary)] text-primary'
+              : 'bg-white border border-neutral-200 text-neutral-600 hover:border-neutral-300'
+          }`}
+        >
+          {tab.label} ({tab.count})
+        </button>
+      ))}
     </div>
   );
 }
@@ -166,12 +230,44 @@ function SessionCard({ session }: { session: SessionSummary }) {
   );
 }
 
+function SessionGroup({ label, sessions }: { label: string; sessions: SessionSummary[] }) {
+  if (sessions.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">{label}</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {sessions.map((session) => (
+          <SessionCard key={session.session_id} session={session} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ReportsIndex() {
   const { sessions, isLoading, error } = useSessionReports();
+  const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
+  const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
+  // A snapshot taken once at mount, not read fresh on every render -- `Date.now()`
+  // is an impure call React's rules forbid during render (react-hooks/purity).
+  // "This Week" grouping doesn't need to be reactive to the wall clock ticking
+  // while the page is open.
+  const [now] = useState(() => Date.now());
 
   if (isLoading) return <LoadingState />;
   if (error) return <ErrorState />;
   if (sessions.length === 0) return <EmptyState />;
+
+  const filtered = sessions.filter((s) => matchesFilter(s, activeFilter));
+  const visible = filtered.slice(0, visibleCount);
+  const hasMore = filtered.length > visible.length;
+  const thisWeek = visible.filter((s) => isWithinLastWeek(s.started_at, now));
+  const earlier = visible.filter((s) => !isWithinLastWeek(s.started_at, now));
+
+  function handleFilterChange(filter: FilterKey) {
+    setActiveFilter(filter);
+    setVisibleCount(INITIAL_VISIBLE);
+  }
 
   return (
     <div
@@ -180,11 +276,32 @@ export function ReportsIndex() {
     >
       <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight">Reports</h2>
       <SummaryBlock sessions={sessions} />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {sessions.map((session) => (
-          <SessionCard key={session.session_id} session={session} />
-        ))}
-      </div>
+      <FilterTabs sessions={sessions} active={activeFilter} onChange={handleFilterChange} />
+
+      {filtered.length === 0 ? (
+        <div
+          data-testid="reports-index-no-match"
+          className="flex flex-col items-center justify-center py-16 text-center gap-3"
+        >
+          <SearchX className="w-8 h-8 text-neutral-300" />
+          <p className="text-neutral-500">No sessions match this filter.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-6">
+          <SessionGroup label="This Week" sessions={thisWeek} />
+          <SessionGroup label="Earlier" sessions={earlier} />
+        </div>
+      )}
+
+      {hasMore && (
+        <button
+          type="button"
+          onClick={() => setVisibleCount((c) => c + LOAD_MORE_STEP)}
+          className="self-center px-6 py-2.5 rounded-full bg-white border border-neutral-200 text-neutral-700 text-sm font-semibold hover:border-neutral-300 transition-all"
+        >
+          Load more
+        </button>
+      )}
     </div>
   );
 }
