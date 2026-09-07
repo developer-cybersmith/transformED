@@ -1,6 +1,6 @@
 ---
 title: "Story 2-59 — Reports Page UI/UX Redesign (BR-8)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -76,6 +76,62 @@ Pure frontend layout/CSS change — five of six questions are genuinely N/A, sta
   (the test reads `.getAttribute('href')` directly off it), not a wrapping `<div>`.
 - Icon language: reuses the existing `lucide-react` + colored-icon-box pattern already established
   in `LearningPulse.tsx` (dashboard) rather than introducing a new visual convention.
+
+## Dev Agent Record
+
+### Completion Notes
+
+- **AC1 — DONE.** `ReportsIndex.tsx` widened to `max-w-6xl`, added a `SummaryBlock` (Total/Completed/
+  In Progress, computed client-side from the fetched `sessions` array, no new network call), and
+  replaced the single-column row list with a responsive card grid (`grid-cols-1 sm:grid-cols-2
+  lg:grid-cols-3`) — each card now shows a status icon (`CheckCircle2`/`Clock3`), a colored status
+  pill, and the CES label/score in a bottom row.
+- **AC2 — DONE.** `SessionReport.tsx` widened to `max-w-6xl`, reorganized into: a header block (title/
+  tier/date + a prominent Focus badge with icon), a 4-across stats block, then a
+  `lg:grid-cols-3` region — main (2/3): AttentionChart + Teach-Back Detail; side (1/3): Learner DNA
+  Snapshot + a "Keep Going" CTA card wrapping the existing "Study Again" link. Collapses to one
+  column below `lg`.
+- **AC3 — DONE.** Added "← Back to Reports" link (`ArrowLeft` icon) at the top of `SessionReport.tsx`,
+  linking to `/reports` — new test added and passing.
+- **AC4 — DONE, verified not assumed.** All 26 pre-existing `SessionReport.test.tsx` tests pass
+  unchanged, including the three DOM-order assertions (chart → teach-back detail → DNA snapshot) —
+  confirmed by running the real test file after implementing, not just reasoned about. Achieved by
+  nesting the chart+detail pair inside the main-column wrapper and the DNA snapshot inside the
+  side-column wrapper, with the main-column wrapper's JSX preceding the side-column wrapper's JSX —
+  document order follows JSX emission order regardless of which parent visually groups a block via
+  CSS Grid. All 5 pre-existing `ReportsIndex.test.tsx` tests also pass unchanged.
+- **AC5 — DONE.** No data/formatter/link changes — confirmed by the full existing test suites passing
+  unmodified (minus the one new AC3 test).
+- **AC6 — DONE.** `tsc --noEmit` clean. Full frontend suite: 93 files / 1130 tests green, zero
+  regressions (one new test added in `SessionReport.test.tsx` for AC3; the rest of the delta from
+  BR-7's own last-recorded count is other work already merged to `main` since then, not this story).
+- **Verified live, not just by test**: local dev server visual check via Playwright, using the same
+  temporary-and-reverted technique established in Story 2-58 — temporarily pointed
+  `NEXT_PUBLIC_API_URL` at the real production API and bypassed `proxy.ts`'s auth gate for `/reports`
+  (both local-only, both reverted immediately after), which surfaced a real CORS block (production
+  `CORS_ORIGINS` correctly only allows `hieiq.ai`/`www.hieiq.ai`, not `localhost`) — worked around for
+  this one-off visual check by temporarily stubbing `useSessionReports()`/`useSessionReport()` with
+  realistic fixture data instead (reverted via `git checkout HEAD --` immediately after, confirmed
+  zero diff before committing). This surfaced a **real, pre-existing hydration bug** (see D161 below),
+  found and fixed in the same pass since it was a one-line fix directly in the files already open.
+- **D161 (new, found and fixed during this story's live verification)**: `formatSessionDate`
+  (`ReportsIndex.tsx`) and `formatCompletedAt` (`SessionReport.tsx`) both called
+  `toLocaleDateString`/`toLocaleString` with `undefined` as the locale argument — this resolves to the
+  *runtime's* default locale, which can differ between SSR (Node) and the browser, producing a real
+  hydration mismatch in production for any visitor whose browser locale differs from the server's
+  default (reproduced live: server rendered "Sep 5, 2026", client rendered "5 Sept 2026", a genuine
+  React hydration-mismatch warning, not a hypothetical). Pinned both call sites to `'en-US'`
+  explicitly. Pre-existing in `ReportsIndex.tsx` since Story 2-58 and in `SessionReport.tsx` since its
+  original implementation — not introduced by this story, fixed here because it was found live while
+  verifying this story's own changes and the fix was a one-line change in files already being edited.
+
+### File List
+
+- `apps/web/src/components/reports/ReportsIndex.tsx` — full redesign (summary block, card grid) +
+  D161 locale fix
+- `apps/web/src/components/reports/SessionReport.tsx` — full redesign (header block, stats block,
+  two-region layout, "Back to Reports" link) + D161 locale fix
+- `apps/web/src/__tests__/components/reports/SessionReport.test.tsx` — 1 new test (AC3)
 
 ## References
 

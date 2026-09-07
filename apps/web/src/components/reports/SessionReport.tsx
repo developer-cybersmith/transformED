@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import type { ComponentType } from 'react';
+import { ArrowLeft, Target, MessageCircle, Gauge, Clock3, Dna as DnaIcon, RotateCcw } from 'lucide-react';
 import { useSessionReport } from '@/hooks/useSessionReport';
 import { cesScoreColor, formatCesLabel, formatTeachbackLabel } from '@/lib/utils';
 import type { DnaDimension, LearnerDnaSnapshot, TeachbackDetail } from '@/types/assessment';
@@ -57,16 +59,18 @@ const GROWTH_INDICATORS: Record<'Improving' | 'Stable' | 'Needs Attention', stri
   'Needs Attention': '↓',
 };
 
+// Story 2-59 (BR-8): shared block chrome for every card on this page — one
+// visual language, not a per-section reinvention.
+const BLOCK_CLASS = 'rounded-2xl bg-white border border-neutral-100 shadow-sm';
+
 function DnaSnapshotSection({ snapshot }: { snapshot: LearnerDnaSnapshot }) {
   return (
-    <div
-      data-testid="dna-snapshot-section"
-      className="flex flex-col gap-3 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm"
-    >
-      <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+    <div data-testid="dna-snapshot-section" className={`flex flex-col gap-3 p-5 ${BLOCK_CLASS}`}>
+      <span className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wider">
+        <DnaIcon className="w-3.5 h-3.5" />
         Learner DNA Snapshot
       </span>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-2">
         {DIMENSION_ORDER.map((dim) => {
           const growth = snapshot.growth_labels[dim];
           return (
@@ -95,11 +99,9 @@ function DnaSnapshotSection({ snapshot }: { snapshot: LearnerDnaSnapshot }) {
 // `.order("created_at")`) is used for the display label instead.
 function TeachbackDetailSection({ details }: { details: TeachbackDetail[] }) {
   return (
-    <div
-      data-testid="teachback-detail-section"
-      className="flex flex-col gap-4 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm"
-    >
-      <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+    <div data-testid="teachback-detail-section" className={`flex flex-col gap-4 p-5 ${BLOCK_CLASS}`}>
+      <span className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wider">
+        <MessageCircle className="w-3.5 h-3.5" />
         Teach-Back Detail
       </span>
       {details.map((entry, index) => (
@@ -160,13 +162,10 @@ function LoadingState() {
   return (
     <div
       data-testid="session-report-loading"
-      className="flex flex-col gap-8 w-full max-w-2xl mx-auto pt-8 pb-12 px-4 sm:px-8 lg:px-12 animate-pulse"
+      className="flex flex-col gap-6 w-full max-w-6xl mx-auto pt-8 pb-16 px-4 sm:px-8 lg:px-12 animate-pulse"
     >
-      <div className="flex flex-col gap-2">
-        <div className="h-7 w-48 rounded bg-neutral-100" />
-        <div className="h-4 w-32 rounded bg-neutral-100" />
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="h-28 rounded-3xl bg-neutral-100" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <div key={i} className="h-24 rounded-2xl bg-neutral-100" />
         ))}
@@ -204,10 +203,38 @@ function formatInterventions(count: number): string {
   return `${count} focus check-in${count === 1 ? '' : 's'}`;
 }
 
+// D161: pinned to 'en-US' explicitly -- see ReportsIndex.tsx's formatSessionDate
+// for the full hydration-mismatch rationale (SSR/browser locale disagreement).
 function formatCompletedAt(isoString: string): string | null {
   const date = new Date(isoString);
   if (Number.isNaN(date.getTime())) return null;
-  return date.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  return date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+// Story 2-59 (BR-8): one stat tile, shared by the 4-across stats block.
+function StatTile({
+  icon: Icon,
+  label,
+  value,
+  valueClassName,
+  detail,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  valueClassName?: string;
+  detail?: string;
+}) {
+  return (
+    <div className={`flex flex-col gap-2 p-5 ${BLOCK_CLASS}`}>
+      <span className="flex items-center gap-2 text-xs font-medium text-neutral-500 uppercase tracking-wider">
+        <Icon className="w-3.5 h-3.5" />
+        {label}
+      </span>
+      <span className={`font-medium text-lg ${valueClassName ?? 'text-neutral-900'}`}>{value}</span>
+      {detail && <span className="text-neutral-500 text-sm">{detail}</span>}
+    </div>
+  );
 }
 
 export function SessionReport({ sessionId }: SessionReportProps) {
@@ -216,97 +243,120 @@ export function SessionReport({ sessionId }: SessionReportProps) {
   if (isLoading) return <LoadingState />;
   if (error || !report) return <ErrorState />;
 
+  const completedAt = report.completed_at ? formatCompletedAt(report.completed_at) : null;
+  const hasChart = report.ces_timeline !== null;
+  const hasTeachbackDetail = !!report.teachback_details && report.teachback_details.length > 0;
+  const hasDna = !!report.learner_dna_snapshot;
+
   return (
     <div
       data-testid="session-report-root"
-      className="flex flex-col gap-8 w-full max-w-2xl mx-auto pt-8 pb-12 px-4 sm:px-8 lg:px-12"
+      className="flex flex-col gap-6 w-full max-w-6xl mx-auto pt-8 pb-16 px-4 sm:px-8 lg:px-12"
     >
-      <div>
-        <h2 className="font-serif text-2xl font-semibold text-neutral-900 tracking-tight">
-          Session Report
-        </h2>
-        <p className="text-neutral-500 mt-1">
-          {report.tier_label} Session
-        </p>
-        {report.completed_at && formatCompletedAt(report.completed_at) && (
-          <p className="text-neutral-500 mt-1">
-            {formatCompletedAt(report.completed_at)}
-          </p>
-        )}
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="flex flex-col gap-1.5 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm">
-          <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
-            Quiz Accuracy
-          </span>
-          <span className="text-neutral-900 font-medium text-lg">
-            {report.quiz_accuracy_label === null
-              ? 'No quiz questions this session'
-              : `${report.quiz_correct_count} / ${report.quiz_total_questions} correct`}
-          </span>
-          {report.quiz_accuracy_label !== null && (
-            <span className="text-neutral-500 text-sm">{report.quiz_accuracy_label}</span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1.5 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm">
-          <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
-            Teach-Back
-          </span>
-          <span className="text-neutral-900 font-medium text-lg">
-            {formatTeachbackLabel(report.teachback_score)}
-          </span>
-        </div>
-
-        <div className="flex flex-col gap-1.5 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm">
-          <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
-            Focus
-          </span>
-          <span className={`font-medium text-lg ${cesScoreColor(report.ces_score)}`}>
-            {formatCesLabel(report.ces_score)}
-          </span>
-          {report.ces_score !== null && (
-            <span className="text-neutral-400 text-xs">
-              {Math.round(report.ces_score)}/100
-            </span>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-1.5 p-5 rounded-2xl bg-white border border-neutral-100 shadow-sm">
-          <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
-            Engagement
-          </span>
-          <span className="text-neutral-900 font-medium text-lg">
-            {formatDuration(report.duration_minutes)}
-          </span>
-          <span className="text-neutral-500 text-sm">
-            {formatInterventions(report.interventions_count)}
-          </span>
-        </div>
-      </div>
-
-      {report.ces_timeline !== null && (
-        <AttentionChart
-          timeline={report.ces_timeline}
-          interventions={report.intervention_events}
-        />
-      )}
-
-      {report.teachback_details && report.teachback_details.length > 0 && (
-        <TeachbackDetailSection details={report.teachback_details} />
-      )}
-
-      {report.learner_dna_snapshot && (
-        <DnaSnapshotSection snapshot={report.learner_dna_snapshot} />
-      )}
-
       <Link
-        href={`/lesson/${report.lesson_id}`}
-        className="self-start px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary text-sm font-semibold hover:brightness-105 transition-all"
+        href="/reports"
+        className="inline-flex items-center gap-1.5 self-start text-sm text-neutral-500 hover:text-neutral-900 transition-colors"
       >
-        Study Again
+        <ArrowLeft className="w-4 h-4" />
+        Back to Reports
       </Link>
+
+      {/* Header block */}
+      <div className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-6 ${BLOCK_CLASS}`}>
+        <div>
+          <h2 className="font-serif text-2xl sm:text-3xl font-semibold text-neutral-900 tracking-tight">
+            Session Report
+          </h2>
+          <p className="text-neutral-500 mt-1">
+            {report.tier_label} Session{completedAt && ` · ${completedAt}`}
+          </p>
+        </div>
+        <div className="flex items-center gap-3 px-5 py-3 rounded-2xl bg-neutral-50 border border-neutral-100 self-start sm:self-auto">
+          <Gauge className={`w-6 h-6 ${cesScoreColor(report.ces_score)}`} />
+          <div className="flex flex-col">
+            <span className="text-xs text-neutral-400 uppercase tracking-wide">Focus</span>
+            <span className={`text-sm font-semibold ${cesScoreColor(report.ces_score)}`}>
+              {formatCesLabel(report.ces_score)}
+              {report.ces_score !== null && ` · ${Math.round(report.ces_score)}/100`}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats block */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatTile
+          icon={Target}
+          label="Quiz Accuracy"
+          value={
+            report.quiz_accuracy_label === null
+              ? 'No quiz questions this session'
+              : `${report.quiz_correct_count} / ${report.quiz_total_questions} correct`
+          }
+          detail={report.quiz_accuracy_label ?? undefined}
+        />
+        <StatTile
+          icon={MessageCircle}
+          label="Teach-Back"
+          value={formatTeachbackLabel(report.teachback_score)}
+        />
+        <StatTile
+          icon={Gauge}
+          label="Focus"
+          value={formatCesLabel(report.ces_score)}
+          valueClassName={cesScoreColor(report.ces_score)}
+          detail={report.ces_score !== null ? `${Math.round(report.ces_score)}/100` : undefined}
+        />
+        <StatTile
+          icon={Clock3}
+          label="Engagement"
+          value={formatDuration(report.duration_minutes)}
+          detail={formatInterventions(report.interventions_count)}
+        />
+      </div>
+
+      {/* Main region + side region — a wide two-column layout on desktop, one
+          column on mobile. Document order (chart -> teach-back detail ->
+          DNA snapshot) is preserved regardless of which region visually
+          groups a block, since nesting doesn't change DOM order. */}
+      {(hasChart || hasTeachbackDetail || hasDna) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+          <div className="lg:col-span-2 flex flex-col gap-6">
+            {hasChart && (
+              <AttentionChart timeline={report.ces_timeline} interventions={report.intervention_events} />
+            )}
+            {hasTeachbackDetail && <TeachbackDetailSection details={report.teachback_details!} />}
+          </div>
+          <div className="lg:col-span-1 flex flex-col gap-6">
+            {hasDna && <DnaSnapshotSection snapshot={report.learner_dna_snapshot!} />}
+            <div className={`flex flex-col gap-3 p-5 ${BLOCK_CLASS}`}>
+              <span className="text-xs font-medium text-neutral-500 uppercase tracking-wider">
+                Keep Going
+              </span>
+              <p className="text-neutral-600 text-sm">
+                Revisit this lesson any time to reinforce what you&apos;ve learned.
+              </p>
+              <Link
+                href={`/lesson/${report.lesson_id}`}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary text-sm font-semibold hover:brightness-105 transition-all"
+              >
+                <RotateCcw className="w-4 h-4" />
+                Study Again
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!(hasChart || hasTeachbackDetail || hasDna) && (
+        <Link
+          href={`/lesson/${report.lesson_id}`}
+          className="self-start inline-flex items-center gap-2 px-6 py-2.5 rounded-full bg-[var(--accent-secondary)] text-primary text-sm font-semibold hover:brightness-105 transition-all"
+        >
+          <RotateCcw className="w-4 h-4" />
+          Study Again
+        </Link>
+      )}
     </div>
   );
 }
