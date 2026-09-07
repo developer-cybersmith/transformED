@@ -22,7 +22,7 @@ harness's `.env` — no mocked/simulated data.
 - Distinct errors observed (1, capped/deduped):
   - `HTTP 500: {"detail":"Failed to ingest book — please retry"}`
 
-- P95 submission latency: 38159.0 ms (target: < 2000 ms)
+- P95 submission latency: 49069.6 ms (target: < 2000 ms)
 - Crash-like (5xx) error count: 1
 - Redis-connection-error count: 0
 
@@ -31,16 +31,15 @@ harness's `.env` — no mocked/simulated data.
 ### `phase_b_generate`
 
 - Total requests: 50
-- Succeeded: 43
-- Failed: 7
-- Status code counts: 200: 1, 202: 42, 500: 7
-- Distinct errors observed (1, capped/deduped):
-  - `HTTP 500: {"detail":"Internal server error"}`
+- Succeeded: 50
+- Failed: 0
+- Status code counts: 200: 1, 202: 49
+- Distinct errors observed: none
 
-- P99 submission (enqueue-latency proxy) latency: 2841.4 ms (target: < 500 ms; client-observed, see `extra['submission_latency_note']`)
-- Pipeline completion duration — P50: 84.8 s, P95: 140.6 s, max: 224.7 s (measurement against a 15-minute / 900s target, not a hard gate — queue depth vs. execution time reported separately per AC-3)
-- Terminal status counts: {'ready': 0, 'failed': 43, 'never_terminal_timeout': 0} (NONE lesson(s) never reached a terminal status within the harness's poll window)
-- Crash-like (5xx) error count: 1
+- P99 submission (enqueue-latency proxy) latency: 2520.9 ms (target: < 500 ms; client-observed, see `extra['submission_latency_note']`)
+- Pipeline completion duration — P50: 981.1 s, P95: 1468.1 s, max: 1481.6 s (measurement against a 15-minute / 900s target, not a hard gate — queue depth vs. execution time reported separately per AC-3)
+- Terminal status counts: {'ready': 48, 'failed': 2, 'never_terminal_timeout': 0} (NONE lesson(s) never reached a terminal status within the harness's poll window)
+- Crash-like (5xx) error count: 0
 - Redis-connection-error count: 0
 - Cost-ceiling breach count: NOT INSTRUMENTED this run
 - Circuit-breaker trip count: NOT INSTRUMENTED this run
@@ -55,8 +54,8 @@ harness's `.env` — no mocked/simulated data.
 
 - Outcome: **REPRODUCED**
 - `responses`: [202, 202]
-- `lesson_ids`: ['8fbc170b-0f95-44dc-bcd1-e0d1d0e2d017', 'fb30d99b-91b6-42e9-b0a2-35bc3d3a8472']
-- Note: D45 REPRODUCED: both concurrent requests returned 202 with distinct lesson_ids (8fbc170b-0f95-44dc-bcd1-e0d1d0e2d017, fb30d99b-91b6-42e9-b0a2-35bc3d3a8472) — two lessons rows were created and enqueued for the same (chapter_id=71608545-8a37-41c6-8f97-001704903546, tier=T1, user_id=c535fe54-a146-4c7e-9cc5-550d62ba18aa).
+- `lesson_ids`: ['9f5dbf7d-d6ea-4448-8925-50e84764cb2c', '42cacccc-a74d-4eab-90af-37318a8fa835']
+- Note: D45 REPRODUCED: both concurrent requests returned 202 with distinct lesson_ids (9f5dbf7d-d6ea-4448-8925-50e84764cb2c, 42cacccc-a74d-4eab-90af-37318a8fa835) — two lessons rows were created and enqueued for the same (chapter_id=cb5f9f9b-9bc2-489e-9a78-63ee9a230aff, tier=T1, user_id=64c3260d-9488-4783-9b90-aa071ef0d5f3).
 
 ## AC-8 — Gate 7 concurrency race probe
 
@@ -67,7 +66,7 @@ harness's `.env` — no mocked/simulated data.
 
 ## Summary for DEFECT-REGISTER.md D129
 
-- Total crash-like (5xx) errors across all scenarios this run: 2
+- Total crash-like (5xx) errors across all scenarios this run: 1
 - Total Redis-connection-error occurrences this run: 0
 - D45 race: REPRODUCED
 - Gate 7 race: not reproduced / skipped
