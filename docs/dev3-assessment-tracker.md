@@ -907,7 +907,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 
 > **Goal:** Calibration, quality review, tuning. No new features — only data-driven improvements.
 
-- [x] **Analyse 20+ real student test session data** — ✓ 2026-09-07 (Story 4-34: 35 synthetic sessions, 37/37 CI tests pass, concurrent CES load verified, * 100 bug fixed; T3/T5 real-staging run deferred to post Dev 2 PR #161 merge)
+- [x] **Analyse 20+ real student test session data** — ✓ 2026-09-07 (Story 4-34: 35 synthetic sessions, 37/37 CI tests pass, concurrent CES load verified, * 100 bug fixed; Dev 2 PR #161 merged 2026-09-01; T3/T5 real-staging run unblocked on PR side, pending consent-granted test sessions)
   - Run at least 20 end-to-end test sessions (can use internal team as testers)
   - Export `quiz_attempts`, `teachback_attempts`, `session_events`, `learner_dna` data
   - Look for: score distribution anomalies, CES formula outliers, Learner DNA convergence patterns

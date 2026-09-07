@@ -100,7 +100,7 @@ Not enough to calibrate `teachback_score × 0.25`. Both scores were above the im
 
 ### CES formula implication — updated 2026-08-29
 
-Dev 2 confirmed: in `useAttentionMonitor.ts`, `average() ?? 0` sends a literal `0.0` when a 5s window has no samples — a contract violation against `ws.ts` which specifies `null` for uninitialised/dropped frames. This means empty windows drag CES down as a genuine low score rather than triggering weight redistribution. Fix: `?? null` (Dev 2 implementing, PR #161).
+Dev 2 confirmed: in `useAttentionMonitor.ts`, `average() ?? 0` sends a literal `0.0` when a 5s window has no samples — a contract violation against `ws.ts` which specifies `null` for uninitialised/dropped frames. This means empty windows drag CES down as a genuine low score rather than triggering weight redistribution. Fix: `?? null` (Dev 2, PR #161 — merged 2026-09-01).
 
 However, the **1:1 tab_switch:intervention ratio across the 14 affected sessions** is the stronger signal. If consent was never granted and zero `attention_signal` frames were sent, every session reaching TEACHING would trigger immediate continuous interventions (CES = 0 from window 1), not just the 14 sessions that match tab switches. The observed pattern — interventions only where tab switches happen — confirms that **tab-visibility-driven behavioral signals ARE being received**. Camera/head_pose/blink are the uncertain signals; those require consent and MediaPipe initialization.
 
@@ -144,7 +144,7 @@ Described in §2. **FIXED in Story S4-6 (2026-08-31).** Dev 4 must confirm `_fin
 |---|---|
 | `quiz_accuracy × 0.35` | Partial — 69% aggregate, but only developer data |
 | `teachback_score × 0.25` | Blocked — 2 samples, no distribution |
-| `behavioral × 0.20` | Blocked — signal not reaching formula (Dev 2 PR #161 pending) |
+| `behavioral × 0.20` | Blocked — signal not reaching formula (Dev 2 PR #161 merged 2026-09-01; needs consent-granted test sessions) |
 | `head_pose × 0.12` | Blocked — no attention data in DB |
 | `blink × 0.08` | Blocked — no attention data in DB |
 | **CES threshold (50)** | Unvalidatable — ces_final always NULL (D116 FIXED, needs reconfirmation) |
@@ -159,7 +159,7 @@ Before running 20 calibration sessions, these must be resolved:
    - **Status (2026-08-31): FIXED in Story S4-6 (D116).** `complete_session` REST endpoint now dispatches `lesson_complete` WebSocket event after writing `ended_at`, which triggers `_finalize_session` → writes `ces_final`. Dev 2 must ensure `Player.tsx` calls `POST /api/assessment/sessions/{id}/complete` on lesson end.
 
 2. **Dev 2/Dev 4: Confirm behavioral signal WebSocket messages are being sent.**
-   - **Status (2026-08-31): PARTIALLY CONFIRMED.** Tab-switch behavioral signals arrive (evidenced by 1:1 tab_switch:intervention ratio in data). Camera signals (head_pose, blink) require consent + MediaPipe init — not yet confirmed. Dev 2's `?? null` fix (PR #161) must merge into the test environment branch before the run — without it, empty 5s windows send `0.0` and drag CES down artificially.
+   - **Status (2026-09-01): CONFIRMED — PR #161 merged.** Tab-switch behavioral signals arrive (evidenced by 1:1 tab_switch:intervention ratio in data). Camera signals (head_pose, blink) require consent + MediaPipe init — not yet confirmed. Dev 2's `?? null` fix (PR #161) merged 2026-09-01; empty 5s windows now correctly send `null` instead of `0.0`. Remaining blocker for real signal calibration is consent-granted test sessions.
 
 3. **Dev 3: Verify CES update endpoint wired.**
    - **Status (2026-08-31): CONFIRMED — no REST endpoint exists or is needed (correct architecture).**
@@ -266,12 +266,12 @@ When `teachback_score=None`, CES exceeds what it would be with `teachback_score=
 ### Partial Tracker Task — Closed
 
 The tracker task "Analyse 20+ real student test session data" is marked Done.
-The task was blocked on Dev 2's `?? null` WebSocket fix (PR #161) preventing real
-`attention_signal` frames and thus real `ces_final` values. This story provides
-machine-verifiable CI evidence for 35 synthetic session patterns covering all code
-paths in the generator and CES formula. T3/T5 from Story 4-30 (run against real
-staging Supabase) remain executable once Dev 2's PR merges and consent-granted test
-sessions are available.
+Dev 2's `?? null` WebSocket fix (PR #161) merged 2026-09-01 — that blocker is resolved.
+The remaining blocker for real-session signal calibration is consent-granted test sessions
+in staging. This story provides machine-verifiable CI evidence for 35 synthetic session
+patterns covering all code paths in the generator and CES formula. T3/T5 from Story 4-30
+(run against real staging Supabase) are unblocked on the PR #161 side and executable once
+consent-granted test sessions are available.
 
 ---
 
