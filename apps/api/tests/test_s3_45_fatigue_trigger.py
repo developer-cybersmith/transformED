@@ -205,6 +205,7 @@ def _make_fatigue_redis(
     fatigue_fired: int = 0,
     cooldown_exists: int = 0,
     ces_window: str = "70.0",
+    segment_index: str | None = None,
 ) -> AsyncMock:
     mock_redis = AsyncMock()
     ts_val = str(int(time.time()) - start_ts_offset) if start_ts_offset is not None else None
@@ -218,6 +219,11 @@ def _make_fatigue_redis(
             return ces_window
         if "quiz_deadline_at" in key:
             return None
+        if "segment_index" in key:
+            # BR-2 AC2: present only to prove the fatigue floor never reads it — the
+            # real code path in service.py's fatigue branch never queries this key at
+            # all, so this value has no way to reach the decision either way.
+            return segment_index
         return None
 
     async def fake_exists(key: str):
@@ -347,6 +353,59 @@ async def test_fatigue_not_dispatched_before_ces_fatigue_min_session_seconds():
 
     fatigue_calls = [c for c in mock_dispatch.call_args_list if "fatigue_detected" in str(c)]
     assert len(fatigue_calls) == 0, "fatigue_detected must NOT fire before min_session_seconds"
+
+
+# ── BR-2 AC2: fatigue floor depends on wall-clock only, never segment count ──────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "segment_index",
+    ["2", "40"],
+    ids=["few-long-segments-so-far", "many-short-segments-so-far"],
+)
+async def test_fatigue_floor_depends_on_wallclock_not_segment_count(segment_index):
+    """AC2 (BR-2): the identical real elapsed session time (start_ts_offset=1000s, past the
+    900s floor) fires fatigue identically whether that time was reached via few long
+    segments (segment_index='2') or many short ones (segment_index='40') — the guard reads
+    session_start_ts vs. real time only, and per _make_fatigue_redis's fake_get, the fatigue
+    branch in service.py never queries session:{id}:segment_index at all, so this value has
+    no path to influence the outcome either way.
+
+    Scope note (review finding, Edge Case Hunter): this proves the TRIGGER-DECISION code
+    path (primary_trigger/exhaustion_fallback -> dispatch) is segment_index-blind. It does
+    NOT exercise `_segment_intervention_messages` (the message-selection step that runs
+    after the decision) -- that call is mocked to return {} in `_fatigue_patches`, by
+    design, since selection is a distinct concern already covered by its own dedicated
+    tests (test_segment_messages_* in test_tutor_service.py). Unlike the original,
+    tautological version of AC1's test, this one IS falsifiable: `_make_fatigue_redis`
+    genuinely returns a different segment_index per parametrized case, so a future change
+    that made the reachable trigger-decision code read that key would make one of the two
+    cases diverge and fail."""
+    mock_redis = _make_fatigue_redis(
+        state="TEACHING", start_ts_offset=1000, segment_index=segment_index
+    )
+    mock_dispatch = AsyncMock(
+        return_value={
+            "current_state": "INTERVENING",
+            "intervention_type": "fatigue",
+            "intervention_message": None,
+        }
+    )
+
+    ps = _fatigue_patches(mock_redis, mock_dispatch, can_intervene=True)
+    with ps[0], ps[1], ps[2], ps[3], ps[4]:
+        from app.modules.tutor.service import process_attention_signal
+
+        result = await process_attention_signal("sess-001", _NORMAL_SIGNAL)
+
+    fatigue_calls = [c for c in mock_dispatch.call_args_list if "fatigue_detected" in str(c)]
+    assert len(fatigue_calls) == 1, (
+        f"fatigue_detected must fire at the 900s floor regardless of segment_index="
+        f"{segment_index!r} (few-long vs many-short segments reaching the same wall-clock time)"
+    )
+    assert result.intervention_dispatched is True
 
 
 # ── AC 5: requires both blink AND head_pose ───────────────────────────────────
