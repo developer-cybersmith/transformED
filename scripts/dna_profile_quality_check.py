@@ -16,12 +16,12 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "apps", "api"))
 
-from supabase import create_client, Client  # type: ignore[import]
-
 # Import the real disclaimer text rather than duplicating it — a hardcoded copy here
 # drifted from app.modules.assessment.prompts.DPDP_DISCLAIMER and would have made this
 # check FAIL on every real, compliant profile (checked substring never actually appears).
 from app.modules.assessment.prompts import DPDP_DISCLAIMER
+
+from supabase import create_client  # type: ignore[import]
 
 # ---------------------------------------------------------------------------
 # Criteria definitions
@@ -63,8 +63,10 @@ def check_profile(row: dict) -> list[dict]:
     )
 
     # --- Criterion 2: No banned terms -----------------------------------------
-    text_lower = profile_text.lower()
-    found_banned = [t for t in BANNED_TERMS if t in text_lower]
+    # Strip the canonical disclaimer before scanning so that words like "clinical"
+    # inside the DPDP disclaimer suffix do not trigger a false-positive FAIL.
+    body_lower = profile_text.lower().replace(DPDP_DISCLAIMER.lower(), "")
+    found_banned = [t for t in BANNED_TERMS if t in body_lower]
     # Also check badge_labels
     for bl in badge_labels:
         for t in BANNED_TERMS:
@@ -80,12 +82,8 @@ def check_profile(row: dict) -> list[dict]:
     )
 
     # --- Criterion 3: No raw scores -------------------------------------------
+    # SCORE_PATTERN uses \d{2,3} — 4-digit years like "2026" are naturally excluded.
     score_matches = SCORE_PATTERN.findall(profile_text)
-    # Filter false positives: years (2026), version numbers
-    suspicious = [
-        m for m in score_matches
-        if not re.match(r"202\d", m[0] if m else "")
-    ]
     results.append(
         {
             "criterion": "No raw scores",
