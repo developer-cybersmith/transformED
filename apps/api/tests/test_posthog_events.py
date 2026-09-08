@@ -131,6 +131,7 @@ def _mock_settings(monkeypatch):
     mock_s.ces_weight_quiz = 0.35
     mock_s.ces_weight_teachback = 0.25
     mock_s.llm_mini = "gpt-4o-mini"
+    mock_s.dna_ema_retain = 0.7
     monkeypatch.setattr("app.modules.assessment.service.get_settings", lambda: mock_s)
 
 
@@ -229,13 +230,22 @@ def _build_teachback_supabase() -> MagicMock:
     insert_m.insert.return_value.execute.return_value.data = []
     insert_m.insert.return_value.execute.return_value.error = None
 
-    supabase.table.side_effect = [session_m, lesson_m, count_m, insert_m]
+    # Actual call order: sessions → teachback_attempts(count) → lessons → teachback_attempts(insert)
+    supabase.table.side_effect = [session_m, count_m, lesson_m, insert_m]
     return supabase
 
 
 def _build_onboarding_supabase() -> MagicMock:
-    """2-call mock: onboarding_responses(INSERT) → learner_dna(UPSERT)."""
+    """3-call mock: learner_dna SELECT → onboarding_responses INSERT → learner_dna UPSERT.
+    D137 added _fetch_existing_dna() as first call in process_onboarding().
+    """
     supabase = MagicMock()
+
+    dna_select_m = MagicMock()
+    dna_select_resp = MagicMock()
+    dna_select_resp.data = None  # first-time user — no prior DNA
+    dna_select_chain = dna_select_m.select.return_value.eq.return_value.maybe_single.return_value
+    dna_select_chain.execute.return_value = dna_select_resp
 
     insert_m = MagicMock()
     insert_m.insert.return_value.execute.return_value.data = []
@@ -245,7 +255,7 @@ def _build_onboarding_supabase() -> MagicMock:
     upsert_m.upsert.return_value.execute.return_value.data = [{"user_id": USER_ID}]
     upsert_m.upsert.return_value.execute.return_value.error = None
 
-    supabase.table.side_effect = [insert_m, upsert_m]
+    supabase.table.side_effect = [dna_select_m, insert_m, upsert_m]
     return supabase
 
 
