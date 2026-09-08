@@ -65,6 +65,7 @@ export const mockLessonPackage: LessonPackage = {
           { slide_id: 'sl_0_0', start_ms: 0,     end_ms: 35000 },
           { slide_id: 'sl_0_1', start_ms: 35000,  end_ms: 92000 },
         ],
+        caption_lines: [], // Story 4-29 (BR-6) — populated by server-side estimation
       },
       quiz: [
         {
@@ -169,6 +170,7 @@ export const mockLessonPackage: LessonPackage = {
           { slide_id: 'sl_1_0', start_ms: 0,      end_ms: 74000  },
           { slide_id: 'sl_1_1', start_ms: 74000,  end_ms: 148000 },
         ],
+        caption_lines: [], // Story 4-29 (BR-6) — populated by server-side estimation
       },
       quiz: [
         {
