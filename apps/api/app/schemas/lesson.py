@@ -113,6 +113,27 @@ class NarrationTimestamp(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# CaptionLine  (Story 4-29 — BR-6)
+# ---------------------------------------------------------------------------
+
+
+class CaptionLine(BaseModel):
+    """One timed caption line within a segment's narration audio.
+
+    Populated by ``_split_into_caption_lines()`` in ``package_builder_node``.
+    Duration is distributed proportionally by character count from the
+    tinytag-measured audio duration. Empty list when duration is unknown
+    (browser-fallback path / tinytag failure) — see Story 4-29 AC5.
+    """
+
+    model_config = _STRICT
+
+    text: str
+    start_ms: Annotated[int, Field(ge=0)]
+    end_ms: Annotated[int, Field(ge=0)]
+
+
+# ---------------------------------------------------------------------------
 # Narration
 # ---------------------------------------------------------------------------
 
@@ -124,6 +145,11 @@ class Narration(BaseModel):
     audio_url: str  # Supabase Storage signed URL — relative paths allowed in dev
     audio_provider: AudioProvider
     timestamps: list[NarrationTimestamp]
+    # Story 4-29 (BR-6): line-level caption timing. Defaults to [] so existing
+    # lesson records and fixtures validate without a migration — retroactive-field
+    # pattern matching tier/avatar_intro_url. Not in lesson_package.schema.json's
+    # Narration.required for the same reason.
+    caption_lines: list[CaptionLine] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

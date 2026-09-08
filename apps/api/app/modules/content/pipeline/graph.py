@@ -4741,6 +4741,98 @@ def _estimate_slide_timestamps(
     return timestamps
 
 
+# ── Story 4-29 (BR-6): caption-line timestamp estimation ──────────────────────
+
+_SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+
+
+def _split_into_caption_lines(
+    script: str,
+    duration_ms: float | None,
+    *,
+    max_chars_per_line: int = 120,
+) -> list[dict[str, Any]]:
+    """Split a narration script into timed caption lines.
+
+    Returns a list of ``{text, start_ms, end_ms}`` dicts that maps each
+    caption line to its estimated playback window inside the segment's audio.
+
+    Duration is distributed proportionally by character count: a longer
+    line gets a proportionally longer window. The last line's ``end_ms``
+    is always exactly ``round(duration_ms)`` — the remainder is assigned
+    there so no rounding gap exists.
+
+    Returns ``[]`` in two cases:
+    * ``duration_ms`` is ``None`` — browser-fallback path or tinytag failure.
+      Estimation without a real audio anchor produces consistently wrong
+      captions; explicit empty is the correct degraded output. The frontend
+      should render static (un-timed) captions when ``caption_lines`` is
+      empty.
+    * ``script`` is empty or whitespace-only.
+
+    Splitting rules:
+    1. Split at sentence boundaries (``[.!?]`` followed by whitespace).
+    2. Any sentence longer than ``max_chars_per_line`` is further split at
+       the last word boundary (space) within the limit. If no space exists
+       within the limit (a single word longer than the cap — extremely rare
+       in educational narration), a hard character cut is made at
+       ``max_chars_per_line``.
+
+    Story 4-29 (BR-6). Unblocks BR-1 (WS caption-cue delivery) and the
+    karaoke-style slide-text highlight feature. Schema shape is intentionally
+    line-level-only; a future values-only swap to real forced-alignment
+    timestamps (Option 2) requires no schema change.
+    """
+    if not script or not script.strip():
+        return []
+    if duration_ms is None:
+        return []
+
+    # 1. Split at sentence boundaries.
+    sentences = [s.strip() for s in _SENTENCE_END_RE.split(script) if s.strip()]
+    if not sentences:
+        return []
+
+    # 2. Sub-split sentences that exceed the per-line character cap.
+    lines: list[str] = []
+    for sentence in sentences:
+        if len(sentence) <= max_chars_per_line:
+            lines.append(sentence)
+        else:
+            remaining = sentence
+            while len(remaining) > max_chars_per_line:
+                cut = remaining.rfind(" ", 0, max_chars_per_line)
+                if cut == -1:
+                    # No space within limit — hard cut (single overlong word).
+                    cut = max_chars_per_line
+                lines.append(remaining[:cut].strip())
+                remaining = remaining[cut:].strip()
+            if remaining:
+                lines.append(remaining)
+
+    if not lines:
+        return []
+
+    total_chars = sum(len(line) for line in lines)
+    if total_chars == 0:
+        return []
+
+    # 3. Distribute duration proportionally by character count.
+    total_ms_int = round(duration_ms)
+    result: list[dict[str, Any]] = []
+    cursor = 0
+    n = len(lines)
+    for i, line in enumerate(lines):
+        if i == n - 1:
+            end_ms = total_ms_int  # Last line takes the exact remainder.
+        else:
+            end_ms = cursor + round(len(line) / total_chars * total_ms_int)
+        result.append({"text": line, "start_ms": cursor, "end_ms": end_ms})
+        cursor = end_ms
+
+    return result
+
+
 # ── Story 2-21: neutral, schema-valid defaults for degrade-not-drop ───────────
 # A segment WITH slides is never discarded for a missing economy output (an LLM
 # refusal returned []); these backfill the missing part so its succeeded work
@@ -5305,16 +5397,27 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # segment — `_estimate_slide_timestamps` only falls back to the
         # word-count guess when it's None (browser fallback / tinytag parse
         # failure), exactly as before this story.
+        _segment_script = narration.get("script") or ""
+        _segment_duration_ms = duration_ms_by_id.get(segment_id)
         narration = {
             **narration,
+            # Slide-level timing (binary search by time, segment-end quiz trigger).
             "timestamps": _estimate_slide_timestamps(
                 slides_with_images,
                 # `or ""` guards a present-but-None script value (not just a
                 # missing key), keeping the empty-script -> default fallback.
-                narration.get("script") or "",
+                _segment_script,
                 words_per_minute=settings.narration_words_per_minute,
                 default_ms_per_slide=settings.default_ms_per_slide,
-                known_duration_ms=duration_ms_by_id.get(segment_id),
+                known_duration_ms=_segment_duration_ms,
+            ),
+            # Line-level timing (caption sync + karaoke highlight). Story 4-29
+            # (BR-6). Returns [] when duration is unknown (browser fallback /
+            # tinytag failure) — explicit empty, not a word-count estimate.
+            "caption_lines": _split_into_caption_lines(
+                _segment_script,
+                _segment_duration_ms,
+                max_chars_per_line=getattr(settings, "caption_max_chars_per_line", 120),
             ),
         }
 
