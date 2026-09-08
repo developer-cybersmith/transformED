@@ -845,7 +845,7 @@ Every node must:
     (1239 baseline + these 6 net-new), zero regressions. **Not yet re-verified live** — the
     2026-08-21 live confirmation above was captured PRE-fix; whether the flag lands correctly on
     a real run is unit/mock-level verified only. See `docs/DEFECT-REGISTER.md` and
-    `RUN-FINDINGS-LOG.md` for full detail.
+    `docs/fixes/RUN-FINDINGS-LOG.md` for full detail.
   - **D130 FIXED 2026-08-21 — the real reason the S3-1 live run above took 6+ hours without
     finishing.** All 20 fixtures fell through chapter detection to the "whole document is one
     chapter" fallback — for the 4 "long" fixtures (100/150/250/400 pages) that meant one chapter
@@ -869,7 +869,7 @@ Every node must:
     separate, unrelated, already-identified reason: a real `slide_generator`/segment_id mismatch
     bug (`graph.py:2083`), first surfaced because this is the first time these 4 specific
     fixtures have ever run live at all. Not caused by D130 — none of the 4 failing fixtures were
-    touched by that fix. See `docs/DEFECT-REGISTER.md` and `RUN-FINDINGS-LOG.md` for full detail
+    touched by that fix. See `docs/DEFECT-REGISTER.md` and `docs/fixes/RUN-FINDINGS-LOG.md` for full detail
     including the per-PDF cost/time table.
   - **D132 FIXED 2026-08-24 — the actual dominant cost, found live-verifying D130: slide images
     generated one at a time, 86-95% of every lesson's total time (6/6 real lessons measured via
@@ -881,7 +881,7 @@ Every node must:
     holding), fixed with `asyncio.to_thread`, RED-GREEN verified directly. 4 new tests, full
     regression **1254 passed, 9 skipped** (1250 baseline + these 4), zero regressions.
     Deliberately did NOT add a Redis-Lua atomic cost-reservation system after directly confirming
-    `accumulate_cost()` already uses atomic `INCRBYFLOAT` — documented in `D132-FIX-TRACKER.md`.
+    `accumulate_cost()` already uses atomic `INCRBYFLOAT` — documented in `docs/fixes/D132-FIX-TRACKER.md`.
     **LIVE-VERIFIED 2026-08-24 — real speedup confirmed against real AI providers.** Same
     `short_1page` fixture with a precise pre-fix baseline on record: **395.0s -> 168.7s total
     (2.3x), $0.38.** Mechanism confirmed via the real Langfuse trace, not just the headline
@@ -905,7 +905,7 @@ Every node must:
     3.0min/$0.44, `image_heavy_grid` 1.5min/$0.18). The retry fired live on real production data,
     not just mocks — confirmed via a matching real Langfuse trace (two back-to-back slide-deck
     completion calls inside `slide_generator_node`'s span). D133 is now fully closed end to end;
-    see `D133-FIX-TRACKER.md`.
+    see `docs/fixes/D133-FIX-TRACKER.md`.
 
 - [ ] **S3-2 Prompt iteration from eval results**
   - `apps/api/app/modules/content/pipeline/nodes/` — prompt strings only
