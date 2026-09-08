@@ -330,10 +330,13 @@ def _build_checks() -> dict[str, object]:
             "learner_tier",
         ),
         # ── Bug Resolution — Feature Sprint 2 ────────────────────────────────────
-        # BR-1: progressive caption-cue delivery timed to actual narration position.
-        "br1_caption_cue_delivery": lambda: any_file_contains(
-            "apps/api/app/**/*.py",
-            "caption_cue",
+        # BR-1: generation_progress Redis pub/sub -> WebSocket forwarding transport
+        # (scope corrected 2026-08-29 — was never a "caption_cue" string; closes the
+        # Dev-4 transport half of W-D13).
+        "br1_caption_cue_delivery": lambda: file_contains(
+            ("apps", "api", "app", "core", "pubsub.py"),
+            "_run_generation_progress_subscriber",
+            "start_generation_progress_listener",
         ),
         # BR-2: CES/intervention timing verified against variable-length narration —
         # detected by a dedicated test module, not production code (this is a verification task).
@@ -528,7 +531,7 @@ TASK_LABELS: dict[str, str] = {
     "learner_tier_runtime": "Session runtime reads tier; sets Q&A phase length",
     "learner_qa_phase_length": "Q&A phase length per tier enforced in state machine",
     "learner_ws_tier": "Learner tier included in WebSocket session-start message",
-    "br1_caption_cue_delivery": "Progressive caption-cue delivery for live narration",
+    "br1_caption_cue_delivery": "generation_progress pub/sub -> WebSocket transport (W-D13)",
     "br2_ces_timing_variable_narration": "CES/intervention timing verified vs variable-length narration",
     "br3_voice_teachback_stt": "Voice teach-back real-time mic capture (blocked on Dev 3 STT)",
     "br4_turnstile_verification": "Backend Cloudflare Turnstile verification",

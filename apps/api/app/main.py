@@ -97,11 +97,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await asyncio.to_thread(assert_required_buckets, sb)
 
     # lesson_ready pub/sub listener (bridges ARQ worker -> WebSocket clients)
-    from app.core.pubsub import start_lesson_ready_listener
+    from app.core.pubsub import start_generation_progress_listener, start_lesson_ready_listener
     from app.core.websocket import manager as ws_manager
 
     _pubsub_task = await start_lesson_ready_listener(ws_manager)
     logger.info("lesson_ready pub/sub listener started")
+
+    # generation_progress pub/sub listener (Story BR-1 — transport half of W-D13;
+    # no publisher exists yet, this just makes the channel deliverable once one does)
+    _generation_progress_task = await start_generation_progress_listener(ws_manager)
+    logger.info("generation_progress pub/sub listener started")
 
     # Langfuse — initialise singleton so the first trace isn't delayed
     get_langfuse()
@@ -122,13 +127,20 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("Shutting down HIE API...")
 
-    # Cancel pub/sub listener before closing the shared Redis pool
+    # Cancel pub/sub listeners before closing the shared Redis pool
     _pubsub_task.cancel()
     try:
         await _pubsub_task
     except asyncio.CancelledError:
         pass
     logger.info("lesson_ready pub/sub listener stopped")
+
+    _generation_progress_task.cancel()
+    try:
+        await _generation_progress_task
+    except asyncio.CancelledError:
+        pass
+    logger.info("generation_progress pub/sub listener stopped")
 
     if hasattr(app.state, "arq_redis"):
         await app.state.arq_redis.close()
