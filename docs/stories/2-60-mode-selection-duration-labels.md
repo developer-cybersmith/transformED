@@ -1,6 +1,6 @@
 ---
 title: "Story 2-60 — Mode-Selection Cards: Explicit Duration Labels (BR-2)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -62,7 +62,21 @@ own already-fixed `_TIER_MINUTES`, not computed from anything that could grow un
 
 ### Completion Notes
 
-(filled in during implementation)
+- **AC1-DONE.** `durationMinutes` added to `LearnerTierOption`; `deep: 45, balanced: 30,
+  refresher: 15` — copied directly from `_TIER_MINUTES`/`LEARNER_TIER_TO_BACKEND`, not re-derived.
+- **AC2/AC3 — DONE.** New small pill badge next to `option.label` reading `"{durationMinutes} min"`
+  (`ModeSelection.tsx`) — the existing `<h4>{option.label}</h4>` is untouched, just wrapped in a
+  flex row alongside the new badge.
+- **AC4 — DONE.** 3 new tests, each asserting its own card shows the correct duration AND does not
+  show either of the other two tiers' durations (guards against a copy-paste mixup, not just "a
+  number appears somewhere").
+- **AC5 — DONE.** `tsc --noEmit` clean, targeted `eslint` clean. Full frontend suite: 93 files /
+  1149 tests, zero regressions (one flaky, order-dependent failure in an unrelated file
+  `instrumentation-client.test.ts` was seen once, confirmed NOT caused by this change — passed in
+  isolation on the pre-change code via `git stash`, and the full suite re-run afterward was
+  100% green including that same file).
+- All 11 pre-existing `ModeSelection.test.tsx` tests pass unmodified — `option.label` text
+  assertions were never touched, confirming the duration badge is additive, not a replacement.
 
 ### File List
 
