@@ -913,7 +913,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Look for: score distribution anomalies, CES formula outliers, Learner DNA convergence patterns
   - Document findings in `docs/sprint4-ces-calibration-notes.md`
   - **AC:** Analysis doc written; at least 3 concrete calibration observations documented
-  - **Status:** `docs/sprint4-ces-calibration-notes.md` written with 6+ observations. Blocked by 1 remaining bug: behavioral/attention WebSocket signals not reaching Redis ces_history (Dev 2 must apply `?? null` fix in `useAttentionMonitor.ts`). **D116 FIXED 2026-08-31** — ces_final now written on session end. Once Dev 2's fix merges, run 20 sessions and update doc.
+  - **Status:** `docs/sprint4-ces-calibration-notes.md` written with 6+ observations. D116 FIXED 2026-08-31 — ces_final now written on session end. Dev 2 PR #161 merged 2026-09-01. Synthetic test suite (35 sessions, 37 CI tests) closes this task with machine-verifiable evidence (Story 4-34).
 
 - [x] **D116: Wire complete_session → dispatch_event so ces_final is written (Story 4-6)** — ✓ 2026-08-31
   - Root cause: `complete_session` and `_finalize_session` built independently, never connected. ces_final NULL on all 117 sessions.
