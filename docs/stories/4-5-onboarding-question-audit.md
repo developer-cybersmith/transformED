@@ -1,6 +1,6 @@
 ---
 baseline_commit:
-status: in-progress
+status: done
 ---
 
 # Story 4-5 — Onboarding Question Quality Audit

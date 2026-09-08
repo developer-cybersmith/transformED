@@ -140,6 +140,28 @@ All five routes are reachable under `/api/assessment/...`.
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One HTTP request per stub endpoint. All five routes raise `HTTP 501 NOT_IMPLEMENTED` immediately with no business logic. Range: constant — every request takes the same path regardless of payload size.
+
+**Q2 — Fixed budgets vs variable input**
+No variable budgets — all endpoints raise before any processing. Pydantic validates request bodies (rejects malformed inputs with 422 before reaching the stub), but no processing budget is consumed.
+
+**Q3 — Scope of limits**
+N/A — no processing limits apply. Pydantic validation is per-request, no shared state.
+
+**Q4 — Unbounded reads/writes**
+No Supabase queries. All five routes raise HTTP 501 before any DB access.
+
+**Q5 — Inherited caps**
+N/A — this is a pure stub story. No caps to inherit or re-derive.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — stubs are stateless and idempotent. No shared mutable state is touched.
+
+---
+
 ## Dev Agent Record
 
 ### Agent Model Used
@@ -202,3 +224,4 @@ claude-sonnet-4-6 (retroactive documentation 2026-06-26; original implementation
 | PASS | Assessment router registered in `main.py` under correct prefix | No action required |
 | PASS | All 5 CES weights present in `config.py` at correct PRD values | No action required |
 | PASS | All 5 endpoints return 501 (confirmed by 10 unit tests, all green) | No action required |
+| PASS (Scale & Load Hunter) | Module stub only — Pydantic schemas and 501 stubs, no DB reads/writes, no LLM calls, no Redis. No scale concerns apply. All 6 SCALE-CONTRACT.md questions answered N/A (no runtime I/O). | N/A |

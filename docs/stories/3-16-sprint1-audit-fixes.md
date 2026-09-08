@@ -159,6 +159,28 @@ The fix: replace the 3-char sequence with a literal `—` (U+2014). Two occurren
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+This is a bug-fix and hardening story — no new endpoints or data volumes introduced. Changes are: one encoding fix in a static constant, one log sanitization pattern, one docstring correction. No change to query volume or payload sizes.
+
+**Q2 — Fixed budgets vs variable input**
+N/A — no new budgets introduced. The log sanitization (AC 3) applies to an error string which is already bounded by the insert error message from Supabase (typically <1 KB).
+
+**Q3 — Scope of limits**
+N/A — the log sanitization is per-call, stateless.
+
+**Q4 — Unbounded reads/writes**
+No new Supabase queries introduced. All existing queries in `grade_teachback()` were already bounded from prior stories (3-11, 3-12).
+
+**Q5 — Inherited caps**
+N/A — no caps changed. The `max_length=4000` on `response_text` (from Story 3-11) remains the binding input cap.
+
+**Q6 — Concurrent TOCTOU safety**
+N/A — no shared state touched. FIND-002 (log injection) is not a concurrency issue; FIND-003 (docstring) is documentation only.
+
+---
+
 ## Dev Agent Record
 
 ### Completion Notes
@@ -172,3 +194,11 @@ All 3 audit findings resolved. 72 unit tests pass (28 quiz + 44 teachback). 5-ag
 
 ### Change Log
 - 2026-07-02: Story created, Sprint 1 audit technical debt fixes.
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | Bug-fix story only (log sanitization, docstring encoding). No new DB queries, no new LLM calls, no new limits introduced. All 6 SCALE-CONTRACT.md questions are N/A — no new request-path code paths added. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

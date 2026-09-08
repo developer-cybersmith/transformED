@@ -582,11 +582,33 @@ that exactly 9 rows were in the insert payload.
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one `record_dna_growth()` call at session end, inserting up to 9 rows into `session_events` (one per DNA dimension). Always exactly 9 rows when all 9 dimensions are present in `new_dims`; minimum 0 if `new_dims` is empty (first session with no prior values — AC 5 sets `delta = None`). Single batched INSERT (AC 4), not 9 separate calls.
+
+**Q2 — Fixed budgets vs variable input**
+Row count is bounded by the number of DNA dimensions (9, a compile-time constant). The INSERT payload is fixed-size: `session_id`, `event_type="dna_update"`, `payload` JSONB with 4 fields per row. No token budget applies (no LLM call). On DB exception or `.error`, function returns `0` non-fatally (AC 6, AC 7) — the caller is never blocked.
+
+**Q3 — Scope of limits**
+Per-session, per-call. 9 rows per session end. At 1,000 concurrent session ends, this is 9,000 rows/event — well within Postgres bulk-insert throughput. `session_events` table has no per-user row limit beyond the Supabase storage ceiling.
+
+**Q4 — Unbounded reads/writes**
+- **Write**: one batched `INSERT` of up to 9 rows — bounded by DNA dimension count (9).
+- **Read**: none. `new_dims` and `old_dims` come from LangGraph state / in-memory dna_fusion output, not from Supabase.
+No unbounded scans.
+
+**Q5 — Inherited caps**
+Inherits the Supabase row-size limit (6MB) and connection pool limits from `core/db.py`. The `asyncio.to_thread` wrapper means this runs in a threadpool slot; the slot count is bounded by the ARQ worker's thread pool size (default 10 threads in Python's default executor).
+
+**Q6 — Concurrent TOCTOU safety**
+Duplicate growth events for the same `session_id` are possible if `record_dna_growth` is called twice (e.g., ARQ retry). There is no UNIQUE constraint on `(session_id, event_type, payload->dimension)` — duplicate dna_update rows can be inserted. This is explicitly non-fatal observability data (AC 6). Duplicates inflate the growth event count but do not corrupt the learner_dna dimension values (those live in `dna_fusion.py` / `learner_dna` table). Acceptable; no deduplication guard needed for MVP.
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-06
 **Review outcome:** Changes Requested
-**Agents:** Story Quality, Blind Hunter (Security), Test Coverage, AC Completeness, Process Integrity
+**Agents:** Story Quality, Blind Hunter (Security), Test Coverage, AC Completeness, Process Integrity, Scale & Load Hunter
 
 ### Action Items
 
@@ -608,6 +630,8 @@ that exactly 9 rows were in the insert payload.
 - [x] [Review][Defer] R8 — ACs 6/7/8: log level/message not captured in tests. [tests/test_dna_growth.py] — deferred, return value verification sufficient
 
 **Dismissed (noise/non-vulnerabilities):** 3 (JSONB injection, dim key injection, lambda closure race — all confirmed non-issues by Blind Hunter)
+
+**Scale & Load Hunter:** PASS — single batched INSERT of exactly ≤9 rows (bounded by DNA dimension count, a compile-time constant). No Supabase reads. No LLM calls. Duplicate event rows on ARQ retry are non-fatal observability data (AC 6), not data corruption. All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section.
 
 ---
 

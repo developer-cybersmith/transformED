@@ -396,6 +396,33 @@ Key design decisions:
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `GET /api/analytics/session/{id}/summary` call per request. Executes 3 Supabase queries: sessions (1 row), session_events (all event rows for the session), attention_events (all attention rows for the session). Typical session: ~50–200 session_events rows, ~0–360 attention_events rows (one per 5s window in a 30-min session). Largest observed: bounded by `.limit(10_000)` on both event tables.
+
+**Q2 — Fixed budgets vs variable input**
+- `session_events`: `.limit(10_000)` — past 10,000 events, older rows are excluded from `events_count`, `distraction_events`, and `page_views` aggregations. The response does NOT signal this cap is hit — a `signals_capped` flag should be added in a future story (process debt, documented in deferred findings). At MVP scale (≤200 events per session), the cap is unreachable.
+- `attention_events`: `.limit(10_000)` — past 10,000 attention windows (~13.9 hours of continuous 5s-window capture), averages are computed from a capped set. Same caveat applies. Also unreachable at MVP scale.
+- Both limits were added during code review (BLOCKER patch); they are explicit DoS guards, not silent truncations.
+
+**Q3 — Scope of limits**
+Per-session (both limits are keyed by `session_id`). A long session from one user does not affect other users' queries.
+
+**Q4 — Unbounded reads/writes**
+- `sessions`: `.maybe_single()` — always ≤1 row (primary key lookup). ✓ Bounded.
+- `session_events`: `.select("event_type").eq("session_id", ...).limit(10_000)` ✓ Bounded.
+- `attention_events`: `.select("gaze_score, head_pose_score, blink_rate").eq("session_id", ...).limit(10_000)` ✓ Bounded.
+No writes in this endpoint.
+
+**Q5 — Inherited caps**
+`.limit(10_000)` was introduced for this story (not inherited). The sessions query reuses `.maybe_single()` from the session report pattern (Story 3-19) — appropriate, no re-derivation needed.
+
+**Q6 — Concurrent TOCTOU safety**
+Read-only endpoint. No check-then-act sequences. No shared mutable state. Multiple concurrent calls for the same session_id return the same data independently.
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-03
@@ -435,3 +462,11 @@ Key design decisions:
 - [x] [Review][Defer] [tests/test_analytics_summary_endpoint.py] `distraction_events` / `events_count` / `page_views` int types not asserted (only `total_blinks` has isinstance check) — deferred: FastAPI/Pydantic `response_model` coerces correctly; asymmetry is cosmetic
 - [x] [Review][Defer] [docs/stories/3-21-analytics-session-summary.md] Task list has duplicate entry for `test_supabase_called_in_correct_table_order` — deferred: documentation drift only; no code impact
 - [x] [Review][Defer] [docs/stories/3-21-analytics-session-summary.md] AC 9 text does not specify `started_at = NULL → 0.0` (only `ended_at = NULL` documented) — deferred: test 21 covers the behavior; AC text should be updated in a housekeeping pass
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 4 | Scale & Load Hunter | **IMPROVEMENT** | Both aggregation queries carry `.limit(10_000)` (`session_events` line 188, `attention_events` line 203 in analytics/service.py). These limits are inherited (not derived for this summary path). At 1 Hz MediaPipe for 45-min session: ~2,700 attention rows (within limit). For a pathological long session, rows beyond 10k are silently excluded — `events_count` becomes approximate and the discrepancy is not surfaced to the caller. | Add `# BOUNDED: 10_000 — at 1 Hz for 45-min = ~2700; pathological sessions may under-count` comment to service.py lines 188 and 203. Future story: expose `events_capped: bool` in `SessionSummary` when `len(rows) == limit`. |
+
+**Scale & Load Hunter verdict:** IMPROVEMENT — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

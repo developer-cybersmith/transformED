@@ -38,6 +38,60 @@ _COST_PER_1K: dict[str, dict[str, float]] = {
 }
 
 
+def _price_tokens(
+    model: str, input_tokens: int | None, output_tokens: int | None
+) -> tuple[float, float, float]:
+    """Return (input_cost, output_cost, total_cost) in USD for one completion.
+
+    Extracted from `_maybe_accumulate_cost` (Story 4-28) so a caller that
+    needs a bare cost figure — with no lesson_id, no accumulation side
+    effect, no $3.00 ceiling check (tutor Q&A's `complete_with_meta`) — gets
+    the exact same fail-closed pricing/clamping behavior as the
+    lesson-generation path, not a second, potentially-drifting copy of it.
+    Story 2-33's fail-closed contract is preserved verbatim: an unpriced
+    model is charged at the most expensive KNOWN rate, never skipped.
+    """
+    pricing = _COST_PER_1K.get(model)
+    if pricing is None:
+        # Fail CLOSED — see _maybe_accumulate_cost's own docstring for why
+        # (Story 2-33: an early return here let an unpriced model spend
+        # without limit).
+        pricing = {
+            "input": max(p["input"] for p in _COST_PER_1K.values()),
+            "output": max(p["output"] for p in _COST_PER_1K.values()),
+        }
+        logger.error(
+            "No pricing data for model %r — charging at the most expensive known rate "
+            "($%.6f/1k in, $%.6f/1k out).",
+            model,
+            pricing["input"],
+            pricing["output"],
+        )
+
+    safe_input = max(0, input_tokens or 0)
+    safe_output = max(0, output_tokens or 0)
+    if (input_tokens or 0) < 0 or (output_tokens or 0) < 0:
+        logger.error(
+            "Negative token counts from model %r (in=%s, out=%s) — clamped to 0. "
+            "The resulting cost is now an UNDER-estimate.",
+            model,
+            input_tokens,
+            output_tokens,
+        )
+    elif input_tokens is None or output_tokens is None:
+        logger.warning(
+            "Missing token counts from model %r (in=%s, out=%s) — charging the known half "
+            "only. The resulting cost is an under-estimate.",
+            model,
+            input_tokens,
+            output_tokens,
+        )
+
+    input_cost = safe_input / 1000 * pricing["input"]
+    output_cost = safe_output / 1000 * pricing["output"]
+    return input_cost, output_cost, input_cost + output_cost
+
+
 def _safe_trace(call: Callable[[], Any]) -> Any | None:  # noqa: ANN401
     """Run a Langfuse tracing call; observability failures must NEVER fail the pipeline."""
     try:
@@ -96,6 +150,63 @@ class OpenAILLMProvider(LLMProvider):
         return await guard_breaker(
             _PROVIDER_KEY, lambda: self._complete_inner(messages, model, **kwargs)
         )
+
+    async def complete_with_meta(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> tuple[str, str | None, float]:
+        """Return (content, finish_reason, cost_usd) — additive, Story 4-28.
+
+        `complete()` above is completely unchanged and remains every existing
+        pipeline node's call path (lesson planner, slide generator, etc.) —
+        this is a NEW, separate public method, used only by tutor Q&A
+        (`assessment/service.py::answer_tutor_question`), which needs
+        `finish_reason` (so a `max_tokens`-truncated answer is visible on the
+        record, not indistinguishable from a complete one — Story 4-28 Scale
+        & Load Q2) and a per-call `cost_usd` that does NOT depend on
+        `self._lesson_id` (Q&A is priced per question, never accumulated
+        against any lesson's $3.00 generation ceiling — a different unit of
+        work, see that story's Dev Notes).
+
+        Deliberately NOT merged into `_complete_inner`/`complete()`'s own
+        retry+breaker+tracing scaffolding to avoid any risk to the
+        heavily-used existing path — some duplication here is the safer
+        trade against destabilizing every pipeline node's completion call.
+        """
+        return await guard_breaker(
+            _PROVIDER_KEY, lambda: self._complete_inner_with_meta(messages, model, **kwargs)
+        )
+
+    @with_retry(max_attempts=3)
+    async def _complete_inner_with_meta(
+        self,
+        messages: list[dict[str, str]],
+        model: str,
+        **kwargs: Any,  # noqa: ANN401
+    ) -> tuple[str, str | None, float]:
+        """Retried body of `complete_with_meta`. Records NO breaker outcome — see AC-3."""
+        if await is_circuit_open(_PROVIDER_KEY):
+            raise CircuitOpenError(
+                f"Circuit breaker OPEN for provider '{_PROVIDER_KEY}' — call rejected"
+            )
+
+        response: ChatCompletion = await self._client.chat.completions.create(
+            model=model,
+            messages=messages,  # type: ignore[arg-type]
+            **kwargs,
+        )
+        choice = response.choices[0]
+        content = choice.message.content or ""
+        finish_reason = choice.finish_reason
+
+        usage = response.usage
+        prompt_tokens = usage.prompt_tokens if usage else None
+        completion_tokens = usage.completion_tokens if usage else None
+        _input_cost, _output_cost, cost = _price_tokens(model, prompt_tokens, completion_tokens)
+
+        return content, finish_reason, cost
 
     @with_retry(max_attempts=3)
     async def _complete_inner(
@@ -294,31 +405,6 @@ class OpenAILLMProvider(LLMProvider):
         if self._lesson_id is None:
             return
 
-        pricing = _COST_PER_1K.get(model)
-        if pricing is None:
-            # Fail CLOSED. Over-charging an unpriced model is the safe
-            # direction: it makes the ceiling fire earlier, never later.
-            #
-            # Derived from the table rather than hardcoded — a literal would
-            # silently stop being conservative the day a pricier model is added.
-            #
-            # ERROR, not WARNING: main.py wires Sentry's default
-            # LoggingIntegration(event_level=ERROR), and an unpriced model in
-            # production is an operational defect that must surface. The old
-            # WARNING is precisely why this went unnoticed.
-            pricing = {
-                "input": max(p["input"] for p in _COST_PER_1K.values()),
-                "output": max(p["output"] for p in _COST_PER_1K.values()),
-            }
-            logger.error(
-                "No pricing data for model %r — charging at the most expensive known rate "
-                "($%.6f/1k in, $%.6f/1k out) so the $3.00 lesson ceiling still applies. "
-                "Add this model to _COST_PER_1K.",
-                model,
-                pricing["input"],
-                pricing["output"],
-            )
-
         # Review round 2, D17: token counts must never be trusted to be usable
         # ints. `usage.prompt_tokens` is typed `int` by the OpenAI SDK, but
         # CLAUDE.md mandates that swapping models is an env var change only, and
@@ -330,31 +416,9 @@ class OpenAILLMProvider(LLMProvider):
         # The completion has already been made and BILLED by the provider.
         # Throwing over missing billing metadata would make ARQ re-run and
         # re-pay for the node — turning a reporting gap into real money.
-        safe_input = max(0, input_tokens or 0)
-        safe_output = max(0, output_tokens or 0)
-        if (input_tokens or 0) < 0 or (output_tokens or 0) < 0:
-            # Clamped at the SOURCE deliberately: `accumulate_cost` raises
-            # ValueError on a negative cost, which `with_retry` cannot classify,
-            # so a nonsensical count would kill the node two layers down.
-            logger.error(
-                "Negative token counts from model %r (in=%s, out=%s) — clamped to 0. "
-                "The lesson total is now an UNDER-estimate, so the ceiling may fire late.",
-                model,
-                input_tokens,
-                output_tokens,
-            )
-        elif input_tokens is None or output_tokens is None:
-            logger.warning(
-                "Missing token counts from model %r (in=%s, out=%s) — charging the known half "
-                "only. The lesson total is an under-estimate.",
-                model,
-                input_tokens,
-                output_tokens,
-            )
-
-        input_cost = safe_input / 1000 * pricing["input"]
-        output_cost = safe_output / 1000 * pricing["output"]
-        cost = input_cost + output_cost
+        # Pricing/clamping logic lives in `_price_tokens` (Story 4-28 extraction) —
+        # this call site is now identical in behavior to before the extraction.
+        input_cost, output_cost, cost = _price_tokens(model, input_tokens, output_tokens)
 
         # S3-5: mirror usage_details' input/output split onto Langfuse's own
         # cost_details field, the same field the other 4 priced providers

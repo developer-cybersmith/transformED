@@ -225,6 +225,31 @@ All 19 ACs satisfied. 13 unit tests, all passing (expanded from 6 after first BM
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One `capture_event()` call per assessment action (quiz submit, teachback submit, onboarding complete, session report view, DNA view). Each call is synchronous fire-and-forget — the PostHog SDK queues internally in a background thread. One additional `get_analytics_consent()` Supabase read per call site (reads `users.analytics_consent`). Range: 1 PostHog call per user action; no batching, no fan-out.
+
+**Q2 — Fixed budgets vs variable input**
+- PostHog event properties are flat dicts with ≤7 scalar fields — no variable-length arrays or user-controlled strings (raw `response_text` is explicitly excluded per AC 5). No budget exceeded.
+- `posthog.capture()` is non-blocking (background queue). SDK queue depth is not surfaced; if the queue fills (network outage lasting hours), events are dropped silently. This is acceptable for analytics (not billing-critical). Documented as DEFER-002.
+- No token budget or cost ceiling: PostHog calls are not LLM calls.
+
+**Q3 — Scope of limits**
+Per-user (`distinct_id = user_id`). No shared rate limit between users. PostHog server-side ingestion rate limits apply per project API key — not per user, per instance.
+
+**Q4 — Unbounded reads/writes**
+- `get_analytics_consent()`: `supabase.table("users").select("analytics_consent").eq("id", user_id).maybe_single()` — always ≤1 row (primary key). ✓ Bounded.
+- No other Supabase reads or writes in the PostHog integration path.
+
+**Q5 — Inherited caps**
+N/A — `posthog>=3.0.0` dependency and `posthog_client.py` are new in this story. No caps inherited from a prior design.
+
+**Q6 — Concurrent TOCTOU safety**
+`capture_event()` is stateless (no check-then-act). Multiple concurrent PostHog calls from the same user (e.g., rapid quiz submissions) are independent and do not interfere. The `analytics_consent` read is a pure read; consent changes by a concurrent request do not cause inconsistency (worst case: one event fires without consent — a negligible window, not a billing or security risk).
+
+---
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-03
@@ -282,3 +307,11 @@ All 19 ACs satisfied. 13 unit tests, all passing (expanded from 6 after first BM
 - [Re-Review][Defer] TOCTOU race: consent checked after business logic in router handlers — theoretical, narrow window, MVP risk negligible; addressable in DPDP compliance story
 - [Re-Review][Defer] AC 12 import-time init test — requires module reload; complexity outweighs value at MVP stage
 - [Re-Review][Defer] AC 1/19 CI gate items — inherently process gates, not unit-testable
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 6 | Scale & Load Hunter | **PASS** | PostHog `capture_event()` is fire-and-forget (non-blocking). Event payload is a fixed-schema dict (assessment data only — bounded by what endpoints produce). PostHog client batches internally with its own retry. No DB reads in this story's scope. No check-then-act. Q4–Q6 all N/A. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

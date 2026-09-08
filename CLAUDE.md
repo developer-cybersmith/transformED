@@ -15,12 +15,12 @@
 | DB | **Supabase Postgres + pgvector + JSONB** | |
 | Storage | **Supabase Storage** | S3-compatible + CDN |
 | Auth | **Supabase Auth + PyJWT local verify** | No remote auth call per request |
-| Cache/Queue/PubSub | **Railway Redis** | |
+| Cache/Queue/PubSub | **Upstash Redis** | Moved off Railway with the Fly.io migration (2026-08-14, D165) — same instance backs `REDIS_URL` and `RATE_LIMIT_STORAGE_URL`. |
 | AI orchestration | **LangGraph** (pin exact version — never auto-upgrade) | |
 | LangGraph checkpointing | **Custom lesson_jobs table + MemorySaver** | PostgresSaver BANNED |
 | Primary LLM | **OpenAI GPT-4o + GPT-4o-mini** (defaults — see model table) | Per-task allocation below |
 | Alt LLM | **Claude Sonnet** (Phase 2 tutor Q&A, evaluation candidate) | |
-| TTS | **Sarvam AI Bulbul v2 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. |
+| TTS | **Sarvam AI Bulbul v3 → Azure TTS → Browser Speech** | Fallback chain. ElevenLabs REMOVED. Was v2 until D148 (2026-09-04) — Sarvam deprecated v2 server-side. |
 | Avatar | **No active vendor (D144, 2026-09-02)** | HeyGen was never wired into the pipeline (no node ever called it) — removed as dead code, not replaced. `LessonPackage.avatar_intro_url/avatar_static_url/avatar_outro_url` remain (nullable, vendor-agnostic) for a future implementation. |
 | Image | **Gemini "Nano Banana" → GPT Image 2 → text-only** | DALL-E 3 DEAD (shut down May 2026). GPT Image 1 Mini migrated to GPT Image 2 2026-08-18 (D122) — 1 Mini itself retires 2026-12-01. **Imagen 4 Fast was DEAD as of 2026-08-17 (D121, FIXED-GUARDED) — replaced, not patched: Gemini 2.5/3.1 Flash Image ("Nano Banana") is now PRIMARY (Story 5-8b), GPT Image 2 is FALLBACK, `ImagenProvider` deleted.** Nano Banana costs more per image (~$0.067 vs GPT Image 2's ~$0.05) — a deliberate quality-over-cost choice, not an oversight. |
 | Embeddings | **text-embedding-3-small** | Chunk content: embed at ingestion only, never regenerate. Phase 2 RAG tutor embeds student questions at query time — this is permitted. |
@@ -31,7 +31,7 @@
 | Video delivery | **Bunny Stream** — avatar clips (live) + compiled revision-mode lesson video (DECIDED 2026-07-28, not yet designed or implemented) | Revision/re-watch ONLY, never first watch. No video/ffmpeg code exists yet. Must be re-costed against the $3.00/lesson ceiling and kept off the ARQ critical path — see `docs/decisionupdate.md` §7b before implementing. |
 | Realtime | **Native FastAPI WebSockets** | |
 | Observability | **Langfuse + Sentry + OTel + PostHog** | Wire before feature work |
-| Deploy | **Railway + GitHub Actions** | railway.toml |
+| Deploy | **Fly.io (`hie-api`, Mumbai/`bom`) + GitHub Actions** | `fly.toml`. Railway retired 2026-08-14 (D165) — `railway.toml` removed same day. One Fly app, two process groups (`api`, `worker`) sharing `apps/api/Dockerfile`; see ADR-001 for why they stay one app, not two. **Known residual gap: D145** — the live region list has been observed drifted to `sin` (Singapore), not `bom`, independent of `fly.toml`'s stated intent; registered, not fixed. |
 
 ## Per-Task Model Allocation
 
@@ -76,7 +76,7 @@ transformED-corp/
 │       └── lesson_package.schema.json
 ├── supabase/
 │   └── migrations/             # Never modify applied migrations
-└── .github/workflows/          # CI (lint+test) + deploy to Railway
+└── .github/workflows/          # CI (lint+test) + deploy to Fly.io
 ```
 
 ## Core Architectural Principles (from PRD §5)
@@ -177,7 +177,7 @@ CES = quiz_accuracy×0.467 + behavioral×0.267 + head_pose×0.160 + blink×0.107
 - Retry on: 429, 500, 502, 503, 504. Never retry: 400, 401
 - Circuit breaker: 5 failures/2min → open; 10min → half-open probe (state in Redis)
 - Cost ceiling: $3.00/lesson — downshift to cheapest providers on breach, complete lesson, flag in admin
-- TTS fallback chain: Sarvam Bulbul v2 → Azure TTS → Browser Speech — NEVER hard-fails
+- TTS fallback chain: Sarvam Bulbul v3 → Azure TTS → Browser Speech — NEVER hard-fails
 
 ## Interface Contracts (frozen Week 1, §16)
 
@@ -219,12 +219,12 @@ Applied and frozen migrations (do not alter):
 - No clinical scores shown to students — descriptive profile only
 - Never gate lesson progress on teach-back score in MVP
 - No teach-back timer — creates test anxiety
-- No STT in MVP — typed teach-back only
+- No STT on the typed teach-back endpoint (`POST /assessment/teachback`) — `TeachbackSubmission` never carries a `transcript` field. Voice submissions use the dedicated audio endpoint `POST /assessment/teachback/{session_id}/{segment_id}/audio` (Story F2-4, lifted 2026-09-04).
 - Chunk embeddings at ingestion only — never regenerate stored chunk embeddings. Phase 2 RAG tutor query-embedding IS allowed (embed the student question at query time).
 - **Advisory CI bucket is NOT ambient noise.** CI runs two test buckets: gating (`tests/unit`, `tests/integration`) which blocks merge, and advisory (`continue-on-error: true`) which does not. A green checkmark does NOT mean the advisory bucket is clean. Before requesting review on any PR, pull the full CI run log and categorise every FAILED line: "was this failing on main before my branch?" If yes, note it in the PR description. If no, it is YOUR regression — fix it before review. Guard tests (`test_dunder_all_*`, `test_no_hardcoded_*`, `test_node_return_shape`, `test_unbounded_queries`) are ALWAYS your responsibility if your PR trips them: they enforce architectural invariants that protect the whole repo, not just the code you touched.
 - **Guard-test check before touching any module.** When implementing any story that modifies an existing module, run `grep -rn "test_.*<module_name>\|test_no_hardcoded\|test_dunder_all" apps/api/tests/` before writing code. List the guard tests that reference that module. Run them locally before every push: `pytest tests/test_ces.py tests/unit/test_node_return_shape.py tests/unit/test_unbounded_queries.py -v`. If you intentionally need to extend a guard's allowlist (e.g., adding a public function to `__all__`), update the guard test in the same commit with a comment explaining why. Silent allowlist expansion is a process violation — it recreates the ratchet that spread `return {**state, ...}` from 1 site to 18.
 - **When adding to `__all__` or adding float literals in a guarded module, the story AC list must explicitly include "existing guard tests for `<module>` pass."** A story that touches `ces.py`, `dna_fusion.py`, or any pipeline node file is incomplete if it does not name those modules' guard tests as acceptance criteria. The Story Quality agent should reject any story for a guarded module that omits this AC.
-- API deployed on Railway (no India region) — must migrate FastAPI/ARQ to India-region provider before Sprint 3 real-student launch (Fly.io Mumbai, Render Singapore, or AWS ap-south-1). **Topology is decided — read `docs/decisions/ADR-001-india-region-migration-topology.md` before designing this.** Settled there: Langfuse is Cloud and is NOT a service to deploy; API and worker stay separate processes (job timeout 1800s vs a web request lifecycle); Redis must move in the SAME change or the migration is a latency regression. Provider choice is still open.
+- **India-region migration DONE (2026-08-14, D165)** — API/ARQ moved off Railway to Fly.io (`bom`/Mumbai per `fly.toml`), Redis moved to Upstash in the same change. Topology: read `docs/decisions/ADR-001-india-region-migration-topology.md` for the reasoning (Langfuse is Cloud, not a deployed service; API and worker stay separate processes — job timeout 1800s vs a web request lifecycle). **Residual gap: D145** — the live region list has been observed as `sin` (Singapore), not `bom`, despite `fly.toml`'s stated intent; registered, not fixed, treat as an open DPDP/data-residency compliance item, not a closed migration.
 
 ## Defect Register — READ BEFORE FIXING ANYTHING
 
@@ -297,7 +297,7 @@ The Scale & Load agent is the one that would have caught a green-merged Sprint 1
 - **Week 1 (Sprint 0):** Infra setup + shared contracts frozen (THIS SPRINT)
 - **Weeks 2–3 (Sprint 1):** Core pipeline + player skeleton
 - **Weeks 4–5 (Sprint 2):** Full 11-node pipeline + integration → investor demo ready
-- **Weeks 6–7 (Sprint 3):** MediaPipe + CES + full tutor state machine — **prerequisite:** migrate FastAPI/ARQ from Railway to India-region provider before real students join
+- **Weeks 6–7 (Sprint 3):** MediaPipe + CES + full tutor state machine — **prerequisite:** migrate FastAPI/ARQ from Railway to India-region provider before real students join — **done 2026-08-14, Fly.io (D165); D145's region-list drift is the one open follow-up**
 - **Weeks 8–9 (Sprint 4):** Load test + calibration + Razorpay + hardening
 - **Week 10:** Launch — first paying student
 

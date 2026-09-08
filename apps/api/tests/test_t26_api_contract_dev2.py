@@ -12,12 +12,13 @@ All tests: @pytest.mark.unit — no real Supabase, Redis, or LLM connections req
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
 from starlette.testclient import TestClient
 
+from app.core.redis import get_redis
 from app.dependencies import get_current_user, get_settings
 from app.modules.assessment.router import router
 from app.modules.assessment.schemas import QuizResult, TeachbackResult
@@ -61,22 +62,31 @@ def _denied_settings() -> MagicMock:
 # _client         — sessions + quiz (CurrentUser, approved settings harmless)
 # _approved_client — teachback happy path (approved email)
 # _denied_client   — teachback 403 path (non-approved email)
+#
+# D163: create_session_endpoint takes `redis: Annotated[Redis, Depends(get_redis)]`
+# (Story 4-13's seed_personalized_ces_threshold needs one) -- none of these bare
+# apps run the real app's lifespan (init_redis() is never called), so the real
+# get_redis() raises "Redis pool is not initialised" for every request through
+# this router. Matches test_session_create_endpoint.py's own established fix.
 
 _app = FastAPI()
 _app.dependency_overrides[get_current_user] = _fake_user
 _app.dependency_overrides[get_settings] = _approved_settings
+_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _app.include_router(router, prefix="/api/assessment")
 _client = TestClient(_app, raise_server_exceptions=False)
 
 _approved_app = FastAPI()
 _approved_app.dependency_overrides[get_current_user] = _fake_user
 _approved_app.dependency_overrides[get_settings] = _approved_settings
+_approved_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _approved_app.include_router(router, prefix="/api/assessment")
 _approved_client = TestClient(_approved_app, raise_server_exceptions=False)
 
 _denied_app = FastAPI()
 _denied_app.dependency_overrides[get_current_user] = _non_approved_user
 _denied_app.dependency_overrides[get_settings] = _denied_settings
+_denied_app.dependency_overrides[get_redis] = lambda: AsyncMock()
 _denied_app.include_router(router, prefix="/api/assessment")
 _denied_client = TestClient(_denied_app, raise_server_exceptions=False)
 
@@ -386,21 +396,21 @@ def test_teachback_too_long_response_text_returns_422() -> None:
 
 @pytest.mark.unit
 def test_teachback_transcript_field_silently_ignored(monkeypatch) -> None:
-    """AC4: transcript field in body → 200, silently discarded (not 422).
+    """AC4: transcript field in typed-submit body → 200, silently discarded (not 422).
 
-    STT is permanently banned (CLAUDE.md). transcript is not in TeachbackSubmission.
-    Pydantic extra='ignore' discards it before the handler runs.
-    Dev 2 will NOT get a 422 if transcript is accidentally included.
+    Voice STT uses the dedicated audio endpoint (F2-4). The typed-submit path
+    (TeachbackSubmission) never carries transcript. Pydantic extra='ignore' silently
+    discards any extra field, so Dev 2 sending transcript accidentally gets 200, not 422.
     The transcript value is NOT passed to grade_teachback (service-call invariant).
     """
 
     async def _fake_grade_teachback(**kwargs):
-        # AC4 service-call invariant: Pydantic must strip transcript before the handler
-        # forwards kwargs to grade_teachback. If this assertion fires, the schema was
-        # accidentally widened to include transcript and is plumbing it to the scorer.
+        # AC4 service-call invariant: Pydantic strips transcript before the handler
+        # forwards kwargs to grade_teachback. If this assertion fires, the typed-submit
+        # schema was accidentally widened to include transcript.
         assert "transcript" not in kwargs, (
-            "AC4 violation: transcript reached grade_teachback kwargs. "
-            "TeachbackSubmission must never accept transcript — STT is permanently banned."
+            "AC4 violation: transcript reached grade_teachback kwargs from typed submit. "
+            "TeachbackSubmission must never plumb transcript — audio endpoint handles STT (F2-4)."
         )
         return TeachbackResult(
             session_id="sess-001",

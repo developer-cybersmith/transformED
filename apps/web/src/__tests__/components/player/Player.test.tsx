@@ -308,6 +308,33 @@ describe('Player — tier badge (S2-10)', () => {
   });
 });
 
+describe('Player — Dashboard link', () => {
+  it('links back to /dashboard while the lesson is active', () => {
+    usePlayerStore.setState({ status: 'PLAYING' });
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    const link = screen.getByRole('link', { name: /dashboard/i });
+    expect(link.getAttribute('href')).toBe('/dashboard');
+  });
+
+  it('is present while IDLE, PAUSED, QUIZ, and TEACH_BACK, not just PLAYING', () => {
+    for (const status of ['IDLE', 'PAUSED', 'QUIZ', 'TEACH_BACK'] as const) {
+      usePlayerStore.setState({ status });
+      const { unmount } = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+      expect(screen.getByRole('link', { name: /dashboard/i })).not.toBeNull();
+      unmount();
+    }
+  });
+
+  it('is hidden once ENDED -- that screen already has its own "Back to Dashboard" CTA', () => {
+    renderEnded('sess_dashboard_link_hidden');
+
+    const links = screen.getAllByRole('link', { name: /dashboard/i });
+    expect(links).toHaveLength(1);
+    expect(links[0].textContent).toContain('Back to Dashboard');
+  });
+});
+
 describe('Player — slide area is height-bounded (D88)', () => {
   it('slide-area container has min-h-0 so it can shrink inside its flex-1 parent instead of growing past the viewport', () => {
     const { container } = render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
@@ -369,6 +396,48 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+  });
+});
+
+describe('Player — slide-transition pause pill (Story 2-57 follow-up)', () => {
+  it('shows the pill when paused for a slide-transition', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'slide-transition' });
+    });
+
+    expect(screen.getByTestId('slide-transition-pause-pill')).not.toBeNull();
+  });
+
+  it('does not show the pill for a manual pause', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'manual' });
+    });
+
+    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+  });
+
+  it('does not show the pill for an intervention pause (AskTutorPanel owns that state instead)', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'intervention' });
+    });
+
+    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+  });
+
+  it('does not show the pill while PLAYING', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PLAYING', pauseReason: null });
+    });
+
+    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
   });
 });
 

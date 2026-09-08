@@ -74,13 +74,12 @@ select = [
     "T20", # flake8-print (no print statements)
 ]
 ignore = [
-    "ANN101", # missing type annotation for self
-    "ANN102", # missing type annotation for cls
     "S101",   # assert statements allowed in tests
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["ANN", "S", "T20"]
+"scripts/*.py" = ["T20", "E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]

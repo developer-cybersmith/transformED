@@ -124,15 +124,20 @@ async def test_sarvam_synthesize_success_returns_real_decoded_audio_and_empty_ti
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_sarvam_long_segment_makes_multiple_batched_requests_and_concatenates() -> None:
-    """D74's full end-to-end shape: a long segment (>3 chunks worth of text)
-    must make MULTIPLE HTTP requests (Sarvam's 3-items-per-request cap), and
-    the final audio must be the concatenation of every batch's every clip —
-    not just the first request's result."""
+    """D74's full end-to-end shape: a long segment (>1 chunk worth of text)
+    must make MULTIPLE HTTP requests, and the final audio must be the
+    concatenation of every request's clip — not just the first request's
+    result.
+
+    D149 (2026-09-04): the per-request cap is now 1 input, not 3 — see that
+    test for why. This test still proves the multi-request + concatenation
+    machinery works; it no longer proves multi-INPUT batching, since that no
+    longer happens."""
     from app.providers.tts.sarvam import SarvamTTSProvider, _chunk_narration_text
 
     long_text = ("This is one real sentence about machine learning models. " * 40).strip()
     expected_chunk_count = len(_chunk_narration_text(long_text))
-    assert expected_chunk_count > 3, "test text must span multiple batches to be meaningful"
+    assert expected_chunk_count > 3, "test text must span multiple requests to be meaningful"
 
     call_count = 0
 
@@ -152,21 +157,71 @@ async def test_sarvam_long_segment_makes_multiple_batched_requests_and_concatena
         patch("httpx.AsyncClient") as mock_client_cls,
     ):
         mock_settings.return_value.sarvam_api_key = "test-key"
+        mock_settings.return_value.sarvam_narration_pace = 0.85
         mock_client_cls.return_value.__aenter__.return_value = mock_client
         provider = SarvamTTSProvider()
-        audio_bytes, _ = await provider.synthesize(long_text, "anushka")
+        audio_bytes, _ = await provider.synthesize(long_text, "priya")
 
-    assert call_count >= 2, "a long segment must span multiple batched requests"
-    # Every request's inputs stayed within Sarvam's real per-request cap.
+    assert call_count == expected_chunk_count, (
+        "D149: one request per chunk now, never batched — the mock's num_clips=num_inputs "
+        "matches the real v3 behavior (1 clip) only when num_inputs is also 1"
+    )
     for call in mock_client.post.call_args_list:
-        assert len(call.kwargs["json"]["inputs"]) <= 3
+        assert len(call.kwargs["json"]["inputs"]) == 1
         for chunk in call.kwargs["json"]["inputs"]:
             assert len(chunk) <= 500
 
-    # Final audio is every clip from every batch concatenated, not just the
+    # Final audio is every clip from every request concatenated, not just the
     # first request's result — one clip per chunk, 10 frames/clip.
     with wave.open(io.BytesIO(audio_bytes), "rb") as wf:
         assert wf.getnframes() == expected_chunk_count * 10
+
+
+async def test_sarvam_never_sends_more_than_one_input_per_request() -> None:
+    """D149: `bulbul:v3` batches multiple `inputs[]` into ONE combined audio
+    clip per request (confirmed live, 2026-09-04 -- 3 real sentences sent
+    together returned exactly 1 clip whose duration was roughly the sum of
+    the three), not one clip per input like `v2` did. The pre-fix code
+    assumed 1:1 and raised "returned N audio clips for M inputs" on every
+    real multi-input request -- exposed only once D148's model pin let
+    requests actually succeed instead of 400ing on auth first.
+
+    Fixed by never batching more than one input per request, eliminating the
+    mismatch entirely rather than trying to parse a combined clip apart. This
+    test mocks the REAL v3 shape directly: 1 clip back no matter how many
+    inputs were (hypothetically) sent -- proving the fix by construction, not
+    by asserting on the old (now-wrong) 3-per-request cap."""
+    from app.providers.tts.sarvam import SarvamTTSProvider, _chunk_narration_text
+
+    long_text = ("This is one real sentence about machine learning models. " * 40).strip()
+    expected_chunk_count = len(_chunk_narration_text(long_text))
+    assert expected_chunk_count > 1, "test text must span multiple chunks to be meaningful"
+
+    async def _fake_post(*_args: object, **kwargs: object) -> MagicMock:
+        # Real v3 behavior: always exactly 1 combined clip per request,
+        # regardless of how many inputs were sent -- if the code ever sent
+        # more than 1 input again, this would silently mismatch (num_clips=1
+        # for however many inputs) and the mismatch RuntimeError would fire.
+        return _make_sarvam_json_response(num_clips=1, frames_per_clip=10)
+
+    mock_client = AsyncMock()
+    mock_client.post.side_effect = _fake_post
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.return_value.sarvam_api_key = "test-key"
+        mock_settings.return_value.sarvam_narration_pace = 0.85
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = SarvamTTSProvider()
+        # Must not raise, even though every real response carries only 1 clip.
+        await provider.synthesize(long_text, "priya")
+
+    for call in mock_client.post.call_args_list:
+        assert len(call.kwargs["json"]["inputs"]) == 1
 
 
 @pytest.mark.unit
@@ -304,6 +359,40 @@ async def test_sarvam_synthesize_request_includes_configured_pace() -> None:
     assert mock_client.post.call_count == 1
     sent_json = mock_client.post.call_args.kwargs["json"]
     assert sent_json["pace"] == 0.85
+
+
+async def test_sarvam_synthesize_request_pins_an_explicit_model() -> None:
+    """D148: the real request body never sent a `model` field, so it silently
+    rode Sarvam's server-side default -- which had drifted to `bulbul:v3`
+    while `sarvam_voice_id`'s configured default was still "anushka" (D67,
+    valid only for `bulbul:v2`), breaking every real narration call. Pinning
+    `model` explicitly means a future server-side default change can never
+    silently re-break this again, regardless of which speaker is configured.
+
+    Pinned to `bulbul:v3`, not `v2`: confirmed via a live call while fixing
+    this (2026-09-04) that Sarvam has since deprecated `bulbul:v2` outright
+    (`400 invalid_request_error: "Model 'bulbul:v2' has been deprecated"`) --
+    even the originally-diagnosed fix would already be wrong today."""
+    from app.providers.tts.sarvam import SarvamTTSProvider
+
+    mock_response = _make_sarvam_json_response(num_clips=1, frames_per_clip=10)
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.tts.sarvam.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_success", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_settings.return_value.sarvam_api_key = "test-key"
+        mock_settings.return_value.sarvam_narration_pace = 0.85
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = SarvamTTSProvider()
+        await provider.synthesize("Hello world", "priya")
+
+    sent_json = mock_client.post.call_args.kwargs["json"]
+    assert sent_json.get("model") == "bulbul:v3"
 
 
 # ---------------------------------------------------------------------------

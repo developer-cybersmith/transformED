@@ -41,6 +41,13 @@ function isStoredProgress(value: unknown): value is StoredProgress {
 
 export type PlayerStatus = 'IDLE' | 'PLAYING' | 'PAUSED' | 'QUIZ' | 'TEACH_BACK' | 'ENDED';
 
+/** Why the player is currently PAUSED — UI-only distinction (Story 2-57).
+ *  Every existing status==='PAUSED' gate (audio element, processTimeUpdate,
+ *  virtual clock, SpeechSynthesis) already does the right thing regardless of
+ *  reason, since none of them key off *why* — only PlayerControls/AudioTimeline's
+ *  new transition-pause effect need to distinguish these. Null once PLAYING. */
+export type PauseReason = 'manual' | 'slide-transition' | 'intervention' | null;
+
 export interface PlayerStore {
   // ── State ──────────────────────────────────────────────────────────────────
   status: PlayerStatus;
@@ -85,6 +92,12 @@ export interface PlayerStore {
   audioError: boolean;
   /** Incremented by retryAudio(); included in AudioTimeline's <audio> key to force a remount. */
   audioRetryCount: number;
+  /** Why status is currently PAUSED; null whenever status isn't PAUSED (Story 2-57). */
+  pauseReason: PauseReason;
+  /** Per-segment opt-out of the auto-pause-at-slide-boundary behavior (Story 2-57
+   *  AC10). Resets to false on every new segment via advanceSegment()/loadLesson() —
+   *  a student's choice for one segment must not silently carry into the next. */
+  skipTransitionPauseForSegment: boolean;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
@@ -97,6 +110,17 @@ export interface PlayerStore {
   setSessionId: (id: string) => void;
   play: () => void;
   pause: () => void;
+  /** Auto-pause triggered by AudioTimeline crossing a within-segment slide
+   *  boundary during normal forward playback (Story 2-57 AC1). Deliberately
+   *  does NOT call saveProgress() — fires at every slide boundary, and a
+   *  write per boundary is unnecessary I/O for a transient sub-3s auto-pause
+   *  (AC7). No-op unless currently PLAYING. */
+  pauseForSlideTransition: () => void;
+  /** Manual, student-triggered pause from the always-available Ask-Tutor
+   *  button (Story 2-57 AC11) — no auto-resume timer, unlike
+   *  pauseForSlideTransition. No-op unless currently PLAYING. */
+  pauseForIntervention: () => void;
+  setSkipTransitionPauseForSegment: (skip: boolean) => void;
   /** Queue a seek; AudioTimeline applies it to the audio element and clears it. */
   requestSeek: (ms: number) => void;
   clearSeekRequest: () => void;
@@ -156,6 +180,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   isBuffering: false,
   audioError: false,
   audioRetryCount: 0,
+  pauseReason: null,
+  skipTransitionPauseForSegment: false,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -183,6 +209,8 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       isBuffering: false,
       audioError: false,
       audioRetryCount: 0,
+      pauseReason: null,
+      skipTransitionPauseForSegment: false,
     });
   },
 
@@ -193,15 +221,45 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   play: () => {
     const { status } = get();
     if (status === 'IDLE' || status === 'PAUSED') {
-      set({ status: 'PLAYING' });
+      // pauseReason cleared unconditionally on every resume (Story 2-57) --
+      // required for a SECOND slide-transition pause later in the same
+      // segment to re-trigger AudioTimeline's timer effect at all: that
+      // effect's dependency is pauseReason itself, so if it never returned
+      // to null in between, the effect would not see a new 'slide-transition'
+      // value the second time and the timer would silently never start.
+      set({ status: 'PLAYING', pauseReason: null });
     }
   },
 
   pause: () => {
     if (get().status === 'PLAYING') {
-      set({ status: 'PAUSED' });
+      set({ status: 'PAUSED', pauseReason: 'manual' });
       get().saveProgress();
     }
+  },
+
+  pauseForSlideTransition: () => {
+    if (get().status === 'PLAYING') {
+      set({ status: 'PAUSED', pauseReason: 'slide-transition' });
+    }
+  },
+
+  pauseForIntervention: () => {
+    // Callable from PLAYING (the primary case) OR an existing PAUSED state
+    // of any other reason (review finding while writing this story's tests):
+    // a student auto-paused at a slide transition must be able to ask a
+    // question without first resuming just to re-pause — this simply
+    // reclassifies the existing pause as an intervention (cancels the
+    // transition's auto-resume timer via the pauseReason change) rather than
+    // requiring status to transition through PLAYING again.
+    const { status } = get();
+    if (status === 'PLAYING' || status === 'PAUSED') {
+      set({ status: 'PAUSED', pauseReason: 'intervention' });
+    }
+  },
+
+  setSkipTransitionPauseForSegment: (skip) => {
+    set({ skipTransitionPauseForSegment: skip });
   },
 
   requestSeek: (ms) => {
@@ -254,6 +312,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       isBuffering: false,
       audioError: false,
       audioRetryCount: 0,
+      // Story 2-57 AC10: a skip-pause choice is per-segment, not lesson-wide —
+      // must not silently carry into the next segment.
+      skipTransitionPauseForSegment: false,
     });
     get().saveProgress();
   },

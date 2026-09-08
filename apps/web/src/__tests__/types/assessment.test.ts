@@ -7,6 +7,7 @@ import type {
   TeachbackSubmission,
   TeachbackResult,
   SessionReport,
+  SessionSummary,
   TeachbackDetail,
   LearnerDNA,
   OnboardingDiagnosticSubmission,
@@ -217,6 +218,23 @@ describe('assessment types', () => {
     expect(result.overall_score).toBe(0.81);
     expect(typeof result.rubric_scores.accuracy).toBe('string');
     expect(Object.keys(result.rubric_scores).sort()).toEqual(['accuracy', 'clarity', 'completeness']);
+  });
+
+  it('SessionSummary (Story 2-58/BR-7) allows a null lesson_title/ces_score for an in-progress, untitled-fallback session', () => {
+    const summary: SessionSummary = {
+      session_id: 'sess_001',
+      lesson_id: 'lesson_001',
+      lesson_title: null,
+      tier: 'T3',
+      tier_label: 'Refresher',
+      started_at: '2026-09-02T09:00:00Z',
+      ended_at: null,
+      completed: false,
+      ces_score: null,
+    };
+    expect(summary.lesson_title).toBeNull();
+    expect(summary.ces_score).toBeNull();
+    expect(summary.completed).toBe(false);
   });
 
   it('QuizResult has ces_contribution field', () => {

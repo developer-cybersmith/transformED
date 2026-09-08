@@ -8,19 +8,23 @@ learner DNA retrieval, and onboarding diagnostic submission.
 from __future__ import annotations
 
 import logging
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel  # SessionReport, LearnerDNA still use BaseModel directly
+from redis.asyncio import Redis
 
+from app.config import Settings
 from app.core.posthog_client import capture_event
-from app.dependencies import ApprovedUser, CurrentUser
+from app.core.redis import get_redis
+from app.dependencies import ApprovedUser, CurrentUser, get_settings
 
 # All request/response models live in schemas.py so service.py can import them
 # without creating a circular import (service ← router ← service).
 from app.modules.assessment.schemas import (
     ConsentCreate,
     ConsentRecord,
+    LearnerContext,
     OnboardingDiagnosticSubmission,
     OnboardingResult,
     QuizAnswer,
@@ -29,8 +33,11 @@ from app.modules.assessment.schemas import (
     SessionCompleted,
     SessionCreate,
     SessionCreated,
+    SessionSummary,
     TeachbackResult,
     TeachbackSubmission,
+    TutorQuestionResult,
+    TutorQuestionSubmission,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,6 +52,7 @@ __all__ = [
     "TeachbackSubmission",
     "TeachbackResult",
     "TeachbackDetail",
+    "LearnerContext",  # R3: added so tests/other modules can import from here
 ]
 
 
@@ -58,6 +66,8 @@ class TeachbackDetail(BaseModel):
     concepts_hit: list[str] = []
     concepts_missed: list[str] = []
     attempt_number: int = 1
+    # F2-2: default "llm" so pre-migration rows (no column → DB DEFAULT) deserialise correctly
+    score_source: Literal["llm", "fallback", "skipped"] = "llm"
 
 
 class SessionReport(BaseModel):
@@ -126,6 +136,7 @@ class LearnerDNA(BaseModel):
 async def create_session_endpoint(
     body: SessionCreate,
     current_user: CurrentUser,
+    redis: Annotated[Redis, Depends(get_redis)],
 ) -> SessionCreated:
     """Create the `sessions` row for this lesson attempt and return its id.
 
@@ -137,7 +148,6 @@ async def create_session_endpoint(
     """
     from app.config import get_settings
     from app.core.db import get_supabase  # lazy — prevents circular import at module load
-    from app.core.redis import get_redis
     from app.modules.assessment.service import create_session, seed_personalized_ces_threshold
 
     supabase = get_supabase()
@@ -147,14 +157,54 @@ async def create_session_endpoint(
         supabase=supabase,
     )
     # Story 4-13 — non-fatal threshold seeding; session creation always succeeds
+    # D163: two compounding bugs fixed here.
+    # (1) `created["id"]` -> `created["session_id"]` -- create_session() never
+    #     returns an "id" key (verified across all three of its return paths).
+    #     This raised KeyError unconditionally, on EVERY call, silently breaking
+    #     every feature gated on a real session_id (quiz, teach-back, Ask-Tutor,
+    #     CES tracking) -- each of those guards on `sessionId` truthiness and
+    #     no-ops rather than crashing loudly, so this was invisible in the UI.
+    # (2) `redis=await get_redis()` -> a real FastAPI `Depends(get_redis)`
+    #     parameter. `get_redis()` is a plain sync function returning a Redis
+    #     client directly (see its own docstring's Depends(get_redis) usage
+    #     example) -- `await get_redis()` was awaiting a non-awaitable Redis
+    #     instance (TypeError). This was unreached in production only because
+    #     Python evaluates keyword-argument expressions in the order written,
+    #     so bug (1)'s KeyError always fired first. Fixing (1) alone would have
+    #     traded one 500 for another. Matches `submit_tutor_question`'s own
+    #     established `Depends(get_redis)` pattern in this same file, not a new
+    #     convention introduced here.
     await seed_personalized_ces_threshold(
-        session_id=created["id"],
+        session_id=created["session_id"],
         user_id=current_user["sub"],
-        redis=await get_redis(),
+        redis=redis,
         supabase=supabase,
         settings=get_settings(),
     )
     return SessionCreated(**created)
+
+
+@router.get(
+    "/sessions",
+    response_model=list[SessionSummary],
+    summary="List the current user's own sessions, most recent first (Story 2-58, BR-7)",
+)
+async def list_sessions_endpoint(
+    current_user: CurrentUser,
+) -> list[SessionSummary]:
+    """Backs the `/reports` index page — the "Reports" nav link has pointed at
+    `/reports` since the sidebar was first built, with no route or backend list
+    behind it (404 from the beginning). Returns at most the caller's own most
+    recent `_SESSION_LIST_LIMIT` sessions — see `list_sessions`'s docstring for
+    the bound and ownership scoping.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import list_sessions
+
+    return await list_sessions(
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(
@@ -181,6 +231,36 @@ async def complete_session_endpoint(
         supabase=get_supabase(),
     )
     return SessionCompleted(**completed)
+
+
+@router.post(
+    "/session/{session_id}/questions",
+    response_model=TutorQuestionResult,
+    summary="Ask the tutor a question mid-lesson (Story 4-28, closes D149)",
+)
+async def submit_tutor_question(
+    session_id: str,
+    body: TutorQuestionSubmission,
+    current_user: CurrentUser,
+    redis: Annotated[Redis, Depends(get_redis)],
+) -> TutorQuestionResult:
+    """Real backend for the already-shipped "Ask Tutor" button (D149).
+
+    Path uses singular "session" to match this router's own existing
+    convention (`/session/{id}/complete`, `/session/{id}/report`) — D149's
+    originally-proposed contract used plural "sessions", never verified
+    against the real code (see Story 4-28's Background section).
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import answer_tutor_question
+
+    return await answer_tutor_question(
+        session_id=session_id,
+        payload=body,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+        redis=redis,
+    )
 
 
 @router.post(
@@ -224,6 +304,53 @@ async def submit_teachback(
         lesson_id=body.lesson_id,
         segment_id=body.segment_id,
         response_text=body.response_text,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+        is_skip=body.is_skip,
+    )
+
+
+@router.post(
+    "/teachback/{session_id}/{segment_id}/audio",
+    response_model=TeachbackResult,
+    summary="Submit a voice teach-back recording for Whisper STT + LLM evaluation (F2-4)",
+)
+async def submit_audio_teachback(
+    session_id: str,
+    segment_id: str,
+    audio: Annotated[UploadFile, File(description="Audio file (WAV, MP3, MP4, WEBM)")],
+    current_user: ApprovedUser,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> TeachbackResult:
+    """Transcribe a voice teach-back recording via Whisper and score it with GPT-4o-mini.
+
+    On transcription failure the endpoint returns HTTP 200 with score_source='fallback'
+    so the student is never hard-blocked by a Whisper outage.
+    Raw audio is never stored — only the transcript reaches the database.
+    """
+    from app.core.db import get_supabase  # noqa: PLC0415
+    from app.modules.assessment.service import transcribe_and_score_audio  # noqa: PLC0415
+
+    max_bytes = settings.stt_max_file_mb * 1024 * 1024
+    audio_bytes = await audio.read()
+    if len(audio_bytes) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                f"Audio file exceeds the {settings.stt_max_file_mb} MB limit "
+                f"({len(audio_bytes) / (1024 * 1024):.1f} MB uploaded). "
+                "Please trim the recording and try again."
+            ),
+        )
+
+    from pathlib import Path as _Path  # noqa: PLC0415
+
+    filename = _Path(audio.filename or "audio.webm").name  # strip any path components
+    return await transcribe_and_score_audio(
+        session_id=session_id,
+        segment_id=segment_id,
+        audio_bytes=audio_bytes,
+        filename=filename,
         user_id=current_user["sub"],
         supabase=get_supabase(),
     )
@@ -353,6 +480,31 @@ async def submit_onboarding_diagnostic(
         logger.warning("onboarding: reassessment flag clear failed user=%s: %s", _safe_uid, exc)
 
     return result
+
+
+@router.get(
+    "/session/{session_id}/learner-context",
+    response_model=LearnerContext,
+    summary="Get learner DNA + session signals for tutor prompt injection (Story F2-1)",
+)
+async def get_learner_context_endpoint(
+    session_id: str,
+    current_user: CurrentUser,
+) -> LearnerContext:
+    """Return combined Learner DNA and current session engagement for the tutor state machine.
+
+    Internal endpoint called by Dev 4's tutor module to personalise LLM responses.
+    IDOR-protected: returns 404 if session_id belongs to a different user.
+    Pure data aggregation — no LLM calls, no cost tracking.
+    """
+    from app.core.db import get_supabase  # lazy — prevents circular import at module load
+    from app.modules.assessment.service import get_learner_context
+
+    return await get_learner_context(
+        session_id=session_id,
+        user_id=current_user["sub"],
+        supabase=get_supabase(),
+    )
 
 
 @router.post(

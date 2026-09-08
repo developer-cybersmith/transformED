@@ -86,6 +86,30 @@ describe('ModeSelection', () => {
     expect(refresherCard.textContent).toMatch(/prior mastery|first-pass/i);
   });
 
+  it('Deep shows its own 45 min duration, not another tier\'s', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    const deepCard = screen.getByText('Deep').closest('button')!;
+    expect(deepCard.textContent).toMatch(/45 min/);
+    expect(deepCard.textContent).not.toMatch(/30 min|15 min/);
+  });
+
+  it('Balanced shows its own 30 min duration, not another tier\'s', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    const balancedCard = screen.getByText('Balanced').closest('button')!;
+    expect(balancedCard.textContent).toMatch(/30 min/);
+    expect(balancedCard.textContent).not.toMatch(/45 min|15 min/);
+  });
+
+  it('Refresher shows its own 15 min duration, not another tier\'s', () => {
+    render(<ModeSelection onSelect={vi.fn()} />);
+
+    const refresherCard = screen.getByText('Refresher').closest('button')!;
+    expect(refresherCard.textContent).toMatch(/15 min/);
+    expect(refresherCard.textContent).not.toMatch(/45 min|30 min/);
+  });
+
   it('renders exactly 2 disclaimer elements total (Balanced + Refresher, none for Deep)', () => {
     const { container } = render(<ModeSelection onSelect={vi.fn()} />);
 

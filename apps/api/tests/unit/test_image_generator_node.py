@@ -14,7 +14,7 @@ Covers docs/stories/2-9-image-generator-node.md's ACs:
 - AC-13: idempotency checkpoint (Phase-A style), including empty-input case.
 - AC-14: empty state["slides"] does NOT raise.
 
-D132 (bounded concurrent generation, see D132-FIX-TRACKER.md):
+D132 (bounded concurrent generation, see docs/fixes/D132-FIX-TRACKER.md):
 - Slides actually generate concurrently, not one at a time.
 - Output order (`slide_images_out`) stays index-matched to input `slides`
   even when a later slide's generation finishes before an earlier one's.
@@ -731,7 +731,7 @@ async def test_empty_bullets_list_degrades_slide_without_calling_provider() -> N
 
 
 # ---------------------------------------------------------------------------
-# D132: bounded concurrent generation (D132-FIX-TRACKER.md)
+# D132: bounded concurrent generation (docs/fixes/D132-FIX-TRACKER.md)
 # ---------------------------------------------------------------------------
 
 

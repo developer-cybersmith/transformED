@@ -143,7 +143,7 @@ All seven are now either fixed and tested, or — for the two genuinely out of t
   closed by re-running the identical failing document through the fixed code and confirming it now
   produces the expected warning, not by trusting the fix in isolation.
 - **A running, shared findings log.** Every real test run this week — what was run, what it cost,
-  what it found — was logged in one place (`RUN-FINDINGS-LOG.md`) so nothing gets lost to chat
+  what it found — was logged in one place (`docs/fixes/RUN-FINDINGS-LOG.md`) so nothing gets lost to chat
   history and future work can pick up exactly where this left off.
 
 ---
@@ -206,6 +206,6 @@ carried-over claim.
 |---|---|
 | Full task-by-task detail and history | `docs/dev1-tracker.md` |
 | Every issue found this week, its fix, and its test coverage | `docs/DEFECT-REGISTER.md` |
-| Every real test run this week — command, result, findings | `RUN-FINDINGS-LOG.md` |
+| Every real test run this week — command, result, findings | `docs/fixes/RUN-FINDINGS-LOG.md` |
 | The real-world document test set | `apps/api/tests/fixtures/generate_real_world_pdfs.py` |
 | The large-scale (20-document) test | `apps/api/tests/evals/` |

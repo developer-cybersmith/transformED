@@ -225,3 +225,41 @@ async def test_one_bad_row_does_not_stop_the_batch() -> None:
 
     assert mock_update.await_count == 2
     assert result == {"reaped_count": 1, "reaped_lesson_ids": ["stale-good"]}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_a_full_batch_of_concurrently_stale_jobs_is_all_reaped_in_one_pass() -> None:
+    """Story 5-2 AC-9: under real concurrent load, many lessons can go stale
+    at once (S4-1 run #10 measured 41/50 lessons still generating at once) --
+    every existing test here uses 1-2 candidate rows, never exercising the
+    `_REAP_BATCH_LIMIT` boundary itself. Simulates exactly `_REAP_BATCH_LIMIT`
+    (100) distinct stale rows in a single query result (what the DB's own
+    `.limit()` would actually hand back if far more than 100 were stale at
+    once) -- every one of the 100 must be reaped in this single pass, none
+    dropped, none silently truncated short of the batch."""
+    from app.workers.jobs.reap_stale_lessons import _REAP_BATCH_LIMIT, reap_stale_generating_lessons
+
+    candidates = [
+        {
+            "lesson_id": f"stale-{i}",
+            "started_at": "2020-01-01T00:00:00+00:00",
+            "created_at": "2020-01-01T00:00:00+00:00",
+        }
+        for i in range(_REAP_BATCH_LIMIT)
+    ]
+    supabase = _mock_supabase_with_candidates(candidates)
+    mock_update = AsyncMock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch("app.workers.jobs.content_pipeline._update_lesson_status", new=mock_update),
+    ):
+        result = await reap_stale_generating_lessons({})
+
+    assert mock_update.await_count == _REAP_BATCH_LIMIT
+    assert result["reaped_count"] == _REAP_BATCH_LIMIT
+    assert len(result["reaped_lesson_ids"]) == _REAP_BATCH_LIMIT
+    assert len(set(result["reaped_lesson_ids"])) == _REAP_BATCH_LIMIT, (
+        "no lesson_id was duplicated or dropped across the full batch"
+    )

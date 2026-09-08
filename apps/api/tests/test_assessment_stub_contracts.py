@@ -160,11 +160,16 @@ def test_teachback_submission_has_response_text() -> None:
 
 @pytest.mark.unit
 def test_teachback_submission_no_transcript_field() -> None:
-    """TeachbackSubmission must NOT have a 'transcript' field — STT is banned in MVP."""
+    """TeachbackSubmission must NOT have a 'transcript' field.
+
+    Voice STT is handled by the dedicated audio endpoint
+    (POST /assessment/teachback/{session_id}/{segment_id}/audio, Story F2-4).
+    The typed-submit path (TeachbackSubmission) always uses response_text.
+    """
     fields = TeachbackSubmission.model_fields
     assert "transcript" not in fields, (
-        "TeachbackSubmission has a 'transcript' field — this implies STT which is banned. "
-        "Use 'response_text' only."
+        "TeachbackSubmission has a 'transcript' field — typed path must use 'response_text'. "
+        "STT via the dedicated audio endpoint only (F2-4)."
     )
 
 

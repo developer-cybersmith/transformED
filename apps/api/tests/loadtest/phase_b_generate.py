@@ -436,5 +436,13 @@ async def run_phase_b(
             "tier": _TIER,
             "num_generate_users": len(generate_users),
             "accepted_count": len(poll_targets),
+            # D155: every lesson_id actually accepted (202) this run, so a
+            # caller (`_run_full`) can independently confirm each one reaches
+            # a REAL terminal status before any cleanup deletes the disposable
+            # users that own them -- this harness's own polling above may
+            # give up on a lesson early (see `_poll_one_lesson`'s
+            # 401/403/404 fail-fast branch) without the real pipeline job
+            # having actually finished.
+            "accepted_lesson_ids": [lesson_id for lesson_id, _, _ in poll_targets],
         },
     )

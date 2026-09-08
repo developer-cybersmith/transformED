@@ -10,8 +10,10 @@ cancellation propagates — no lesson row may sit in "running" forever.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.config import get_settings
@@ -327,6 +329,66 @@ async def test_failure_write_survives_get_cost_failure() -> None:
     assert "cost_usd" not in failed[0], (
         f"cost_usd must be omitted on a get_cost() failure, got {failed[0]}"
     )
+
+
+async def test_concurrent_retry_exhaustion_across_two_lessons_does_not_cross_contaminate() -> None:
+    """Story 5-2 AC-2: retry exhaustion must resolve to an explicit `failed`
+    status with a real error message, confirmed under CONCURRENT load, not
+    only the single-lesson case the tests above already cover.
+
+    Simulates two lessons whose provider calls both exhaust `with_retry` at
+    the same time (a provider mock that always returns a retryable error is
+    `with_retry`'s own re-raised exception after `max_attempts` -- the exact
+    shape `run_pipeline` sees is just "the last exception propagated", which
+    is what's mocked here, mirroring `test_failure_paths_write_schema_valid_status`).
+    Both lessons share ONE Supabase client mock, same as the real deployment
+    (a single process, many concurrent ARQ jobs) -- the real risk this test
+    guards against is cross-contamination: lesson A's error/cost accidentally
+    landing in lesson B's write, or one lesson's failure silently swallowing
+    the other's."""
+    from app.workers.jobs import content_pipeline as job_mod
+
+    supabase, tables = _make_multi_table_supabase_mock()
+
+    costs = {"lesson-a": 1.11, "lesson-b": 2.22}
+    errors = {
+        "lesson-a": httpx.TimeoutException("timeout for lesson-a, retries exhausted"),
+        "lesson-b": httpx.TimeoutException("timeout for lesson-b, retries exhausted"),
+    }
+
+    async def _fake_run_pipeline(*, lesson_id: str, **_kwargs: Any) -> dict[str, Any]:
+        raise errors[lesson_id]
+
+    async def _fake_get_cost(lesson_id: str) -> float:
+        return costs[lesson_id]
+
+    with (
+        patch("app.core.db.get_supabase", return_value=supabase),
+        patch(
+            "app.modules.content.pipeline.graph.run_pipeline",
+            new=AsyncMock(side_effect=_fake_run_pipeline),
+        ),
+        patch("app.core.cost_tracker.get_cost", new=AsyncMock(side_effect=_fake_get_cost)),
+    ):
+        results = await asyncio.gather(
+            job_mod.content_pipeline_job({}, "lesson-a"),
+            job_mod.content_pipeline_job({}, "lesson-b"),
+            return_exceptions=True,
+        )
+
+    # Both must raise (ARQ retry path), never silently swallowed or hung.
+    assert all(isinstance(r, httpx.TimeoutException) for r in results), results
+
+    update_payloads = [c.args[0] for c in tables["lesson_jobs"].update.call_args_list]
+    failed = [p for p in update_payloads if p.get("status") == "failed"]
+    assert len(failed) == 2, f"expected exactly 2 failed writes, got: {failed}"
+
+    by_cost = {p["cost_usd"]: p for p in failed}
+    assert set(by_cost) == {1.11, 2.22}, f"costs cross-contaminated: {failed}"
+    assert "lesson-a" in by_cost[1.11]["error"]
+    assert "lesson-b" not in by_cost[1.11]["error"]
+    assert "lesson-b" in by_cost[2.22]["error"]
+    assert "lesson-a" not in by_cost[2.22]["error"]
 
 
 async def test_running_transition_does_not_fetch_cost() -> None:

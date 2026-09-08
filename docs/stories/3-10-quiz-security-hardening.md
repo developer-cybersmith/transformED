@@ -167,6 +167,26 @@ OR test at HTTP layer if Field validation is expected to return 422 from FastAPI
 4. 5-agent code review via /bmad-code-review
 5. PR → main after BLOCKER resolution
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One security check per quiz submission (runs inline with `grade_quiz` from story 3-8). No additional DB queries added by this story. Validation is pure Python — O(n) over `answers` list where n ≤ 50.
+
+**Q2 — Fixed budgets vs variable input**
+`answers.max_length=50` enforced via Pydantic → HTTP 422 on overflow (explicit error ✓). `response_index < len(options)` → HTTP 422 on out-of-range (explicit error ✓). Duplicate `question_id` detection → HTTP 422 (explicit error ✓). All three checks produce explicit, surfaced errors — no silent truncation or silent skipping.
+
+**Q3 — Scope of limits**
+All three checks are per-request, per-user. No shared state involved. The `max_length=50` cap is per-submission.
+
+**Q4 — Unbounded reads/writes**
+Same as story 3-8. No new queries added by this hardening story.
+
+**Q5 — Inherited caps**
+`max_length=50` is freshly derived in this story — not inherited. Derivation: typical segment has ≤20 questions; 50 gives 2.5× headroom. If lesson segment size grows beyond 50 questions, this cap must be re-derived.
+
+**Q6 — Concurrent TOCTOU safety**
+The session enumeration oracle fix (wrong-owner returns 404 instead of 403) is timing-safe: both "not found" and "wrong owner" return 404 with the same response body, so response-time differences cannot leak session existence to a timing oracle. The fix does not introduce any new TOCTOU gap.
+
 ## Senior Developer Review (AI)
 
 **Review date:** 2026-07-01
@@ -233,3 +253,11 @@ None — all 10 ACs satisfied.
 - 2026-06-29: Story 3-10 created — BMAD Phase 1 story-first commit
 - 2026-07-01: AC 4 (SEC-006 oracle) and AC 1 partial (schemas) implemented via PR #43
 - 2026-07-01: ACs 2, 3, 5, 6 + 6 missing tests implemented on dev3-sprint1-blocker-fixes; story marked done
+
+### Scale & Load Hunter (6th Agent — 2026-09-05)
+
+| # | Agent | Severity | Finding | Resolution |
+|---|-------|----------|---------|------------|
+| 1 | Scale & Load Hunter | **PASS** | Adds input validation only — no new DB queries introduced. Answer-key whitelist check is O(1) per answer. No check-then-act: validation runs before any DB write. Existing `quiz_attempts` UNIQUE constraint (from story 3-13) remains the TOCTOU guard. | N/A |
+
+**Scale & Load Hunter verdict:** PASS — added as 6th mandatory review layer per CLAUDE.md BMAD Code Review Gate.

@@ -28,9 +28,14 @@ export function ModeSelection({ onSelect }: ModeSelectionProps) {
                     onClick={() => onSelect(option.id)}
                     className="flex flex-col items-start text-left p-8 rounded-[2rem] border border-neutral-100 bg-white/80 backdrop-blur-xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-lg hover:border-[var(--accent-primary)]/50 hover:-translate-y-1 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-[var(--accent-primary)]/20 transition-all duration-300"
                 >
-                    <h4 className="font-serif text-xl font-semibold tracking-tight text-neutral-900 mb-2">
-                        {option.label}
-                    </h4>
+                    <div className="flex items-center gap-2 mb-2">
+                        <h4 className="font-serif text-xl font-semibold tracking-tight text-neutral-900">
+                            {option.label}
+                        </h4>
+                        <span className="px-2 py-0.5 rounded-full bg-neutral-100 text-neutral-600 text-xs font-medium">
+                            {option.durationMinutes} min
+                        </span>
+                    </div>
                     <p className="text-neutral-500 text-sm leading-relaxed">
                         {option.description}
                     </p>

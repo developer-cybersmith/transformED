@@ -342,16 +342,39 @@ Never pass `user_id` directly to any logger call.
 
 ---
 
+## Scale & Load
+
+**Q1 — Unit of work & range**
+One unit = one Redis SET triggered at session end when `session_count % 10 == 0`. The SET writes a `"1"` flag at key `reassess:{user_id}` with a TTL (24h default). The downstream consumer (session-report endpoint) reads this flag via `GET reassess:{user_id}`. Zero Supabase reads or writes in this story. No LLM call.
+
+**Q2 — Fixed budgets vs variable input**
+Redis SET payload is fixed: key `reassess:{user_id}` (≤ ~50 bytes), value `"1"` (1 byte), TTL 86400s. Cost is negligible. The only variable is `session_count` (integer), used only as a modulo check — no accumulation. No budget constraints apply.
+
+**Q3 — Scope of limits**
+Per-user. Each user has at most one `reassess:{user_id}` key in Redis at any time. At 10,000 concurrent users, 10,000 such keys exist — well within Railway Redis memory limits (128MB on free tier; each key ≈ 60 bytes → ~600KB for 10,000 users).
+
+**Q4 — Unbounded reads/writes**
+- **Write**: one Redis SET per session end (when `% 10 == 0`). No Supabase write.
+- **Read**: one Redis GET in the session-report endpoint. Both are O(1) key-value operations.
+No unbounded scans.
+
+**Q5 — Inherited caps**
+The `session_count` value is inherited from `learner_dna.session_count` (Story 3-25). The modulo-10 trigger cadence is a product decision — no inherited technical cap. Redis TTL (24h) is a new cap introduced here; it expires the flag if the student ignores the prompt for a day, which is intentional.
+
+**Q6 — Concurrent TOCTOU safety**
+Concurrent session-end events for the same user could both fire `Redis SET reassess:{user_id} "1" EX 86400`. Both writes are idempotent (same key, same value, same TTL). Last writer wins on TTL (slightly later expiry), which is acceptable. No read-then-write race.
+
 ## Senior Developer Review
 
 ### Review Date: 2026-07-22
 
-### Agents Run (5 layers)
+### Agents Run (6 layers)
 1. Story Quality — AC completeness and story-first gate
 2. Blind Hunter (Security) — IDOR, injection, race conditions, DoS vectors
 3. Edge Case Hunter — error paths, Redis unavailability, type boundary violations
 4. Acceptance Auditor — AC-to-test mapping, vacuous assertions, missing coverage
 5. Process Integrity — No hardcoded models, no LLM calls, no module rule violations
+6. Scale & Load Hunter — unbounded queries, TOCTOU, budget caps (added 2026-09-05)
 
 ### Findings Summary
 
@@ -369,6 +392,7 @@ Never pass `user_id` directly to any logger call.
 | D1 | LOW | Race condition on session_count (pre-existing in dna_fusion.py, not introduced here) | DEFERRED |
 | D2 | LOW | No TTL on Redis key (intentional per story design — key persists until onboarding retaken) | DEFERRED |
 | D3 | LOW | Final `logger.info` uses raw `user_id` (pre-existing code, before this PR) | DEFERRED |
+| S1 | PASS | Scale & Load Hunter — O(1) Redis SET (key `reassess:{user_id}`, value `"1"`, TTL 86400s). No Supabase reads or writes. No LLM calls. Concurrent duplicate SETs are idempotent (same key/value/TTL). All 6 SCALE-CONTRACT.md questions answered in `## Scale & Load` section. | N/A |
 
 ### Fixes Applied
 

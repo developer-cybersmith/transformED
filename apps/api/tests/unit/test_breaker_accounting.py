@@ -790,3 +790,145 @@ async def test_redis_failure_does_not_open_the_breaker() -> None:
             await guard_breaker("openai", _call)
 
     record_failure.assert_not_awaited()
+
+
+# ── Story 5-2 AC-4: real concurrency, not a single always-broken mock ───────
+#
+# The three tests above each use a MagicMock that is EITHER always healthy or
+# always broken -- proving the fail-open/no-false-failure contract for one
+# call in isolation. AC-4 asks a different question: with several lessons
+# concurrently sharing ONE real Redis connection for the SAME provider's
+# breaker keys, does a Redis blip affecting SOME of those concurrent calls
+# ever corrupt or block the OTHERS? A single mock has no shared state to
+# corrupt in the first place -- this needs a real (fake) Redis instance.
+
+
+async def test_concurrent_calls_survive_an_intermittent_redis_blip_for_one_of_them() -> None:
+    """10 concurrent guard_breaker calls for the SAME provider, all backed by
+    ONE real (fake) Redis instance (the real single-Redis-many-lessons
+    deployment shape) -- every 3rd call's underlying Redis operations raise a
+    real ConnectionError, the rest succeed normally. Every one of the 10
+    calls must still return its own real result (never crash, never a
+    Redis error displacing a paid-for provider success), none of the
+    Redis-blip calls may be counted as a provider failure, and the breaker
+    must never incorrectly open -- the simulated "provider" here always
+    succeeds; only Redis is flaky."""
+    try:
+        from fakeredis import FakeServer
+        from fakeredis.aioredis import FakeRedis
+    except ImportError:
+        pytest.skip("fakeredis[aioredis] not installed")
+
+    import asyncio
+
+    from app.core.circuit_breaker import guard_breaker
+
+    real_redis = FakeRedis(server=FakeServer(), decode_responses=True)
+    call_counter = {"n": 0}
+    lock = asyncio.Lock()
+
+    class _FlakyRedis:
+        """Delegates to the real fake Redis, except every 3rd call raises a
+        real ConnectionError first -- simulating a genuinely intermittent
+        blip, not a permanently broken connection."""
+
+        def __getattr__(self, name: str) -> Any:
+            async def _wrapped(*args: Any, **kwargs: Any) -> Any:
+                import redis.exceptions as rex
+
+                async with lock:
+                    call_counter["n"] += 1
+                    should_fail = call_counter["n"] % 3 == 0
+                if should_fail:
+                    raise rex.ConnectionError("simulated intermittent redis blip")
+                return await getattr(real_redis, name)(*args, **kwargs)
+
+            return _wrapped
+
+    flaky = _FlakyRedis()
+
+    async def _healthy_provider_call() -> str:
+        return "real provider result"
+
+    with patch("app.core.circuit_breaker.get_redis", return_value=flaky):
+        results = await asyncio.gather(
+            *(guard_breaker("flaky-redis-provider", _healthy_provider_call) for _ in range(10))
+        )
+
+    # Every call's real result reached its own caller, regardless of which
+    # underlying Redis operations hit the simulated blip.
+    assert results == ["real provider result"] * 10
+
+    # The breaker must never have opened -- the "provider" never failed once;
+    # only Redis blipped, which must never count as a provider failure.
+    with patch("app.core.circuit_breaker.get_redis", return_value=real_redis):
+        from app.core.circuit_breaker import is_circuit_open
+
+        assert await is_circuit_open("flaky-redis-provider") is False
+
+
+# ── Story 5-2 AC-6: the shared breaker's cross-user blast radius, measured ──
+#
+# D129 risk #1, stated plainly rather than assumed: the circuit breaker is
+# GLOBAL PER PROVIDER, not per-lesson or per-user. This is documented,
+# intentional behavior (this module's own docstring) -- but it had never
+# actually been MEASURED end-to-end with two distinct lessons and real
+# (fake) Redis state, only asserted via a mocked `is_circuit_open` side_effect
+# sequence standing in for "some other call tripped it" (see
+# test_circuit_opening_mid_retry_short_circuits_remaining_attempts above).
+
+
+async def test_one_lessons_failures_trip_the_breaker_for_a_different_lesson_too() -> None:
+    """Story 5-2 AC-6: lesson A's real provider failures, forced past
+    FAILURE_THRESHOLD (5) via real, unmocked record_failure/is_circuit_open
+    calls against real (fake) Redis state, must cause lesson B's very FIRST
+    request to the SAME provider -- a request lesson B's own history gives no
+    reason to expect trouble from -- to fail fast with CircuitOpenError. This
+    is the measured blast radius: one student's bad luck with a provider
+    becomes every other concurrent student's outage too, confirmed for real,
+    not just documented as an accepted characteristic."""
+    try:
+        from fakeredis import FakeServer
+        from fakeredis.aioredis import FakeRedis
+    except ImportError:
+        pytest.skip("fakeredis[aioredis] not installed")
+
+    from app.core.circuit_breaker import CircuitOpenError
+    from app.providers.llm.openai import OpenAILLMProvider
+
+    real_redis = FakeRedis(server=FakeServer(), decode_responses=True)
+
+    client_a = MagicMock()
+    client_a.chat.completions.create = AsyncMock(side_effect=_openai_429())
+
+    with (
+        patch("app.core.circuit_breaker.get_redis", return_value=real_redis),
+        patch("app.providers.llm.openai.get_langfuse", MagicMock(return_value=None)),
+        patch("asyncio.sleep", new=AsyncMock()),  # no real backoff waits
+        patch("app.core.cost_tracker.accumulate_cost", new=AsyncMock(return_value=0.0)),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+        patch("app.core.cost_tracker.get_cost", new=AsyncMock(return_value=0.0)),
+    ):
+        # Lesson A: 5 real, independent logical calls, each exhausting
+        # with_retry and recording exactly one real failure (Story 2-32
+        # AC-3) -- the 5th crosses FAILURE_THRESHOLD and really opens the
+        # breaker via real Redis writes, not a mocked state transition.
+        with patch("app.providers.llm.openai.AsyncOpenAI", return_value=client_a):
+            provider_a = OpenAILLMProvider(lesson_id="lesson-a")
+            for _ in range(5):
+                with pytest.raises(Exception, match="rate limited"):
+                    await provider_a.complete([{"role": "user", "content": "hi"}], "gpt-4o-mini")
+
+        # Lesson B: a different lesson, a fresh provider instance, a client
+        # that would happily succeed if ever called -- its own history gives
+        # the breaker no reason at all to reject it.
+        client_b = MagicMock()
+        client_b.chat.completions.create = AsyncMock(return_value=_chat_response())
+        with patch("app.providers.llm.openai.AsyncOpenAI", return_value=client_b):
+            provider_b = OpenAILLMProvider(lesson_id="lesson-b")
+            with pytest.raises(CircuitOpenError):
+                await provider_b.complete([{"role": "user", "content": "hi"}], "gpt-4o-mini")
+
+        # The rejection must be a fail-fast BEFORE the provider is ever
+        # reached -- lesson B's own client must never see a request.
+        client_b.chat.completions.create.assert_not_awaited()
