@@ -62,7 +62,12 @@ export interface Narration {
   audio_url: string;
   audio_provider: AudioProvider;
   timestamps: NarrationTimestamp[];
-  caption_lines: CaptionLine[];
+  // Optional — retroactive field (Story 4-29 / BR-6). Pydantic defaults to [],
+  // JSON schema does not list it in Narration.required. Matches tier? and
+  // avatar_intro_url? pattern: existing lesson records and fixtures that predate
+  // this field are valid without it. Populated by server-side estimation at
+  // package_builder time; empty array when audio duration is unavailable.
+  caption_lines?: CaptionLine[];
 }
 
 export interface QuizQuestion {
