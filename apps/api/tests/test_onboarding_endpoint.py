@@ -42,6 +42,7 @@ def _fake_settings() -> MagicMock:
     JWT email is on the beta-access allowlist) -- approve _fake_user's email."""
     settings = MagicMock()
     settings.approved_emails = ["onboarding@example.com"]
+    settings.dna_ema_retain = 0.7
     return settings
 
 
@@ -155,10 +156,17 @@ def _build_onboarding_supabase(
     upsert_error=None,
 ) -> MagicMock:
     """Build mock Supabase client for process_onboarding call order:
-    1st call: onboarding_responses INSERT
-    2nd call: learner_dna UPSERT
+    1st call: learner_dna SELECT (_fetch_existing_dna — D137 EMA blend)
+    2nd call: onboarding_responses INSERT
+    3rd call: learner_dna UPSERT
     """
     mock = MagicMock()
+
+    dna_select_mock = MagicMock()
+    dna_select_resp = MagicMock()
+    dna_select_resp.data = None  # first-time user — no prior DNA
+    dna_select_chain = dna_select_mock.select.return_value.eq.return_value.maybe_single.return_value
+    dna_select_chain.execute.return_value = dna_select_resp
 
     insert_mock = MagicMock()
     insert_resp = MagicMock()
@@ -172,7 +180,7 @@ def _build_onboarding_supabase(
     upsert_resp.error = upsert_error
     upsert_mock.upsert.return_value.execute.return_value = upsert_resp
 
-    mock.table.side_effect = [insert_mock, upsert_mock]
+    mock.table.side_effect = [dna_select_mock, insert_mock, upsert_mock]
     return mock
 
 
@@ -635,6 +643,7 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
         mock_provider_cls.return_value = mock_provider_inst
         with patch("app.modules.assessment.service.get_settings") as mock_settings:
             mock_settings.return_value.llm_mini = "gpt-4o-mini"
+            mock_settings.return_value.dna_ema_retain = 0.7
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_s:
                 mock_prompts_s.return_value.llm_mini = "gpt-4o-mini"
                 await process_onboarding(
@@ -668,7 +677,12 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
 
     upsert_mock.upsert.side_effect = _capture_upsert
 
-    supabase2.table.side_effect = [insert_mock, upsert_mock]
+    dna_select_mock2 = MagicMock()
+    dna_select_resp2 = MagicMock()
+    dna_select_resp2.data = None
+    _c2 = dna_select_mock2.select.return_value.eq.return_value.maybe_single.return_value
+    _c2.execute.return_value = dna_select_resp2
+    supabase2.table.side_effect = [dna_select_mock2, insert_mock, upsert_mock]
 
     with patch("app.modules.assessment.service.OpenAILLMProvider") as mock_provider_cls2:
         mock_provider_inst2 = MagicMock()
@@ -676,6 +690,7 @@ async def test_process_onboarding_session_count_is_zero(mock_to_thread) -> None:
         mock_provider_cls2.return_value = mock_provider_inst2
         with patch("app.modules.assessment.service.get_settings") as mock_settings2:
             mock_settings2.return_value.llm_mini = "gpt-4o-mini"
+            mock_settings2.return_value.dna_ema_retain = 0.7
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
                 await process_onboarding(
@@ -758,6 +773,7 @@ async def test_process_onboarding_profile_text_has_dpdp_disclaimer(mock_to_threa
         mock_provider_cls.return_value = mock_provider_inst
         with patch("app.modules.assessment.service.get_settings") as mock_settings:
             mock_settings.return_value.llm_mini = "gpt-4o-mini"
+            mock_settings.return_value.dna_ema_retain = 0.7
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
                 result = await process_onboarding(
@@ -784,6 +800,7 @@ async def test_process_onboarding_returns_onboarding_result(mock_to_thread) -> N
         mock_provider_cls.return_value = mock_provider_inst
         with patch("app.modules.assessment.service.get_settings") as mock_settings:
             mock_settings.return_value.llm_mini = "gpt-4o-mini"
+            mock_settings.return_value.dna_ema_retain = 0.7
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
                 result = await process_onboarding(
@@ -831,8 +848,14 @@ async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> 
         data=[{"user_id": "user-onb-001"}], error=None
     )
 
+    dna_select_mock = MagicMock()
+    dna_select_resp = MagicMock()
+    dna_select_resp.data = None
+    dna_select_chain = dna_select_mock.select.return_value.eq.return_value.maybe_single.return_value
+    dna_select_chain.execute.return_value = dna_select_resp
+
     supabase = MagicMock()
-    supabase.table.side_effect = [insert_mock, upsert_mock]
+    supabase.table.side_effect = [dna_select_mock, insert_mock, upsert_mock]
 
     with patch("app.modules.assessment.service.OpenAILLMProvider") as mock_provider_cls:
         mock_provider_inst = MagicMock()
@@ -840,6 +863,7 @@ async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> 
         mock_provider_cls.return_value = mock_provider_inst
         with patch("app.modules.assessment.service.get_settings") as mock_settings:
             mock_settings.return_value.llm_mini = "gpt-4o-mini"
+            mock_settings.return_value.dna_ema_retain = 0.7
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
                 await process_onboarding(
@@ -880,6 +904,7 @@ async def test_process_onboarding_upsert_error_returns_500(mock_to_thread) -> No
         mock_provider_cls.return_value = mock_provider_inst
         with patch("app.modules.assessment.service.get_settings") as mock_settings:
             mock_settings.return_value.llm_mini = "gpt-4o-mini"
+            mock_settings.return_value.dna_ema_retain = 0.7
             with patch("app.modules.assessment.prompts.get_settings") as mock_prompts_settings:
                 mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
                 with pytest.raises(HTTPException) as exc_info:
