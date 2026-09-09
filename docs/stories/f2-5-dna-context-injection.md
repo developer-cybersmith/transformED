@@ -4,7 +4,8 @@
 **Story:** F2-5
 **Branch:** `sprint4/s4-dna-context-injection`
 **Owner:** Dev 1
-**Status:** ready-for-dev
+**Status:** review — AC1-AC7 done and verified; AC/Task 4 (real cost measurement) deliberately
+deferred, needs the user's go-ahead to spend real money on a live run
 
 ---
 
@@ -77,26 +78,26 @@ Nothing in `apps/web`, no other pipeline node, no schema/contract file changes. 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 — `get_dna_prompt_context` (AC1)
-  - [ ] 1.1 Add the function to `apps/api/app/modules/assessment/service.py`, reusing the existing `learner_dna` query shape (`get_learner_context`'s Step 2), `_dim_band`/`ALL_NINE_DIMENSIONS` banding, and `_build_learner_prompt_text(dna, session=LearnerContextSession())` for the actual string — zero new prompt-formatting code.
-  - [ ] 1.2 RED: write tests first — no row → `""`; a row exists → non-empty string with no raw floats. Confirm they fail (function doesn't exist yet).
-  - [ ] 1.3 GREEN: implement, confirm tests pass.
+- [x] Task 1 — `get_dna_prompt_context` (AC1)
+  - [x] 1.1 Add the function to `apps/api/app/modules/assessment/service.py`, reusing the existing `learner_dna` query shape (`get_learner_context`'s Step 2), `_dim_band`/`ALL_NINE_DIMENSIONS` banding, and `_build_learner_prompt_text(dna, session=LearnerContextSession())` for the actual string — zero new prompt-formatting code.
+  - [x] 1.2 RED: write tests first — no row → `""`; a row exists → non-empty string with no raw floats. Confirm they fail (function doesn't exist yet).
+  - [x] 1.3 GREEN: implement, confirm tests pass.
 
-- [ ] Task 2 — `fetch_learner_context_node` + graph wiring (AC2, AC3, AC6, AC7)
-  - [ ] 2.1 RED: `test_fetch_learner_context_node.py` (new) — cache-hit path, no-row path, row-exists path, checkpoint-write shape. `test_fan_out_state_keys.py` — new `"dna_context"` case. Confirm all fail.
-  - [ ] 2.2 GREEN: implement the node mirroring `embed_node`'s exact idempotency shape; wire `add_node`/`add_edge`/`add_conditional_edges`; add `dna_context` to `PipelineState` and `_FAN_OUT_STATE_KEYS`.
+- [x] Task 2 — `fetch_learner_context_node` + graph wiring (AC2, AC3, AC6, AC7)
+  - [x] 2.1 RED: `test_f2_5_dna_context_injection.py` (new) — cache-hit path, no-row path, row-exists path, checkpoint-write shape. `test_fan_out_state_keys.py` — new `"dna_context"` case. Confirmed all fail.
+  - [x] 2.2 GREEN: implemented the node mirroring `embed_node`'s exact idempotency shape; wired `add_node`/`add_edge`/`add_conditional_edges`; added `dna_context` to `PipelineState` and `_FAN_OUT_STATE_KEYS`.
 
-- [ ] Task 3 — Consumption in the three nodes (AC4, AC5)
-  - [ ] 3.1 RED: extend `test_lesson_planner_node.py`, `test_slide_generator_node.py`, `test_phase1_economy_nodes.py` — non-empty `dna_context` appears in the system prompt; empty `dna_context` leaves the prompt byte-identical to today. Confirm fail.
-  - [ ] 3.2 GREEN: append `state.get("dna_context", "")` at each of the three system-prompt construction sites.
+- [x] Task 3 — Consumption in the three nodes (AC4, AC5)
+  - [x] 3.1 RED: extended `test_lesson_planner_node.py`, `test_slide_generator_node.py`, `test_phase1_economy_nodes.py` — non-empty `dna_context` appears in the system prompt; empty `dna_context` leaves the prompt byte-identical to today. Confirmed fail.
+  - [x] 3.2 GREEN: appended `state.get("dna_context", "")` at each of the three system-prompt construction sites.
 
 - [ ] Task 4 — Real cost measurement (Scale & Load Q2)
-  - [ ] 4.1 Run one real lesson generation with a non-trivial `dna_context` populated; pull the real Langfuse trace; record the actual added token cost per `narration_generator` call and the total across all sections in this story's Completion Notes.
+  - [ ] 4.1 **Deliberately deferred** — requires a real lesson generation (real OpenAI/Sarvam/Nano Banana spend) to pull a real Langfuse trace. Not run without the user's explicit go-ahead to spend money; not assumed negligible either. See Completion Notes.
 
-- [ ] Task 5 — Full-suite verification + docs
-  - [ ] 5.1 `ruff format --check`, `ruff check`, `mypy`, full `pytest tests/unit/` — zero regressions against the current baseline (1466 passed, 6 skipped).
-  - [ ] 5.2 Mutation-check the graceful-degradation and fan-out-key tests (revert the fix, confirm the right test goes red, restore).
-  - [ ] 5.3 Mark `docs/bug-planner.md`'s Item 2 done, same PR.
+- [x] Task 5 — Full-suite verification + docs
+  - [x] 5.1 `ruff format --check`, `ruff check` clean on all touched files; `mypy` shows only the 4 pre-existing httpx-version errors in untouched provider files (documented baseline elsewhere in this register). Full `pytest tests/unit/`: 1497 passed, 6 skipped, zero regressions (baseline before this story: 1466 passed).
+  - [x] 5.2 Mutation-checked the fan-out-key test (removing `"dna_context"` from `_FAN_OUT_STATE_KEYS` → the pinned regression test goes red, correctly). Mutation-checked all three "unchanged when empty" tests — **first attempt was too weak** (comparing two same-value calls, which passes even with the bug present); fixed to assert against the real literal prompt content, re-verified the fix actually catches the mutation. All restored clean, re-verified via full re-run.
+  - [x] 5.3 Marked `docs/bug-planner.md`'s Item 2 done, same PR (branch merged in cleanly).
 
 ---
 
@@ -119,8 +120,50 @@ Nothing in `apps/web`, no other pipeline node, no schema/contract file changes. 
 
 ### Agent Model Used
 
+Claude Sonnet 5 (claude-sonnet-5)
+
 ### Debug Log References
+
+None — no live infra call, no debugging incident. Full test suite output: 1497 passed, 6 skipped
+(baseline before this story: 1466 passed).
 
 ### Completion Notes List
 
+- Reused F2-1's exact query/banding/formatting logic with zero duplication — `get_dna_prompt_context`
+  is a thin wrapper calling `_build_learner_prompt_text(dna, LearnerContextSession())`, the same
+  already-reviewed function F2-1 built. `LearnerContextSession()`'s all-optional/defaulted fields
+  make an empty "no session" instance valid, exactly as planned.
+- Traced the real graph topology directly (`_build_pipeline_graph`) rather than trusting memory —
+  confirmed `narration_generator` is genuinely Phase-1 (Send()-dispatched, once per section,
+  before `lesson_planner`/`slide_generator`), which is why `fetch_learner_context_node` had to sit
+  before the fan-out, not between Phase-2 nodes.
+- **Real mistake caught by mutation-checking, corrected in-session**: the first version of the
+  "empty dna_context leaves the prompt unchanged" tests (all three: `_planner_system_prompt`,
+  `slide_generator_node`, `narration_generator_node`) compared two calls that both implicitly
+  resolved to the same empty value — this passes even when the implementation unconditionally
+  appends `dna_context` regardless of emptiness, which I confirmed by deliberately introducing
+  that exact bug and watching all three tests still pass. Fixed by asserting against the real
+  literal prompt content/ending instead of a self-referential two-calls-agree comparison;
+  re-verified the fix actually catches the mutation this time (all three correctly went red),
+  then restored the real code and re-confirmed the full suite green.
+- Task 4 (real per-section token-cost measurement, Scale & Load Q2) is the one deliberately
+  incomplete item — it requires a real lesson generation (real OpenAI/Sarvam/Nano Banana spend)
+  to pull a real Langfuse trace. Not run without the user's explicit go-ahead to spend money on a
+  live run; not silently assumed negligible either. `docs/bug-planner.md`'s Item 2 update states
+  this residual explicitly.
+- `docs/bug-planner.md` (previously on its own unmerged branch, `feature2/bug-planner-doc`) was
+  merged into this branch cleanly (no conflicts) so Item 2 could be marked done in this same PR,
+  per AC8.
+
 ### File List
+
+- `apps/api/app/modules/assessment/service.py` (new function: `get_dna_prompt_context`)
+- `apps/api/app/modules/content/pipeline/graph.py` (new node `fetch_learner_context_node`; graph
+  wiring; `PipelineState.dna_context`; `_FAN_OUT_STATE_KEYS` extended; 3 consumption call sites)
+- `apps/api/tests/unit/test_f2_5_dna_context_injection.py` (new)
+- `apps/api/tests/unit/test_fan_out_state_keys.py` (extended)
+- `apps/api/tests/unit/test_lesson_planner_node.py` (extended)
+- `apps/api/tests/unit/test_slide_generator_node.py` (extended)
+- `apps/api/tests/unit/test_phase1_economy_nodes.py` (extended)
+- `docs/bug-planner.md` (Item 2 marked done)
+- `docs/stories/f2-5-dna-context-injection.md` (this file)

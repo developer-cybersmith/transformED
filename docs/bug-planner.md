@@ -13,9 +13,23 @@
 
 ---
 
-## 2. Inject Learner DNA + behavior signals into `lesson_planner` / `slide_generator` / `narration_generator` system prompts
+## 2. Inject Learner DNA + behavior signals into `lesson_planner` / `slide_generator` / `narration_generator` system prompts — DONE
 
-**This is the item we're brainstorming next — details below.**
+**Update:** built per the "fetch once, checkpoint it" decision recorded below (Story F2-5,
+branch `sprint4/s4-dna-context-injection`). New checkpointed graph node
+`fetch_learner_context_node` sits between `embed` and the Phase-1 fan-out, delegates to a new
+`get_dna_prompt_context()` (`assessment/service.py`) that reuses F2-1's existing query/banding/
+formatting logic (zero duplicated prompt-formatting code). `dna_context` reaches all three
+target nodes — `narration_generator` via `_FAN_OUT_STATE_KEYS`, `lesson_planner`/
+`slide_generator` directly from state — same text verbatim, appended only when non-empty.
+Graceful degradation (`""` for a new student with no `learner_dna` row) explicitly tested, not
+assumed — the "unchanged when empty" tests were mutation-checked and initially found to be too
+weak (comparing two same-value calls, which passes even under a broken implementation); fixed to
+assert against the real literal prompt ending instead. Full suite: 1497 passed, 6 skipped, zero
+regressions. **Residual, deliberately not done here**: the real per-section token-cost
+measurement (Scale & Load Q2 — `narration_generator` injects `dna_context` once per section, not
+once per lesson) needs a real Langfuse trace from a live run, which needs the user's go-ahead to
+spend real money — not run as part of this implementation pass.
 
 ---
 

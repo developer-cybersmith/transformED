@@ -34,6 +34,7 @@ def _state(tier: str) -> dict[str, Any]:
         "user_id": "u1",
         "book_id": "b1",
         "tier": tier,
+        "dna_context": "Student Learning Profile: strong in pattern recognition.",
         "sections": [
             {"title": "Intro", "body": "Body one."},
             {"title": "Next", "body": "Body two."},
@@ -89,6 +90,21 @@ def test_tier_is_declared_in_fan_out_state_keys() -> None:
     assert "tier" in _FAN_OUT_STATE_KEYS, (
         "tier dropped from _FAN_OUT_STATE_KEYS — every T1/T3 lesson silently "
         "reverts to the T2 band (Story 2-28 AC-3)"
+    )
+
+
+@pytest.mark.unit
+def test_dna_context_is_declared_in_fan_out_state_keys() -> None:
+    """Pin the regression directly: `dna_context` must stay in the allowlist
+    (Story F2-5) — narration_generator is the only DNA-context consumer
+    dispatched through this fan-out; without this key it would silently see
+    "" regardless of what fetch_learner_context_node actually fetched, the
+    same failure shape "tier" above already had."""
+    from app.modules.content.pipeline.graph import _FAN_OUT_STATE_KEYS
+
+    assert "dna_context" in _FAN_OUT_STATE_KEYS, (
+        "dna_context dropped from _FAN_OUT_STATE_KEYS — narration_generator "
+        "would silently lose Learner DNA personalization (Story F2-5)"
     )
 
 
