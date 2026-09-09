@@ -1,23 +1,15 @@
 # Bug Planner — Feature Sprint 2 (Dev 1 open items)
 
 **Source:** `docs/master-tracker.md` § "Bug Resolution Sprint (Feature Sprint 2)" → Dev 1 section.
-**Scope:** the 4 items from that list still unbuilt as of 2026-09-08 (verified against current code, not the tracker checkboxes). The 5th/6th list items — Nano Banana in the image fallback chain — are excluded here: already done and merged (Story 5-8b, D121 closed FIXED-GUARDED); only the tracker checkbox is stale.
+**Scope:** the 3 items from that list still unbuilt as of 2026-09-09 (verified against current code, not the tracker checkboxes). Two list items are excluded here as already done: Nano Banana in the image fallback chain (Story 5-8b, D121 closed FIXED-GUARDED), and line-level caption timestamps (Story 4-29/BR-6 + BR-3, see below) — both merged since this doc was first drafted.
 
 ---
 
-## 1. Line-level caption timestamps
+## 1. Line-level caption timestamps — DONE (merged 2026-09-08/09)
 
-**What's missing:** `Narration.timestamps` always ships `[]` (`tts_node`'s own docstring, `graph.py:4009-4015`). The only timing that exists is per-**slide**, not per-caption-line: `_estimate_slide_timestamps` (`graph.py:4668`) produces one `{slide_id, start_ms, end_ms}` per slide, either from a real measured MP3 duration (`tinytag`, Story S3-38) split evenly across slides, or a word-count estimate. No word-level or line-level forced alignment exists anywhere. Explicitly named as deferred since Story 2-8.
+**Update 2026-09-09:** built and shipped since this doc was first drafted. `Narration.caption_lines: list[CaptionLine]` (new field, `apps/api/app/schemas/lesson.py`) is populated by `_split_into_caption_lines()` inside `package_builder_node` (`graph.py`) — real per-line `{text, start_ms, end_ms}` timestamps, duration distributed proportionally by character count from the same `tinytag`-measured real audio duration `_estimate_slide_timestamps` already used at the slide level (the "relevant existing infra" this doc originally flagged was in fact reused, not reinvented). Empty list on the browser-fallback path or a `tinytag` failure — explicit degraded case (Story 4-29 AC5), not silently wrong. Retroactive-field pattern (`default_factory=list`, not in the JSON schema's `required`) so old lesson records and fixtures validate unchanged. Frontend: `CaptionOverlay` now consumes `caption_lines` directly via `activeCaptionLineIndexFromTimestamps()` when present, falling back to the old proportional-character-count estimate otherwise (Story 2-61/BR-3). Backend: `docs/stories/4-29-caption-lines-schema-pipeline.md`. Frontend: `docs/stories/2-61-caption-sync-real-timestamps.md`.
 
-**Who's blocked on it:** `docs/master-tracker.md`'s Dev 2 section, two items, both stated explicitly:
-- "Caption/subtitle display — one dialogue line at a time, synced to narration timestamps"
-- "Highlight/underline the active narration text on slide (karaoke-style sync) using caption timestamps" — **"depends on Dev 1's caption timestamp output"**
-
-Dev 2 has already worked around the absence twice: D90 (2026-08-13) shipped a non-synced, always-visible caption panel specifically because "word/sentence-level SYNCED captions are not possible yet"; S4-07/S4-09 (merged, PR #143) redesigned it to a YouTube/Netflix one-line-at-a-time style, still without real sync data underneath.
-
-**Relevant existing infra:** `tinytag`-measured real audio duration (`tts_node`) and `_estimate_slide_timestamps`'s existing split logic are the closest analogue — the mechanism for turning "total duration + N items" into a timestamp array already exists at the slide level and could plausibly be adapted to line level if per-line text boundaries and a per-line duration estimate (or real alignment) are available.
-
-**Open questions:** word-count-proportional split of the known segment duration (cheap, approximate, no new dependency) vs. real forced alignment (e.g. Whisper timestamps on the synthesized audio, or an alignment library) — accuracy vs. cost/complexity tradeoff. Also: does this need to work across all three TTS fallback tiers (Sarvam, Azure, Browser Speech), given `duration_ms` is already `None` on the browser-fallback path today?
+**Resolved, not left open:** the word-count-vs-forced-alignment question this doc originally posed was answered by choosing the cheaper character-proportional split, consistent with the existing slide-level mechanism, rather than real forced alignment — accuracy vs. complexity tradeoff was made explicitly, not left pending.
 
 ---
 
@@ -70,3 +62,26 @@ So this item is really "reuse the `dna` half of F2-1's logic, by `user_id`, insi
 3. New user (no `learner_dna` row yet, `dna` is null per AC4) — every one of these three nodes must degrade gracefully to today's un-personalized behavior, not fail or produce a degenerate prompt.
 4. Does this change what "identical input → identical output" means for these nodes' existing idempotency/checkpoint pattern — if DNA is re-fetched on an ARQ retry and has changed since the first attempt (e.g. `session_count` incremented), does the checkpoint still correctly skip re-running, or does this introduce a new source of non-determinism into an already-checkpointed node?
 5. Should this reuse `LearnerContextDNA` as-is (import/share the schema) or does content-generation need its own, smaller shape?
+
+**Decision so far (2026-09-09): fetch once, checkpoint it.**
+
+Traced the actual graph topology (`graph.py:5624-5671`):
+```
+extract → structure → chunk → embed → [Send() fan-out: 6 Phase-1 nodes, incl. narration_generator] → lesson_planner → slide_generator → tts_node → image_generator → package_builder
+```
+
+Two things this rules out:
+- **Not inside `embed_node`** — its whole job is `embeddings_stored: bool`; every node in this file is scoped that narrowly by convention (`tts_node`'s own docstring: "Input is `state["narration_scripts"]` ONLY").
+- **Not inside the Phase-1 router** (`_fan_out_phase1_economy_nodes`) — it's a conditional-edge router, not a checkpointed graph node (no `if "x" in node_outputs: return cached` guard like every real node has). On an ARQ retry it re-runs from scratch every time — DNA-fetching here would re-fetch on every retry, reintroducing the exact non-determinism question 4 above raises.
+
+**Proposed mechanism:** a new, real, checkpointed node (`fetch_learner_context_node`) inserted between `embed` and the fan-out, following the same idempotency pattern as every other node:
+```python
+graph.add_node("fetch_learner_context", fetch_learner_context_node)
+graph.add_edge("embed", "fetch_learner_context")
+graph.add_conditional_edges("fetch_learner_context", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
+```
+- `narration_generator` (Phase 1, Send()-dispatched) needs `dna_context` added to `_FAN_OUT_STATE_KEYS` (`graph.py:5503`) to receive it in its per-section dispatch payload.
+- `lesson_planner` / `slide_generator` (Phase 2, sequential) just read `state["dna_context"]` directly.
+- Query: `learner_dna` by `user_id` alone, `.maybe_single()`, null-safe.
+
+**Still open:** whether a new graph node is the right shape vs. some other mechanism — not yet confirmed with the user; "fetch once, checkpoint it" is agreed as the *principle*, this specific implementation is the next thing to validate.
