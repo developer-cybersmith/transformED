@@ -1939,9 +1939,9 @@ duration, not another tier's); all 11 pre-existing tests pass unmodified. Full f
 
 ### BR-3 — Caption/Subtitle Display: One Line at a Time, Synced to Timestamps
 **Priority:** High  
-**Status:** 🔲 NOT STARTED  
+**Status:** ✅ DONE — ✅ 2026-09-09 (Story 2-61, branch `bug-resolution/br-3-caption-sync`)  
 
-Distinct from the existing `CaptionOverlay.tsx` (which already redesigned to one-line-at-a-time display per S4-09, but timed proportionally by character count since no real per-line timestamps existed). This task re-syncs display to Dev 1's new real line-level start/end timestamps once available — replaces the proportional-timing approximation with the real thing.
+Distinct from the existing `CaptionOverlay.tsx` (which already redesigned to one-line-at-a-time display per S4-09, but timed proportionally by character count since no real per-line timestamps existed). Re-synced display to the real line-level `start_ms`/`end_ms` timestamps landed by Story 4-29 (BR-6, PR #219): `Narration.caption_lines` is now consumed directly via a new `activeCaptionLineIndexFromTimestamps()` selector when present, replacing the proportional-timing approximation with the real thing. The proportional estimate (`splitScriptIntoCaptionLines`/`activeCaptionLineIndex`) is kept, unmodified, as the explicit fallback for the degraded case (`caption_lines` empty/absent — older lesson records, browser-TTS fallback, or a `tinytag` failure at generation time), never removed. 8 new tests (4 selector unit tests + 4 component integration tests covering both the real-timestamp path and both fallback shapes). Full frontend suite: 93 files / 1157 tests (was 91/1149), zero regressions. Full detail in `docs/stories/2-61-caption-sync-real-timestamps.md`.
 
 ### BR-4 — Karaoke-Style Active-Narration Highlight
 **Priority:** High  

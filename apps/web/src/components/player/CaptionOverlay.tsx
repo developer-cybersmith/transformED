@@ -2,10 +2,19 @@
 
 import { useMemo } from 'react';
 import { usePlayerStore } from '@/stores/player.machine';
+import type { CaptionLine } from '@hie/shared/types/lesson';
 
 interface CaptionOverlayProps {
   /** Current segment's full narration script. Pass `segment?.narration.script ?? null`. */
   script: string | null;
+  /**
+   * Real server-side line timing (Story 4-29 / BR-6), when present on the segment's
+   * `Narration`. When non-empty, this is the source of truth for both line text and
+   * timing -- the proportional client-side estimate below is only used as a fallback
+   * for older lesson records or the browser-TTS/`tinytag`-failure degraded case where
+   * the server could not measure a real audio duration (Story 4-29 AC5).
+   */
+  captionLines?: CaptionLine[];
 }
 
 // Review redesign (2026-08-17): was "show the whole segment script at once,
@@ -17,22 +26,25 @@ interface CaptionOverlayProps {
 // the actual product intent; the ask is a caption *line*, current to what's
 // being narrated right now.
 //
-// IMPORTANT CONSTRAINT, unchanged from before: there is no word/sentence-level
-// timing anywhere in this pipeline. `NarrationTimestamp` (packages/shared/
-// types/lesson.ts) is per-SLIDE, not per-word, and the Sarvam TTS integration
-// returns no word-level timestamps at all. A frame-perfect, word-highlighted
-// sync (true YouTube auto-caption behaviour) is NOT achievable without that
-// backend/TTS work -- a separate, larger follow-up, same as before.
+// UPDATE (Story 2-61 / BR-3, 2026-09-09): `Narration.caption_lines` (Story 4-29 /
+// BR-6) now provides real, server-side line text + `start_ms`/`end_ms` estimated
+// from the actual measured audio duration -- see `activeCaptionLineIndexFromTimestamps`
+// below, which is used whenever `captionLines` is present. There is still no
+// word-level timing anywhere in the pipeline (`NarrationTimestamp` remains
+// per-SLIDE, and no TTS provider in the fallback chain returns word-level timing),
+// so a frame-perfect, word-highlighted sync (true YouTube auto-caption behaviour)
+// remains out of reach -- but LINE-level sync to a real measured duration is now
+// real, not estimated.
 //
-// What this DOES do without any new data: split the script into short,
-// subtitle-length lines and estimate each line's time window by allocating
-// the segment's total known duration proportionally to each line's character
-// count (a much closer proxy for spoken duration than a flat per-line split,
-// since narration lines vary a lot in length). This is an approximation, not
-// real sync -- pacing, pauses, and emphasis all shift the true timing -- but
-// it tracks actual playback position, drifts back into alignment every
-// segment boundary (never compounds across segments), and never requires
-// scrolling to read a line.
+// The functions immediately below (`splitScriptIntoCaptionLines` /
+// `activeCaptionLineIndex`) remain the deliberate fallback for the degraded case
+// where `caption_lines` is empty or absent (older lesson records predating this
+// field, the browser-TTS fallback, or a `tinytag` failure at generation time --
+// Story 4-29 AC5): split the script into short, subtitle-length lines and estimate
+// each line's time window by allocating the segment's total known duration
+// proportionally to each line's character count. This is still an approximation
+// on that path only -- pacing, pauses, and emphasis all shift true timing -- but it
+// tracks actual playback position and never requires scrolling to read a line.
 
 // ~10 words is close to broadcast-subtitle convention (roughly one breath /
 // one glance's worth of reading) and keeps every line short enough that the
@@ -82,17 +94,51 @@ export function activeCaptionLineIndex(
   return lines.length - 1;
 }
 
-export function CaptionOverlay({ script }: CaptionOverlayProps) {
+/**
+ * Which caption line is "active" at `positionMs`, given real server-measured
+ * `start_ms`/`end_ms` windows (Story 4-29's `_split_into_caption_lines` guarantees
+ * these are contiguous and ordered, with the last line's `end_ms` exactly equal to
+ * the segment's measured audio duration). Exported for unit testing.
+ *
+ * Clamps to the first line before its `start_ms` (only reachable on an early render
+ * tick before playback position updates) and to the last line once `positionMs`
+ * reaches or exceeds its `end_ms` -- the same clamp behavior as the proportional
+ * estimate below, for the same reasons (e.g. teach-back after the segment ends).
+ */
+export function activeCaptionLineIndexFromTimestamps(
+  lines: CaptionLine[],
+  positionMs: number
+): number {
+  if (lines.length === 0) return -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (positionMs < lines[i].end_ms) return i;
+  }
+  return lines.length - 1;
+}
+
+export function CaptionOverlay({ script, captionLines }: CaptionOverlayProps) {
   const audioPositionMs = usePlayerStore((s) => s.audioPositionMs);
   const audioDurationMs = usePlayerStore((s) => s.audioDurationMs);
 
-  const lines = useMemo(() => (script ? splitScriptIntoCaptionLines(script) : []), [script]);
-  const activeIndex = activeCaptionLineIndex(lines, audioPositionMs, audioDurationMs);
+  const hasRealTimestamps = !!captionLines && captionLines.length > 0;
+
+  // Only computed when the real-timestamp path isn't available -- this is the
+  // pre-existing degraded-case behavior (Story 4-29 AC5), unchanged.
+  const fallbackLines = useMemo(
+    () => (!hasRealTimestamps && script ? splitScriptIntoCaptionLines(script) : []),
+    [script, hasRealTimestamps]
+  );
+
+  const activeIndex = hasRealTimestamps
+    ? activeCaptionLineIndexFromTimestamps(captionLines, audioPositionMs)
+    : activeCaptionLineIndex(fallbackLines, audioPositionMs, audioDurationMs);
 
   // Render nothing when there is nothing to show -- mirrors SlideImage's own
   // "render nothing rather than a blank space-eating placeholder" pattern in
   // SlideRenderer.tsx.
   if (activeIndex === -1) return null;
+
+  const activeText = hasRealTimestamps ? captionLines[activeIndex].text : fallbackLines[activeIndex];
 
   return (
     <div
@@ -114,7 +160,7 @@ export function CaptionOverlay({ script }: CaptionOverlayProps) {
         key={activeIndex}
         className="text-neutral-100 text-sm leading-relaxed text-center max-w-3xl mx-auto"
       >
-        {lines[activeIndex]}
+        {activeText}
       </p>
     </div>
   );

@@ -323,10 +323,16 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
           />
         ))}
 
-        {/* Non-synced caption panel (D90) — shows the current segment's full
-            narration script so students can read along; renders nothing when
-            there's no script (mirrors SlideImage's own pattern). */}
-        <CaptionOverlay script={segment?.narration.script ?? null} />
+        {/* One-line-at-a-time caption panel, synced to the segment's real
+            server-side line timestamps when available (Story 2-61 / BR-3,
+            `Narration.caption_lines`), falling back to a client-side
+            proportional estimate otherwise (Story 4-29 AC5's degraded case).
+            Renders nothing when there's no script (mirrors SlideImage's own
+            pattern). */}
+        <CaptionOverlay
+          script={segment?.narration.script ?? null}
+          captionLines={segment?.narration.caption_lines}
+        />
 
         {/* Lesson metadata shown before any slide is active */}
         {!currentSlideId && (

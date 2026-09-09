@@ -1,6 +1,6 @@
 ---
 title: "Story 2-61 — Caption/Subtitle Display: Sync to Real Line-Level Timestamps (BR-3)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -92,7 +92,25 @@ one array already present on the loaded `LessonPackage`.
 
 ### Completion Notes
 
-_(filled in after implementation)_
+- **AC1-DONE.** `captionLines?: CaptionLine[]` added to `CaptionOverlayProps`, type imported from
+  `@hie/shared/types/lesson` (not redeclared).
+- **AC2/AC4-DONE.** New pure function `activeCaptionLineIndexFromTimestamps(lines, positionMs)`
+  selects the line whose `[start_ms, end_ms)` window contains `positionMs`, clamping to `0` before
+  the first line and to the last index at/after the final `end_ms` — used whenever `captionLines`
+  is non-empty; `captionLines[activeIndex].text` is rendered directly, bypassing
+  `splitScriptIntoCaptionLines`/`activeCaptionLineIndex` entirely on this path.
+- **AC3-DONE.** `hasRealTimestamps` gates the two paths; when `captionLines` is `undefined` or
+  `[]`, `fallbackLines`/`activeCaptionLineIndex` run exactly as before — all pre-existing tests for
+  that path pass unmodified.
+- **AC5-DONE.** `Player.tsx` now passes `captionLines={segment?.narration.caption_lines}` alongside
+  the existing `script` prop; stale "Non-synced caption panel (D90)" comment above it updated to
+  describe the real sync path.
+- **AC6-DONE.** 4 new integration tests (real text used over a differing raw script, line advance
+  across a real `end_ms` boundary, fallback preserved for both `undefined` and `[]`) + 4 new
+  `activeCaptionLineIndexFromTimestamps` unit tests (empty input, before-first-line clamp, mid-line
+  selection incl. exact-boundary transition, after-last-line clamp).
+- **AC7-DONE.** `tsc --noEmit` clean, targeted `eslint` clean on all 3 touched files. Full frontend
+  suite: 93 files / 1157 tests (was 91/1149 pre-story), zero regressions.
 
 ### File List
 
