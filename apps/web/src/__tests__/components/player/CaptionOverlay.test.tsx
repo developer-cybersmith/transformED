@@ -4,8 +4,10 @@ import {
   CaptionOverlay,
   splitScriptIntoCaptionLines,
   activeCaptionLineIndex,
+  activeCaptionLineIndexFromTimestamps,
 } from '@/components/player/CaptionOverlay';
 import { usePlayerStore } from '@/stores/player.machine';
+import type { CaptionLine } from '@hie/shared/types/lesson';
 
 function words(n: number): string[] {
   return Array.from({ length: n }, (_, i) => `word${i}`);
@@ -80,6 +82,39 @@ describe('activeCaptionLineIndex', () => {
     const lines = ['aaaa', 'bbbb'];
     expect(activeCaptionLineIndex(lines, 1000, 1000)).toBe(1);
     expect(activeCaptionLineIndex(lines, 999999, 1000)).toBe(1);
+  });
+});
+
+// ── activeCaptionLineIndexFromTimestamps ─────────────────────────────────────────
+
+function line(text: string, start_ms: number, end_ms: number): CaptionLine {
+  return { text, start_ms, end_ms };
+}
+
+describe('activeCaptionLineIndexFromTimestamps', () => {
+  it('returns -1 for an empty lines array', () => {
+    expect(activeCaptionLineIndexFromTimestamps([], 500)).toBe(-1);
+  });
+
+  it('clamps to line 0 when positionMs is before the first line start', () => {
+    const lines = [line('a', 1000, 2000), line('b', 2000, 3000)];
+    expect(activeCaptionLineIndexFromTimestamps(lines, 0)).toBe(0);
+  });
+
+  it('selects the line whose [start_ms, end_ms) window contains positionMs', () => {
+    const lines = [line('a', 0, 1000), line('b', 1000, 2500), line('c', 2500, 4000)];
+    expect(activeCaptionLineIndexFromTimestamps(lines, 0)).toBe(0);
+    expect(activeCaptionLineIndexFromTimestamps(lines, 999)).toBe(0);
+    expect(activeCaptionLineIndexFromTimestamps(lines, 1000)).toBe(1);
+    expect(activeCaptionLineIndexFromTimestamps(lines, 2499)).toBe(1);
+    expect(activeCaptionLineIndexFromTimestamps(lines, 2500)).toBe(2);
+    expect(activeCaptionLineIndexFromTimestamps(lines, 3999)).toBe(2);
+  });
+
+  it('clamps to the last line once positionMs reaches or exceeds its end_ms', () => {
+    const lines = [line('a', 0, 1000), line('b', 1000, 2000)];
+    expect(activeCaptionLineIndexFromTimestamps(lines, 2000)).toBe(1);
+    expect(activeCaptionLineIndexFromTimestamps(lines, 999999)).toBe(1);
   });
 });
 
@@ -169,5 +204,59 @@ describe('CaptionOverlay — YouTube/Netflix-style one-line-at-a-time captions (
     render(<CaptionOverlay script={script} />);
 
     expect(screen.getAllByTestId('caption-overlay')).toHaveLength(1);
+  });
+});
+
+// ── CaptionOverlay -- real server-provided caption_lines (Story 2-61 / BR-3) ─────
+
+describe('CaptionOverlay — real caption_lines timestamp sync (BR-3)', () => {
+  const realLines: CaptionLine[] = [
+    line('Real line one from the server.', 0, 2000),
+    line('Real line two from the server.', 2000, 5000),
+  ];
+
+  it('uses the real caption_lines text instead of a naive word-split of script', () => {
+    usePlayerStore.setState({ audioDurationMs: 5000, audioPositionMs: 0 });
+    render(
+      <CaptionOverlay
+        script="Completely different script text that would split differently."
+        captionLines={realLines}
+      />
+    );
+
+    expect(screen.getByText('Real line one from the server.')).not.toBeNull();
+    expect(
+      screen.queryByText(/Completely different script text/)
+    ).toBeNull();
+  });
+
+  it('advances lines as audioPositionMs crosses each real end_ms boundary', () => {
+    usePlayerStore.setState({ audioDurationMs: 5000, audioPositionMs: 0 });
+    const { rerender } = render(<CaptionOverlay script="ignored" captionLines={realLines} />);
+    expect(screen.getByText('Real line one from the server.')).not.toBeNull();
+
+    act(() => {
+      usePlayerStore.setState({ audioPositionMs: 2000 });
+    });
+    rerender(<CaptionOverlay script="ignored" captionLines={realLines} />);
+
+    expect(screen.getByText('Real line two from the server.')).not.toBeNull();
+    expect(screen.queryByText('Real line one from the server.')).toBeNull();
+  });
+
+  it('falls back to the proportional-estimate path when captionLines is undefined', () => {
+    usePlayerStore.setState({ audioDurationMs: 0, audioPositionMs: 0 });
+    const script = words(10).join(' ');
+    render(<CaptionOverlay script={script} captionLines={undefined} />);
+
+    expect(screen.getByText(script)).not.toBeNull();
+  });
+
+  it('falls back to the proportional-estimate path when captionLines is an empty array', () => {
+    usePlayerStore.setState({ audioDurationMs: 0, audioPositionMs: 0 });
+    const script = words(10).join(' ');
+    render(<CaptionOverlay script={script} captionLines={[]} />);
+
+    expect(screen.getByText(script)).not.toBeNull();
   });
 });

@@ -188,9 +188,17 @@ async def test_successful_synthesis_measures_real_duration_via_tinytag() -> None
     assert len(assets) == 1
     assert assets[0]["segment_id"] == "sec_0"
     # "data" is still exactly the frozen Narration shape — duration_ms must
-    # NOT be inside it.
+    # NOT be inside it. Story 4-29 (BR-6) added caption_lines to Narration;
+    # tts_node's model_dump() includes it (defaulting to [] — no real audio
+    # to estimate from at this stage; package_builder_node populates it later).
     assert "duration_ms" not in assets[0]["data"]
-    assert set(assets[0]["data"]) == {"script", "audio_url", "audio_provider", "timestamps"}
+    assert set(assets[0]["data"]) == {
+        "script",
+        "audio_url",
+        "audio_provider",
+        "timestamps",
+        "caption_lines",  # Story 4-29 (BR-6)
+    }
     # The sibling key carries the REAL measured value — not a placeholder,
     # not the estimate a word-count formula would produce.
     assert assets[0]["duration_ms"] == _real_mp3_duration_ms()
