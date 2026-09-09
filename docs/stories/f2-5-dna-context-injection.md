@@ -4,8 +4,8 @@
 **Story:** F2-5
 **Branch:** `sprint4/s4-dna-context-injection`
 **Owner:** Dev 1
-**Status:** review — AC1-AC7 done and verified; AC/Task 4 (real cost measurement) deliberately
-deferred, needs the user's go-ahead to spend real money on a live run
+**Status:** review — all 8 ACs done and live-verified end-to-end against real infrastructure
+(2026-09-09), not just unit tests
 
 ---
 
@@ -91,8 +91,8 @@ Nothing in `apps/web`, no other pipeline node, no schema/contract file changes. 
   - [x] 3.1 RED: extended `test_lesson_planner_node.py`, `test_slide_generator_node.py`, `test_phase1_economy_nodes.py` — non-empty `dna_context` appears in the system prompt; empty `dna_context` leaves the prompt byte-identical to today. Confirmed fail.
   - [x] 3.2 GREEN: appended `state.get("dna_context", "")` at each of the three system-prompt construction sites.
 
-- [ ] Task 4 — Real cost measurement (Scale & Load Q2)
-  - [ ] 4.1 **Deliberately deferred** — requires a real lesson generation (real OpenAI/Sarvam/Nano Banana spend) to pull a real Langfuse trace. Not run without the user's explicit go-ahead to spend money; not assumed negligible either. See Completion Notes.
+- [x] Task 4 — Real cost measurement (Scale & Load Q2)
+  - [x] 4.1 **Done, live, 2026-09-09** — ran a real lesson generation (small 3-page book, T3 tier, real student with a real `learner_dna` row) against the real running ARQ worker. Pulled the real Langfuse trace and confirmed the injected DNA text reached exactly the 5 real LLM calls expected (2× `gpt-4o` — `lesson_planner`/`slide_generator`, 3× `gpt-4o-mini` — `narration_generator`, one per section). Tokenized the actual injected string: 99 tokens per call. Real added cost for this whole lesson: **$0.00054** — negligible against the $3.00/lesson ceiling, measured, not assumed. See Completion Notes for full detail.
 
 - [x] Task 5 — Full-suite verification + docs
   - [x] 5.1 `ruff format --check`, `ruff check` clean on all touched files; `mypy` shows only the 4 pre-existing httpx-version errors in untouched provider files (documented baseline elsewhere in this register). Full `pytest tests/unit/`: 1497 passed, 6 skipped, zero regressions (baseline before this story: 1466 passed).
@@ -146,11 +146,44 @@ None — no live infra call, no debugging incident. Full test suite output: 1497
   literal prompt content/ending instead of a self-referential two-calls-agree comparison;
   re-verified the fix actually catches the mutation this time (all three correctly went red),
   then restored the real code and re-confirmed the full suite green.
-- Task 4 (real per-section token-cost measurement, Scale & Load Q2) is the one deliberately
-  incomplete item — it requires a real lesson generation (real OpenAI/Sarvam/Nano Banana spend)
-  to pull a real Langfuse trace. Not run without the user's explicit go-ahead to spend money on a
-  live run; not silently assumed negligible either. `docs/bug-planner.md`'s Item 2 update states
-  this residual explicitly.
+- **Task 4 (real per-section token-cost measurement) — done live, 2026-09-09, with the user's
+  explicit go-ahead.** Real end-to-end test, against the real running ARQ worker (not a mock):
+  - Real, existing infra reused — a 3-page book (`short_3page.pdf`, already ingested), its 3-chunk
+    "Introduction to Cell Biology" chapter, and a real student (`learner_dna` row seeded
+    2026-08-05 for unrelated upload-feature testing) — no new book upload, minimal real spend.
+    Inserted `lessons`/`lesson_jobs` rows directly and enqueued `content_pipeline_job` on the real
+    `hie:pipeline` ARQ queue (T3 tier, cheapest).
+  - Live worker log confirmed `fetch_learner_context_node` actually ran mid-pipeline
+    (`last_node: fetch_learner_context`), then the job completed successfully in 203.6s:
+    `lessons.status = 'ready'`, real 3-segment package, real slides, real narration on every
+    segment.
+  - **Checkpoint verified directly**: `lesson_jobs.node_outputs.fetch_learner_context.dna_context`
+    contains the real, formatted DNA text (`"**Student Learning Profile:** ..."`).
+  - **Reached the LLM — confirmed via the real Langfuse trace, not inferred.** Computed the
+    trace's deterministic id (`Langfuse.create_trace_id(seed=lesson_id)`, this codebase's own
+    convention) and pulled it via the public API. Searched all 39 real `GENERATION` observations
+    for the literal injected text: found in **exactly 5** — matching the predicted shape exactly
+    (2× `gpt-4o`: `lesson_planner` + `slide_generator`; 3× `gpt-4o-mini`: `narration_generator`,
+    once per section, confirming the Scale & Load Q2 concern that this node injects per-section,
+    not per-lesson).
+  - **Real cost, measured not assumed**: tokenized the actual injected string with `tiktoken`
+    (`gpt-4o` encoding) — 99 tokens, present identically in the observed `input_tokens` delta on
+    all 5 real calls. Total added cost for this whole lesson: 2×(99/1e6×$2.50) +
+    3×(99/1e6×$0.15) = **$0.00054** — negligible against the $3.00/lesson ceiling. Scales linearly
+    with section count; even at the pipeline's own max (`_MAX_PHASE1_SECTIONS=60`), still
+    negligible.
+  - **One real, honest finding, investigated and confirmed NOT a bug**: the fetched context showed
+    `"badges: none yet"` and every dimension as `"developing"`, despite the real row having a
+    badge (`"Curious Learner"`) and varied scores (55-72). Root cause confirmed by reading
+    `BADGE_THRESHOLDS` (`onboarding_questions.py`) directly: `"Curious Learner"` is not one of the
+    9 real canonical badge strings (`"Curious Explorer"` is) — this test row was a manually-seeded
+    fixture predating that exact naming, and `_build_learner_prompt_text`'s existing allowlist
+    filter (F2-1, security-motivated: never let an arbitrary/stale badge string reach an LLM
+    prompt) correctly rejected it. The "developing" bands are also correct: all 9 real dimension
+    values (55-72) genuinely fall in `_dim_descriptor`'s 55-74.99 "developing" band by coincidence
+    of the seeded values, not a bug. Both mechanisms behaved exactly as designed.
+  - `docs/bug-planner.md`'s Item 2 update revised to remove the "not yet measured" caveat now that
+    this has real evidence behind it.
 - `docs/bug-planner.md` (previously on its own unmerged branch, `feature2/bug-planner-doc`) was
   merged into this branch cleanly (no conflicts) so Item 2 could be marked done in this same PR,
   per AC8.

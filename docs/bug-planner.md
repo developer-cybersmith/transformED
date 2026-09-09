@@ -26,10 +26,14 @@ Graceful degradation (`""` for a new student with no `learner_dna` row) explicit
 assumed — the "unchanged when empty" tests were mutation-checked and initially found to be too
 weak (comparing two same-value calls, which passes even under a broken implementation); fixed to
 assert against the real literal prompt ending instead. Full suite: 1497 passed, 6 skipped, zero
-regressions. **Residual, deliberately not done here**: the real per-section token-cost
-measurement (Scale & Load Q2 — `narration_generator` injects `dna_context` once per section, not
-once per lesson) needs a real Langfuse trace from a live run, which needs the user's go-ahead to
-spend real money — not run as part of this implementation pass.
+regressions. **Live-verified end-to-end, 2026-09-09** (not just unit tests): ran a real lesson
+generation against the real ARQ worker, confirmed via the real Langfuse trace that the injected
+text reached exactly the 5 expected LLM calls (1 `lesson_planner` + 1 `slide_generator` + 3
+`narration_generator`, one per section — confirming it really is injected per-section, not
+per-lesson, per Scale & Load Q2). Real measured added cost for the whole lesson: $0.00054 —
+negligible against the $3.00/lesson ceiling. One real finding along the way, confirmed NOT a bug:
+the existing badge allowlist filter (F2-1) correctly rejected a stale test fixture's
+non-canonical badge string ("Curious Learner" vs. the real "Curious Explorer").
 
 ---
 
