@@ -190,6 +190,7 @@ class TestAC0GraphOrdering:
                 "structure_node",
                 "chunk_node",
                 "embed_node",
+                "fetch_learner_context_node",
                 "lesson_planner_node",
                 "slide_generator_node",
                 "tts_node",
@@ -1048,6 +1049,65 @@ class TestAC6NarrationGenerator:
         script = result["narration_scripts"][0]
         assert script["narration_style"] == "conversational"
         assert script["script"]
+
+    @pytest.mark.asyncio
+    async def test_dna_context_appears_in_system_prompt_when_present(self) -> None:
+        """Story F2-5 AC4: non-empty dna_context (delivered via
+        _FAN_OUT_STATE_KEYS, since this node is Send()-dispatched) must reach
+        the system-role message."""
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type(
+            "Narration", (), {"narration_style": "conversational", "script": "Some script."}
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(
+                _section=THREE_SECTIONS[0],
+                _section_index=0,
+                dna_context="Student Learning Profile: strong in pattern recognition.",
+            )
+            await narration_generator_node(state)
+
+        messages = mock_provider.complete_structured.call_args[0][0]
+        system_message = next(m["content"] for m in messages if m["role"] == "system")
+        assert "Student Learning Profile: strong in pattern recognition." in system_message
+
+    @pytest.mark.asyncio
+    async def test_dna_context_absent_leaves_system_prompt_unchanged(self) -> None:
+        """Story F2-5 AC5: no dna_context in state (e.g. a new student, or a
+        pre-F2-5 lesson_jobs row) must produce the exact pre-F2-5 prompt —
+        asserted against the real literal ending, not just "two same-value
+        calls agree" (which would pass even if dna_context were
+        unconditionally appended, since both calls resolve to the same
+        empty value either way)."""
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type(
+            "Narration", (), {"narration_style": "conversational", "script": "Some script."}
+        )()
+
+        prompts: list[str] = []
+        for dna_context in ("", None):
+            mock_provider = AsyncMock()
+            mock_provider.complete_structured.return_value = mock_output
+            with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+                kwargs = {"_section": THREE_SECTIONS[0], "_section_index": 0}
+                if dna_context is not None:
+                    kwargs["dna_context"] = dna_context
+                state = _base_state(**kwargs)
+                await narration_generator_node(state)
+            messages = mock_provider.complete_structured.call_args[0][0]
+            prompts.append(next(m["content"] for m in messages if m["role"] == "system"))
+
+        assert prompts[0] == prompts[1]
+        for prompt in prompts:
+            assert "\n\n" not in prompt, (
+                "system prompt has a blank-line artifact — dna_context is "
+                "being appended even though it's empty"
+            )
 
     @pytest.mark.asyncio
     async def test_pacing_guard_rejects_script_too_dense_for_target_duration(self) -> None:

@@ -129,6 +129,52 @@ async def test_happy_path_produces_lesson_plan_matching_input_count() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_dna_context_appears_in_system_prompt_when_present() -> None:
+    """Story F2-5 AC4: non-empty dna_context must reach the system-role message."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response()
+    sb = _mock_supabase()
+
+    state = _base_state(dna_context="Student Learning Profile: strong in pattern recognition.")
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await lesson_planner_node(state)
+
+    sent_messages = mock_provider.complete_structured.call_args.args[0]
+    system_message = next(m["content"] for m in sent_messages if m["role"] == "system")
+    assert "Student Learning Profile: strong in pattern recognition." in system_message
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dna_context_absent_leaves_system_prompt_unchanged() -> None:
+    """Story F2-5 AC5: no dna_context in state (new student / pre-F2-5 lesson_jobs
+    row) must produce the exact pre-F2-5 prompt as an explicit dna_context="" call."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    prompts: list[str] = []
+    for state in (_base_state(), _base_state(dna_context="")):
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = _plan_llm_response()
+        sb = _mock_supabase()
+        with (
+            patch("app.core.db.get_supabase", return_value=sb),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        ):
+            await lesson_planner_node(state)
+        sent_messages = mock_provider.complete_structured.call_args.args[0]
+        prompts.append(next(m["content"] for m in sent_messages if m["role"] == "system"))
+
+    assert prompts[0] == prompts[1]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_prompt_never_includes_raw_chapter_text_or_sections() -> None:
     """AC-1: even when chapter_content/sections are present in state alongside
     segment_summaries, the prompt sent to the LLM must never include them —
