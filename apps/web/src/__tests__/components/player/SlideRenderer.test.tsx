@@ -148,6 +148,68 @@ describe('SlideRenderer — S4-37 layout', () => {
     expect(full.querySelector('h3')).toBeDefined();
     expect(full.querySelector('ul')).toBeDefined();
   });
+
+  // P1 — AC3: image class regression guard
+  it('slide image has h-full class and no max-h-[38vh] cap (AC3)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const img = screen.getByTestId('slide-image') as HTMLElement;
+    expect(img.className).toContain('h-full');
+    expect(img.className).not.toContain('max-h-[38vh]');
+  });
+
+  // P2 — AC5: data-lenis-prevent attribute guards
+  it('text sidebar has data-lenis-prevent attribute (AC5)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const sidebar = screen.getByTestId('slide-text-sidebar');
+    expect(sidebar.hasAttribute('data-lenis-prevent')).toBe(true);
+  });
+
+  it('full-width content div has data-lenis-prevent attribute (AC5)', () => {
+    render(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
+    const full = screen.getByTestId('slide-content-full');
+    expect(full.hasAttribute('data-lenis-prevent')).toBe(true);
+  });
+
+  it('outer container does NOT have data-lenis-prevent — only scrollable children do (AC5)', () => {
+    const { container } = render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.hasAttribute('data-lenis-prevent')).toBe(false);
+  });
+
+  // P3 — AC1: width and flex class guards
+  it('image panel has w-3/4 and text sidebar has w-1/4 class (AC1)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const panel = screen.getByTestId('slide-image-panel') as HTMLElement;
+    const sidebar = screen.getByTestId('slide-text-sidebar') as HTMLElement;
+    expect(panel.className).toContain('w-3/4');
+    expect(sidebar.className).toContain('w-1/4');
+  });
+
+  it('outer container has flex class for horizontal layout (AC1)', () => {
+    const { container } = render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.className).toContain('flex');
+  });
+
+  // P4 — AC4: overscroll-y-contain guard
+  it('text sidebar has overscroll-y-contain class (AC4)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const sidebar = screen.getByTestId('slide-text-sidebar') as HTMLElement;
+    expect(sidebar.className).toContain('overscroll-y-contain');
+  });
+
+  // P5 — A11y: aria-labels on split panels
+  it('image panel has aria-label for screen reader identification (a11y)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const panel = screen.getByTestId('slide-image-panel') as HTMLElement;
+    expect(panel.getAttribute('aria-label')).not.toBeNull();
+  });
+
+  it('text sidebar has aria-label for screen reader identification (a11y)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const sidebar = screen.getByTestId('slide-text-sidebar') as HTMLElement;
+    expect(sidebar.getAttribute('aria-label')).not.toBeNull();
+  });
 });
 
 describe('SlideRenderer — image handling', () => {

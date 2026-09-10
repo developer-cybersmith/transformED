@@ -1,7 +1,7 @@
 ---
 story_id: "4-37"
 title: "Player Slide 75/25 Horizontal Split Layout"
-status: "in-progress"
+status: "done"
 baseline_commit: ""
 ---
 
@@ -86,7 +86,16 @@ New tests verify: (a) split layout rendered when image present, (b) full-width l
   - Text sidebar has `overflow-y-auto` class (sidebar scrolls independently)
 - [ ] T5 — Run full test suite: `cd apps/web && npx vitest run --reporter=verbose`
 - [ ] T6 — Verify existing isActive/opacity/aria-hidden tests still pass
-- [ ] T7 — 6-layer BMAD code review via `/bmad-code-review`
+- [x] T7 — 6-layer BMAD code review via `/bmad-code-review`
+
+### Review Findings
+
+- [x] [Review][Patch] AC3 test gap: Add test asserting `slide-image` className contains `h-full` and does NOT contain `max-h-[38vh]` [apps/web/src/__tests__/components/player/SlideRenderer.test.tsx]
+- [x] [Review][Patch] AC5 test gap: Add tests asserting `getAttribute('data-lenis-prevent')` is non-null on `slide-text-sidebar` (image branch) and `slide-content-full` (no-image branch) [apps/web/src/__tests__/components/player/SlideRenderer.test.tsx]
+- [x] [Review][Patch] AC1 partial: Add assertions for `w-3/4` on `slide-image-panel`, `w-1/4` on `slide-text-sidebar`, and `flex` class on outer container [apps/web/src/__tests__/components/player/SlideRenderer.test.tsx]
+- [x] [Review][Patch] AC4 partial: Add assertion that `slide-text-sidebar.className` contains `overscroll-y-contain` [apps/web/src/__tests__/components/player/SlideRenderer.test.tsx]
+- [x] [Review][Patch] A11y: Add `aria-label="Slide illustration"` to `slide-image-panel` and `aria-label="Slide content"` to `slide-text-sidebar` [apps/web/src/components/player/SlideRenderer.tsx:117-143]
+- [x] [Review][Defer] No URL scheme validation on `img src` [apps/web/src/components/player/SlideRenderer.tsx] — deferred, pre-existing in SlideImage; not introduced by this diff
 
 ## Dev Notes
 

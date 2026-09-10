@@ -121,6 +121,7 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
         <>
           <div
             data-testid="slide-image-panel"
+            aria-label="Slide illustration"
             className="w-3/4 h-full overflow-hidden"
           >
             <SlideImage
@@ -140,6 +141,7 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
           <div
             data-testid="slide-text-sidebar"
             data-lenis-prevent
+            aria-label="Slide content"
             className="w-1/4 h-full overflow-y-auto overscroll-y-contain p-5 border-l border-neutral-100"
           >
             {textContent}
