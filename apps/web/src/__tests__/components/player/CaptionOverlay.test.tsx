@@ -5,6 +5,8 @@ import {
   splitScriptIntoCaptionLines,
   activeCaptionLineIndex,
   activeCaptionLineIndexFromTimestamps,
+  lineProgress,
+  karaokeSpokenWordCount,
 } from '@/components/player/CaptionOverlay';
 import { usePlayerStore } from '@/stores/player.machine';
 import type { CaptionLine } from '@hie/shared/types/lesson';
@@ -258,5 +260,91 @@ describe('CaptionOverlay — real caption_lines timestamp sync (BR-3)', () => {
     render(<CaptionOverlay script={script} captionLines={[]} />);
 
     expect(screen.getByText(script)).not.toBeNull();
+  });
+});
+
+// ── lineProgress (Story 2-62 / BR-4) ──────────────────────────────────────────────
+
+describe('lineProgress', () => {
+  it('clamps to 0 at or before the line start', () => {
+    const l = line('a', 1000, 3000);
+    expect(lineProgress(l, 1000)).toBe(0);
+    expect(lineProgress(l, 500)).toBe(0);
+  });
+
+  it('clamps to 1 at or after the line end', () => {
+    const l = line('a', 1000, 3000);
+    expect(lineProgress(l, 3000)).toBe(1);
+    expect(lineProgress(l, 9999)).toBe(1);
+  });
+
+  it('returns the elapsed fraction of the line window mid-line', () => {
+    const l = line('a', 0, 2000);
+    expect(lineProgress(l, 500)).toBe(0.25);
+    expect(lineProgress(l, 1000)).toBe(0.5);
+    expect(lineProgress(l, 1500)).toBe(0.75);
+  });
+
+  it('returns 1 for a zero-or-negative-span line', () => {
+    expect(lineProgress(line('a', 1000, 1000), 1000)).toBe(1);
+  });
+});
+
+// ── karaokeSpokenWordCount (Story 2-62 / BR-4) ────────────────────────────────────
+
+describe('karaokeSpokenWordCount', () => {
+  it('returns 0 for progress <= 0', () => {
+    expect(karaokeSpokenWordCount('Real line one from the server.', 0)).toBe(0);
+  });
+
+  it('returns all words for progress >= 1', () => {
+    expect(karaokeSpokenWordCount('Real line one from the server.', 1)).toBe(6);
+  });
+
+  it('returns 0 for empty text regardless of progress', () => {
+    expect(karaokeSpokenWordCount('', 0.5)).toBe(0);
+  });
+
+  it('allocates words proportionally by character position at a mid progress', () => {
+    // "Real line one from the server." is 30 chars; word end offsets are
+    // Real=4, line=9, one=13, from=18, the=22, server.=30 (hand-computed).
+    const text = 'Real line one from the server.';
+    expect(karaokeSpokenWordCount(text, 0.1)).toBe(0); // target 3 < "Real" end (4)
+    expect(karaokeSpokenWordCount(text, 0.2)).toBe(1); // target 6 -> "Real"
+    expect(karaokeSpokenWordCount(text, 0.5)).toBe(3); // target 15 -> "Real line one"
+    expect(karaokeSpokenWordCount(text, 0.9)).toBe(5); // target 27 -> "Real line one from the"
+  });
+});
+
+// ── CaptionOverlay -- karaoke word-progress highlight (Story 2-62 / BR-4) ────────
+
+describe('CaptionOverlay — karaoke-style word-progress highlight (BR-4)', () => {
+  const realLines: CaptionLine[] = [line('Real line one from the server.', 0, 2000)];
+
+  it('splits the active line into a spoken prefix and unspoken remainder mid-line', () => {
+    usePlayerStore.setState({ audioDurationMs: 2000, audioPositionMs: 1000 }); // progress 0.5
+    render(<CaptionOverlay script="ignored" captionLines={realLines} />);
+
+    expect(screen.getByTestId('caption-spoken').textContent).toBe('Real line one');
+    expect(screen.getByTestId('caption-unspoken').textContent).toBe('from the server.');
+  });
+
+  it('renders no spoken sub-span at the very start of a line (progress 0)', () => {
+    usePlayerStore.setState({ audioDurationMs: 2000, audioPositionMs: 0 });
+    render(<CaptionOverlay script="ignored" captionLines={realLines} />);
+
+    expect(screen.queryByTestId('caption-spoken')).toBeNull();
+    expect(screen.getByTestId('caption-unspoken').textContent).toBe(
+      'Real line one from the server.'
+    );
+  });
+
+  it('never renders spoken/unspoken sub-spans on the proportional-fallback path', () => {
+    usePlayerStore.setState({ audioDurationMs: 10000, audioPositionMs: 5000 });
+    const script = words(20).join(' ');
+    render(<CaptionOverlay script={script} />);
+
+    expect(screen.queryByTestId('caption-spoken')).toBeNull();
+    expect(screen.queryByTestId('caption-unspoken')).toBeNull();
   });
 });

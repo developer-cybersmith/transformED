@@ -316,7 +316,7 @@ Started immediately after Sprint 4, on its own integration branches (e.g. Dev 4'
 - [ ] CAPTCHA widget on login + signup screens (reCAPTCHA v3 invisible badge) — High
 - [ ] Update mode-selection cards to show explicit "15 min / 30 min / 45 min" labels — Low
 - [x] Caption/subtitle display — one dialogue line at a time, synced to narration timestamps — High — ✅ 2026-09-09 (Story 2-61, BR-3)
-- [ ] Highlight/underline the active narration text on slide (karaoke-style sync) using caption timestamps — High — **depends on Dev 1's caption timestamp output**
+- [x] Highlight/underline the active narration text on slide (karaoke-style sync) using caption timestamps — High — ✅ 2026-09-10 (Story 2-62, BR-4)
 - [ ] Slide transition: add configurable pause (default 2s) between slides + manual "Next" button for navigation — Medium
 - [ ] Voice teach-back: mic capture UI, recording + upload, toggle between typed/voice input — Medium — **depends on an STT node** (as reported to Dev 2; note this reads "Dev 1's STT node" in the source list while Dev 3's own list below describes building the STT node itself and Dev 4's list says "depends on Dev 3's STT node" — flagging this inconsistency rather than silently resolving it; confirm the real owner before starting this task)
 

@@ -116,6 +116,55 @@ export function activeCaptionLineIndexFromTimestamps(
   return lines.length - 1;
 }
 
+/**
+ * Fraction of a single caption line's own `[start_ms, end_ms)` window elapsed at
+ * `positionMs`, clamped to `[0, 1]`. Exported for unit testing.
+ *
+ * This is intentionally scoped to one line at a time (not the whole segment) --
+ * karaoke-style word progress only ever needs to know how far through the
+ * CURRENTLY ACTIVE line playback has gotten.
+ */
+export function lineProgress(line: CaptionLine, positionMs: number): number {
+  const span = line.end_ms - line.start_ms;
+  if (span <= 0) return 1;
+  if (positionMs <= line.start_ms) return 0;
+  if (positionMs >= line.end_ms) return 1;
+  return (positionMs - line.start_ms) / span;
+}
+
+/**
+ * How many of `text`'s space-separated words are "spoken" at `progress` (0..1).
+ * Exported for unit testing.
+ *
+ * No word-level timing exists anywhere in this pipeline (confirmed in Story 4-29):
+ * this allocates `progress * text.length` proportionally by character position --
+ * the same character-count-proportional idiom already used for line duration
+ * distribution both server-side (`_split_into_caption_lines`) and client-side
+ * (`activeCaptionLineIndex` above). A word counts as spoken once its own end
+ * character offset is `<=` the proportional target offset, so a word is only ever
+ * revealed whole, never mid-word.
+ */
+export function karaokeSpokenWordCount(text: string, progress: number): number {
+  if (progress <= 0 || !text) return 0;
+  const words = text.split(' ').filter(Boolean);
+  if (words.length === 0) return 0;
+  if (progress >= 1) return words.length;
+
+  const targetChars = progress * text.length;
+  let endOffset = 0;
+  let spoken = 0;
+  for (let i = 0; i < words.length; i++) {
+    if (i > 0) endOffset += 1; // space separating this word from the previous one
+    endOffset += words[i].length;
+    if (endOffset <= targetChars) {
+      spoken = i + 1;
+    } else {
+      break;
+    }
+  }
+  return spoken;
+}
+
 export function CaptionOverlay({ script, captionLines }: CaptionOverlayProps) {
   const audioPositionMs = usePlayerStore((s) => s.audioPositionMs);
   const audioDurationMs = usePlayerStore((s) => s.audioDurationMs);
@@ -140,6 +189,17 @@ export function CaptionOverlay({ script, captionLines }: CaptionOverlayProps) {
 
   const activeText = hasRealTimestamps ? captionLines[activeIndex].text : fallbackLines[activeIndex];
 
+  // Karaoke-style word-progress highlight (Story 2-62 / BR-4) -- real-timestamp
+  // path only. See the story's Dev Notes for why this is deliberately not
+  // layered onto the proportional-fallback path (compounds two levels of
+  // estimation error into a highlight that visibly drifts from the narration).
+  const words = hasRealTimestamps ? activeText.split(' ').filter(Boolean) : [];
+  const spokenCount = hasRealTimestamps
+    ? karaokeSpokenWordCount(activeText, lineProgress(captionLines[activeIndex], audioPositionMs))
+    : 0;
+  const spokenText = words.slice(0, spokenCount).join(' ');
+  const unspokenText = words.slice(spokenCount).join(' ');
+
   return (
     <div
       data-testid="caption-overlay"
@@ -160,7 +220,22 @@ export function CaptionOverlay({ script, captionLines }: CaptionOverlayProps) {
         key={activeIndex}
         className="text-neutral-100 text-sm leading-relaxed text-center max-w-3xl mx-auto"
       >
-        {activeText}
+        {hasRealTimestamps ? (
+          <>
+            {spokenText && (
+              <span
+                data-testid="caption-spoken"
+                className="underline decoration-2 decoration-[var(--accent-primary)] underline-offset-2"
+              >
+                {spokenText}
+              </span>
+            )}
+            {spokenText && unspokenText && ' '}
+            {unspokenText && <span data-testid="caption-unspoken">{unspokenText}</span>}
+          </>
+        ) : (
+          activeText
+        )}
       </p>
     </div>
   );

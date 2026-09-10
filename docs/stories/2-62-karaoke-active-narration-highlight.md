@@ -1,6 +1,6 @@
 ---
 title: "Story 2-62 — Karaoke-Style Active-Narration Highlight (BR-4)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -95,7 +95,30 @@ on the same render cadence `activeCaptionLineIndexFromTimestamps` already runs o
 
 ### Completion Notes
 
-_(filled in after implementation)_
+- **AC1/AC2-DONE.** `lineProgress(line, positionMs)` and `karaokeSpokenWordCount(text, progress)`
+  added as pure exported functions, both hand-verified against the real 30-char fixture
+  `"Real line one from the server."` at multiple progress fractions before the test assertions were
+  written (see test file comments for the hand-computed word end offsets).
+- **AC3-DONE.** `CaptionOverlay` computes `spokenText`/`unspokenText` via
+  `karaokeSpokenWordCount(activeText, lineProgress(captionLines[activeIndex], audioPositionMs))` on
+  the real-timestamp path only; either `<span>` is conditionally omitted when empty, so progress-0
+  and progress-1 render as a single undivided text node.
+- **AC4-DONE.** Fallback path (`captionLines` undefined/`[]`) is untouched — `hasRealTimestamps`
+  gates the entire karaoke branch; a dedicated test confirms neither sub-span testid ever appears on
+  that path even at a mid-position.
+- **AC5-DONE.** All pre-existing `CaptionOverlay.test.tsx` tests (26, from S4-09 + BR-3) pass
+  unmodified — every existing assertion happens to check at a line-start boundary (progress 0),
+  confirmed by re-running the full pre-existing test file with zero changes to those tests.
+- **AC6-DONE.** 11 new tests: 4 `lineProgress` unit tests, 4 `karaokeSpokenWordCount` unit tests
+  (including the hand-computed mid-progress case), 3 `CaptionOverlay` integration tests (mid-line
+  split, progress-0 single-span, fallback-path guard).
+- **AC7-DONE.** `tsc --noEmit` clean, targeted `eslint` clean. Full frontend suite: 93 files / 1168
+  tests (was 93/1157 pre-story), zero regressions.
+- **Verification method, disclosed explicitly:** verified via the unit/integration test suite only,
+  not a live browser check like BR-3's. This story's data (`captionLines` prop, exact `start_ms`/
+  `end_ms` windows) is fully exercised by deterministic tests; a genuine live-browser check would
+  need a real backend-generated lesson with populated `caption_lines`, which is out of scope here
+  (frontend-only work, no `apps/api` changes or backend runs made for this story).
 
 ### File List
 

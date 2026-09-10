@@ -1945,9 +1945,9 @@ Distinct from the existing `CaptionOverlay.tsx` (which already redesigned to one
 
 ### BR-4 — Karaoke-Style Active-Narration Highlight
 **Priority:** High  
-**Status:** 🔲 NOT STARTED — **blocked on Dev 1's caption timestamp output** (line-level start/end times from `narration_generator`/`tts_node`)  
+**Status:** ✅ DONE — ✅ 2026-09-10 (Story 2-62, branch `bug-resolution/br-4-karaoke-highlight`)  
 
-Highlight/underline the currently-spoken text on the slide, synced to the same caption timestamps BR-3 consumes.
+Highlight/underline the currently-spoken text on the slide, synced to the same caption timestamps BR-3 consumes. Two new pure functions, `lineProgress()` and `karaokeSpokenWordCount()`, allocate the active line's own measured `start_ms`/`end_ms` window proportionally across its words by character position (same idiom already used by `_split_into_caption_lines` and the pre-BR-3 line estimator) to split the line into an underlined "spoken" prefix and a muted "unspoken" remainder as `audioPositionMs` advances. **Deliberately real-timestamp-only** — never layered onto BR-3's proportional-fallback path, since compounding a word-level guess onto an already-approximate line-level guess would visibly drift, defeating the point; the fallback path renders exactly as it did before this story. 11 new tests (unit + integration); full frontend suite 93 files / 1168 tests (was 1157), zero regressions. Verified via test suite only, not a live browser check (would require a real backend-generated lesson with populated `caption_lines` — out of scope for this frontend-only story). Full detail in `docs/stories/2-62-karaoke-active-narration-highlight.md`.
 
 ### BR-5 — Configurable Slide-Transition Pause + Manual Next Button
 **Priority:** Medium  
