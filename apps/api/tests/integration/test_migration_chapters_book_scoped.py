@@ -802,6 +802,7 @@ def test_no_other_table_policy_changed(pg: object) -> None:  # noqa: ARG001
         "attention_events",
         "books",
         "learner_dna",
+        "lesson_access",
         "lesson_jobs",
         "lessons",
         "onboarding_responses",
