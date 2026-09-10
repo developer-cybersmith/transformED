@@ -50,8 +50,13 @@ fallback behavior, unchanged).
   "unspoken" remainder (rendered muted), using `karaokeSpokenWordCount(activeText,
   lineProgress(captionLines[activeIndex], audioPositionMs))` as the split point. Either sub-span is
   omitted entirely (not rendered as an empty element) when it has no words — so at the very start of
-  a line (progress 0) or a fully-elapsed line (progress 1) the line still renders as a single text
-  node, unchanged from BR-3's existing behavior at those boundaries.
+  a line (progress 0) the line renders as a single unstyled text node inside `caption-unspoken`
+  (unchanged from BR-3's plain rendering at that boundary), and at a fully-elapsed line (progress 1)
+  the line renders as a single node inside `caption-spoken` — fully highlighted, not plain — since
+  the entire line has, by definition, already been spoken. **Corrected 2026-09-10, post-review**:
+  this AC originally said progress 1 should also render "unchanged from BR-3" (i.e. unstyled);
+  that was imprecise story wording caught by the Acceptance Auditor layer of this story's own
+  `/bmad-code-review` — the shipped behavior (full highlight at completion) is the intended one.
 - **AC4** — On the fallback path (`captionLines` undefined or `[]`), rendering is byte-for-byte
   unchanged from BR-3 — the active line's plain text, no spoken/unspoken split, ever.
 - **AC5** — All pre-existing `CaptionOverlay.test.tsx` tests (BR-3 and earlier) pass unmodified —
@@ -124,6 +129,59 @@ on the same render cadence `activeCaptionLineIndexFromTimestamps` already runs o
 
 - `apps/web/src/components/player/CaptionOverlay.tsx`
 - `apps/web/src/__tests__/components/player/CaptionOverlay.test.tsx`
+
+## Review Findings
+
+_6-agent BMAD code review, 2026-09-10, PR #224 — Blind Hunter, Edge Case Hunter, Acceptance
+Auditor, Scale & Load Hunter, Story Quality, Test Coverage, AC Completeness, Process Integrity._
+
+- [x] [Review][Defer] Long/single leading word creates a proportional "dead zone" with zero
+      karaoke progress before snapping to spoken — deferred, registered as **D-166** in
+      `docs/DEFECT-REGISTER.md` per user decision 2026-09-10: accept as a known limitation of the
+      character-proportional, whole-word-reveal model rather than change the crediting algorithm
+      (e.g. midpoint-crediting) inside a review-response pass.
+- [x] [Review][Patch] AC3's own wording ("progress 1 renders... unchanged from BR-3's existing
+      behavior") corrected below to describe the actual (correct) implementation — a fully-elapsed
+      line collapses into the highlighted `caption-spoken` span as a single node, not an unstyled
+      one. Behavior unchanged; only the AC text was wrong.
+- [x] [Review][Defer] Dev Agent Record / Completion Notes were appended to this story file in the
+      same commit (`ba467ba`) as the implementation code — deferred, per user decision 2026-09-10:
+      accept as-is rather than rewrite already-pushed PR branch history; note for future stories to
+      land completion-notes updates as a separate trailing commit instead.
+- [x] [Review][Patch] `lineProgress`/`karaokeSpokenWordCount` do not guard against `NaN`
+      `positionMs` — reachable in production because `player.machine.ts`'s `audioPositionMs` setter
+      has no `Number.isFinite` guard (unlike its own localStorage-restore path, which does validate).
+      A transient `NaN` silently freezes the karaoke highlight at "nothing spoken" with no error.
+      Confirmed independently by Blind Hunter and Edge Case Hunter. **Fixed**: both functions now
+      clamp `NaN` (line span or position/progress) to `0` explicitly, without disturbing correct
+      existing behavior for out-of-range-but-finite values like `+Infinity` (new regression tests
+      added for that distinction). [`apps/web/src/components/player/CaptionOverlay.tsx`]
+- [x] [Review][Patch] Character-offset math in `karaokeSpokenWordCount` assumes exactly one space
+      between words, but the denominator (`text.length`) counts every literal character — a double
+      space, tab, or non-breaking space (plausible in LLM-generated narration; not normalized
+      anywhere upstream in `_split_into_caption_lines`) desyncs the two, silently drifting the
+      highlight timing ahead of the real narration. Confirmed independently by Blind Hunter, Edge
+      Case Hunter, and Scale & Load Hunter (non-dismissible per `docs/SCALE-CONTRACT.md` §2 — a
+      `silent-wrong-result` finding). **Fixed**: both the proportional target and the word split now
+      use a whitespace-normalizing (`\s+`) split, and the target is computed against the
+      reconstructed single-space-joined length rather than raw `text.length`, so the numerator and
+      denominator can never desync regardless of source whitespace.
+      [`apps/web/src/components/player/CaptionOverlay.tsx`]
+- [x] [Review][Patch] The "unspoken" remainder `<span>` has no muted styling at all (no
+      `className`) — it renders visually identical to the base caption text, so the karaoke effect
+      only ever adds an underline to spoken words and never dims what's ahead, contradicting AC3's
+      explicit "rendered muted" requirement. Confirmed by direct code inspection (Acceptance
+      Auditor). **Fixed**: `text-neutral-100/50` added, mirroring this file's own existing
+      opacity-suffix convention. [`apps/web/src/components/player/CaptionOverlay.tsx`]
+- [x] [Review][Patch] Test coverage gaps identified by Test Coverage + AC Completeness layers (all
+      independently re-verified, arithmetic and suite results confirmed correct where checked):
+      negative-progress/negative-position boundary untested; the exact word-boundary equality case
+      (`endOffset === targetChars`) untested; no component-level test for the fully-elapsed
+      (progress ≈ 1) boundary mirroring the existing progress-0 test; no single-word-line test; no
+      multi-line integration test confirming karaoke state resets correctly across a line
+      transition. **Fixed**: 13 new tests added covering all five gaps plus the two review-fix
+      regressions (NaN handling, whitespace-desync). Full frontend suite: 93 files / 1181 tests (was
+      1168), zero regressions. [`apps/web/src/__tests__/components/player/CaptionOverlay.test.tsx`]
 
 ## References
 
