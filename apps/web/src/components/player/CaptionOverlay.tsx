@@ -116,6 +116,82 @@ export function activeCaptionLineIndexFromTimestamps(
   return lines.length - 1;
 }
 
+/**
+ * Fraction of a single caption line's own `[start_ms, end_ms)` window elapsed at
+ * `positionMs`, clamped to `[0, 1]`. Exported for unit testing.
+ *
+ * This is intentionally scoped to one line at a time (not the whole segment) --
+ * karaoke-style word progress only ever needs to know how far through the
+ * CURRENTLY ACTIVE line playback has gotten.
+ *
+ * Review fix (Story 2-62 code review, 2026-09-10): a `NaN` `positionMs` (e.g.
+ * reaching here from an ungated upstream source) used to fall through every
+ * comparison -- all false against `NaN` -- and return `NaN` itself, silently
+ * freezing the karaoke highlight at "nothing spoken" with no error. `NaN` input
+ * (or a `NaN` line span from malformed `start_ms`/`end_ms`) now clamps to `0`
+ * (treated the same as "not started yet"). An out-of-range but finite value like
+ * `+Infinity` is NOT touched by this guard -- it already clamps correctly to `1`
+ * via the existing range checks below, since `Infinity >= line.end_ms` is `true`.
+ */
+export function lineProgress(line: CaptionLine, positionMs: number): number {
+  const span = line.end_ms - line.start_ms;
+  if (Number.isNaN(positionMs) || Number.isNaN(span)) return 0;
+  if (span <= 0) return 1;
+  if (positionMs <= line.start_ms) return 0;
+  if (positionMs >= line.end_ms) return 1;
+  return (positionMs - line.start_ms) / span;
+}
+
+/**
+ * How many of `text`'s whitespace-separated words are "spoken" at `progress`
+ * (0..1). Exported for unit testing.
+ *
+ * No word-level timing exists anywhere in this pipeline (confirmed in Story 4-29):
+ * this allocates `progress` proportionally by character position -- the same
+ * character-count-proportional idiom already used for line duration distribution
+ * both server-side (`_split_into_caption_lines`) and client-side
+ * (`activeCaptionLineIndex` above). A word counts as spoken once its own end
+ * character offset is `<=` the proportional target offset, so a word is only ever
+ * revealed whole, never mid-word.
+ *
+ * Review fix (Story 2-62 code review, 2026-09-10), two issues:
+ * 1. A `NaN` `progress` (e.g. from an ungated upstream position) now clamps to
+ *    `0` explicitly, matching `lineProgress`'s own NaN-to-0 clamp, rather than
+ *    relying on the loop happening to bottom out at its initial value of `0`.
+ *    (`+Infinity`/`-Infinity` are NOT touched by this guard -- they already
+ *    resolve correctly via the existing `progress >= 1`/`progress <= 0` checks.)
+ * 2. The proportional target is now computed against the reconstructed,
+ *    single-space-joined word length, not the raw `text.length` -- irregular
+ *    interior whitespace (a double space, tab, or non-breaking space -- none of
+ *    which is normalized upstream in `_split_into_caption_lines`) used to desync
+ *    the denominator (`text.length`, every literal character) from the numerator
+ *    (`endOffset`, which always assumed exactly one separator character between
+ *    words), silently drifting the highlight ahead of the real narration timing.
+ *    Basing both on the same reconstructed length keeps them consistent by
+ *    construction, regardless of the source text's actual whitespace.
+ */
+export function karaokeSpokenWordCount(text: string, progress: number): number {
+  if (Number.isNaN(progress) || progress <= 0 || !text) return 0;
+  const words = text.split(/\s+/).filter(Boolean);
+  if (words.length === 0) return 0;
+  if (progress >= 1) return words.length;
+
+  const normalizedLength = words.join(' ').length;
+  const targetChars = progress * normalizedLength;
+  let endOffset = 0;
+  let spoken = 0;
+  for (let i = 0; i < words.length; i++) {
+    if (i > 0) endOffset += 1; // space separating this word from the previous one
+    endOffset += words[i].length;
+    if (endOffset <= targetChars) {
+      spoken = i + 1;
+    } else {
+      break;
+    }
+  }
+  return spoken;
+}
+
 export function CaptionOverlay({ script, captionLines }: CaptionOverlayProps) {
   const audioPositionMs = usePlayerStore((s) => s.audioPositionMs);
   const audioDurationMs = usePlayerStore((s) => s.audioDurationMs);
@@ -140,6 +216,17 @@ export function CaptionOverlay({ script, captionLines }: CaptionOverlayProps) {
 
   const activeText = hasRealTimestamps ? captionLines[activeIndex].text : fallbackLines[activeIndex];
 
+  // Karaoke-style word-progress highlight (Story 2-62 / BR-4) -- real-timestamp
+  // path only. See the story's Dev Notes for why this is deliberately not
+  // layered onto the proportional-fallback path (compounds two levels of
+  // estimation error into a highlight that visibly drifts from the narration).
+  const words = hasRealTimestamps ? activeText.split(/\s+/).filter(Boolean) : [];
+  const spokenCount = hasRealTimestamps
+    ? karaokeSpokenWordCount(activeText, lineProgress(captionLines[activeIndex], audioPositionMs))
+    : 0;
+  const spokenText = words.slice(0, spokenCount).join(' ');
+  const unspokenText = words.slice(spokenCount).join(' ');
+
   return (
     <div
       data-testid="caption-overlay"
@@ -160,7 +247,32 @@ export function CaptionOverlay({ script, captionLines }: CaptionOverlayProps) {
         key={activeIndex}
         className="text-neutral-100 text-sm leading-relaxed text-center max-w-3xl mx-auto"
       >
-        {activeText}
+        {hasRealTimestamps ? (
+          <>
+            {spokenText && (
+              <span
+                data-testid="caption-spoken"
+                className="underline decoration-2 decoration-[var(--accent-primary)] underline-offset-2"
+              >
+                {spokenText}
+              </span>
+            )}
+            {spokenText && unspokenText && ' '}
+            {unspokenText && (
+              // Review fix (Story 2-62 code review, 2026-09-10): this span had no
+              // className at all -- visually identical to the spoken text minus the
+              // underline, so the karaoke effect never actually dimmed what's ahead,
+              // contradicting AC3's "rendered muted" requirement. `/50` opacity
+              // mirrors this file's own existing opacity-suffix convention
+              // (`bg-black/60` on the caption panel below).
+              <span data-testid="caption-unspoken" className="text-neutral-100/50">
+                {unspokenText}
+              </span>
+            )}
+          </>
+        ) : (
+          activeText
+        )}
       </p>
     </div>
   );

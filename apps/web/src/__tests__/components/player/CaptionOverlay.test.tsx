@@ -5,6 +5,8 @@ import {
   splitScriptIntoCaptionLines,
   activeCaptionLineIndex,
   activeCaptionLineIndexFromTimestamps,
+  lineProgress,
+  karaokeSpokenWordCount,
 } from '@/components/player/CaptionOverlay';
 import { usePlayerStore } from '@/stores/player.machine';
 import type { CaptionLine } from '@hie/shared/types/lesson';
@@ -258,5 +260,179 @@ describe('CaptionOverlay — real caption_lines timestamp sync (BR-3)', () => {
     render(<CaptionOverlay script={script} captionLines={[]} />);
 
     expect(screen.getByText(script)).not.toBeNull();
+  });
+});
+
+// ── lineProgress (Story 2-62 / BR-4) ──────────────────────────────────────────────
+
+describe('lineProgress', () => {
+  it('clamps to 0 at or before the line start', () => {
+    const l = line('a', 1000, 3000);
+    expect(lineProgress(l, 1000)).toBe(0);
+    expect(lineProgress(l, 500)).toBe(0);
+  });
+
+  it('clamps to 1 at or after the line end', () => {
+    const l = line('a', 1000, 3000);
+    expect(lineProgress(l, 3000)).toBe(1);
+    expect(lineProgress(l, 9999)).toBe(1);
+  });
+
+  it('returns the elapsed fraction of the line window mid-line', () => {
+    const l = line('a', 0, 2000);
+    expect(lineProgress(l, 500)).toBe(0.25);
+    expect(lineProgress(l, 1000)).toBe(0.5);
+    expect(lineProgress(l, 1500)).toBe(0.75);
+  });
+
+  it('returns 1 for a zero-or-negative-span line', () => {
+    expect(lineProgress(line('a', 1000, 1000), 1000)).toBe(1);
+    expect(lineProgress(line('a', 3000, 1000), 2000)).toBe(1); // end_ms < start_ms
+  });
+
+  it('clamps to 0 for a negative positionMs', () => {
+    expect(lineProgress(line('a', 1000, 3000), -500)).toBe(0);
+  });
+
+  it('review fix: clamps to 0 for a NaN positionMs instead of propagating NaN', () => {
+    expect(lineProgress(line('a', 0, 2000), NaN)).toBe(0);
+  });
+
+  it('review fix: clamps to 0 for a NaN line span (malformed start_ms/end_ms)', () => {
+    expect(lineProgress(line('a', NaN, 2000), 1000)).toBe(0);
+  });
+
+  it('correctly clamps to 1 for an out-of-range +Infinity positionMs (not a NaN case)', () => {
+    expect(lineProgress(line('a', 0, 2000), Infinity)).toBe(1);
+  });
+});
+
+// ── karaokeSpokenWordCount (Story 2-62 / BR-4) ────────────────────────────────────
+
+describe('karaokeSpokenWordCount', () => {
+  it('returns 0 for progress <= 0', () => {
+    expect(karaokeSpokenWordCount('Real line one from the server.', 0)).toBe(0);
+  });
+
+  it('returns all words for progress >= 1', () => {
+    expect(karaokeSpokenWordCount('Real line one from the server.', 1)).toBe(6);
+  });
+
+  it('returns 0 for empty text regardless of progress', () => {
+    expect(karaokeSpokenWordCount('', 0.5)).toBe(0);
+  });
+
+  it('allocates words proportionally by character position at a mid progress', () => {
+    // "Real line one from the server." is 30 chars; word end offsets are
+    // Real=4, line=9, one=13, from=18, the=22, server.=30 (hand-computed).
+    const text = 'Real line one from the server.';
+    expect(karaokeSpokenWordCount(text, 0.1)).toBe(0); // target 3 < "Real" end (4)
+    expect(karaokeSpokenWordCount(text, 0.2)).toBe(1); // target 6 -> "Real"
+    expect(karaokeSpokenWordCount(text, 0.5)).toBe(3); // target 15 -> "Real line one"
+    expect(karaokeSpokenWordCount(text, 0.9)).toBe(5); // target 27 -> "Real line one from the"
+  });
+
+  it('includes a word exactly at the endOffset === targetChars boundary', () => {
+    // target = 0.3 * 30 = 9, exactly "line"'s end offset (4+1+4=9).
+    const text = 'Real line one from the server.';
+    expect(karaokeSpokenWordCount(text, 0.3)).toBe(2); // "Real line"
+  });
+
+  it('returns 0 for a negative progress', () => {
+    expect(karaokeSpokenWordCount('Real line one from the server.', -0.5)).toBe(0);
+  });
+
+  it('review fix: returns 0 for a NaN progress instead of getting stuck mid-loop', () => {
+    expect(karaokeSpokenWordCount('Real line one from the server.', NaN)).toBe(0);
+  });
+
+  it('returns all words for a +Infinity progress (not treated as NaN)', () => {
+    expect(karaokeSpokenWordCount('Real line one from the server.', Infinity)).toBe(6);
+  });
+
+  it('handles a single-word line -- no progress until fully spoken', () => {
+    expect(karaokeSpokenWordCount('Hello', 0.5)).toBe(0);
+    expect(karaokeSpokenWordCount('Hello', 1)).toBe(1);
+  });
+
+  it('review fix: irregular interior whitespace no longer desyncs the proportional target', () => {
+    // Same word content as the 30-char fixture above, but with a double space
+    // between "Real" and "line" -- before the fix, the extra character in
+    // text.length (31, not 30) desynced from the always-single-space
+    // reconstruction, making words complete earlier than they should.
+    const withDoubleSpace = 'Real  line one from the server.';
+    expect(karaokeSpokenWordCount(withDoubleSpace, 0.2)).toBe(1); // same as single-space "Real"
+    expect(karaokeSpokenWordCount(withDoubleSpace, 0.5)).toBe(3); // same as single-space "Real line one"
+  });
+});
+
+// ── CaptionOverlay -- karaoke word-progress highlight (Story 2-62 / BR-4) ────────
+
+describe('CaptionOverlay — karaoke-style word-progress highlight (BR-4)', () => {
+  const realLines: CaptionLine[] = [line('Real line one from the server.', 0, 2000)];
+
+  it('splits the active line into a spoken prefix and unspoken remainder mid-line', () => {
+    usePlayerStore.setState({ audioDurationMs: 2000, audioPositionMs: 1000 }); // progress 0.5
+    render(<CaptionOverlay script="ignored" captionLines={realLines} />);
+
+    expect(screen.getByTestId('caption-spoken').textContent).toBe('Real line one');
+    expect(screen.getByTestId('caption-unspoken').textContent).toBe('from the server.');
+  });
+
+  it('renders no spoken sub-span at the very start of a line (progress 0)', () => {
+    usePlayerStore.setState({ audioDurationMs: 2000, audioPositionMs: 0 });
+    render(<CaptionOverlay script="ignored" captionLines={realLines} />);
+
+    expect(screen.queryByTestId('caption-spoken')).toBeNull();
+    expect(screen.getByTestId('caption-unspoken').textContent).toBe(
+      'Real line one from the server.'
+    );
+  });
+
+  it('never renders spoken/unspoken sub-spans on the proportional-fallback path', () => {
+    usePlayerStore.setState({ audioDurationMs: 10000, audioPositionMs: 5000 });
+    const script = words(20).join(' ');
+    render(<CaptionOverlay script={script} />);
+
+    expect(screen.queryByTestId('caption-spoken')).toBeNull();
+    expect(screen.queryByTestId('caption-unspoken')).toBeNull();
+  });
+
+  it('renders no unspoken sub-span once the line is fully elapsed (progress 1)', () => {
+    usePlayerStore.setState({ audioDurationMs: 2000, audioPositionMs: 2000 });
+    render(<CaptionOverlay script="ignored" captionLines={realLines} />);
+
+    expect(screen.queryByTestId('caption-unspoken')).toBeNull();
+    expect(screen.getByTestId('caption-spoken').textContent).toBe(
+      'Real line one from the server.'
+    );
+  });
+
+  it('review fix: the unspoken remainder is visually muted, distinct from the spoken prefix', () => {
+    usePlayerStore.setState({ audioDurationMs: 2000, audioPositionMs: 1000 });
+    render(<CaptionOverlay script="ignored" captionLines={realLines} />);
+
+    const spoken = screen.getByTestId('caption-spoken');
+    const unspoken = screen.getByTestId('caption-unspoken');
+    expect(unspoken.className).not.toBe('');
+    expect(unspoken.className).not.toBe(spoken.className);
+  });
+
+  it('resets karaoke progress to a plain single node at the start of a NEW line after a transition', () => {
+    const twoLines: CaptionLine[] = [
+      line('First real line here.', 0, 1000),
+      line('Second real line here.', 1000, 2000),
+    ];
+    usePlayerStore.setState({ audioDurationMs: 2000, audioPositionMs: 900 }); // mid-way through line 1
+    const { rerender } = render(<CaptionOverlay script="ignored" captionLines={twoLines} />);
+    expect(screen.getByTestId('caption-spoken')).not.toBeNull(); // line 1 partially spoken
+
+    act(() => {
+      usePlayerStore.setState({ audioPositionMs: 1000 }); // exactly line 2's start -- progress 0
+    });
+    rerender(<CaptionOverlay script="ignored" captionLines={twoLines} />);
+
+    expect(screen.queryByTestId('caption-spoken')).toBeNull();
+    expect(screen.getByTestId('caption-unspoken').textContent).toBe('Second real line here.');
   });
 });
