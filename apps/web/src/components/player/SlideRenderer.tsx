@@ -32,7 +32,7 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
     return (
       <div
         data-testid="slide-image-placeholder"
-        className="w-full aspect-video rounded-xl bg-neutral-100 flex items-center justify-center"
+        className="w-full h-full bg-neutral-100 flex items-center justify-center"
       >
         <span className="text-neutral-400 text-sm">No image</span>
       </div>
@@ -68,16 +68,9 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
       data-testid="slide-image"
       src={src}
       alt={title}
-      // max-h caps the image so it can never push the title/bullets out of
-      // view on a wide/short viewport (review finding) -- w-full + aspect-video
-      // alone made height scale purely with container width, sometimes taller
-      // than the whole slide panel. object-contain + no fixed aspect-ratio
-      // (bug fix: object-cover + aspect-video was CROPPING the image to fill
-      // a box shaped differently than the source) -- the browser sizes the
-      // element from its own intrinsic ratio within the w-full/max-h bounds,
-      // so the full image is always visible, never cropped. mx-auto centers
-      // it on the rare image narrower than the panel once height is clamped.
-      className="w-full max-h-[38vh] object-contain rounded-xl mx-auto block"
+      // S4-37: image fills the 75% panel height without any fixed cap.
+      // object-contain preserves full infographic without cropping.
+      className="w-full h-full object-contain block"
       onError={handleImageError}
     />
   );
@@ -96,40 +89,13 @@ interface SlideRendererProps {
 // real-content path here -- this will be reconciled when Sprint 2 lands.
 // Ping Dev 1 (developer1-cybersmith) before changing this shape.
 export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
-  return (
-    <div
-      // data-lenis-prevent (review finding): SmoothScroll.tsx's global Lenis
-      // instance hijacks wheel events for the whole document by default. The
-      // player's root (Player.tsx) is overflow-hidden -- this div's own
-      // overflow-y-auto is the ONLY element that can ever scroll slide content
-      // taller than the panel -- but without this attribute Lenis intercepts
-      // the wheel event before it reaches here, so the mouse wheel appeared to
-      // do nothing (a scrollbar drag, which bypasses Lenis, still worked).
-      data-lenis-prevent
-      className={[
-        'absolute inset-0 overflow-y-auto overscroll-y-contain p-6 transition-opacity duration-150',
-        isActive ? 'opacity-100' : 'opacity-0 pointer-events-none',
-      ].join(' ')}
-      aria-hidden={isActive ? undefined : true}
-    >
-      <SlideImage
-        // Story 2-45 review fix: keyed on imageUrl so a content refresh that
-        // swaps this slide's image (same slide_id, different image_url --
-        // SlideRenderer's own key at its call site wouldn't catch this)
-        // fully remounts SlideImage, resetting its src/failed state AND its
-        // one-attempt re-sign guard for the genuinely new asset. Falls back
-        // to fallbackUrl for the key when imageUrl is null, so a null-image
-        // slide still has a stable key across re-renders.
-        key={slide.image_url ?? slide.fallback_image_url ?? 'none'}
-        imageUrl={slide.image_url}
-        fallbackUrl={slide.fallback_image_url}
-        title={slide.title}
-      />
+  const hasImage = !!(slide.image_url ?? slide.fallback_image_url);
 
+  const textContent = (
+    <>
       <h3 className="font-serif text-xl font-semibold text-neutral-900 mt-5 mb-3 text-wrap-balance">
         {slide.title}
       </h3>
-
       <ul className="space-y-2.5" role="list">
         {slide.bullets.map((bullet, i) => (
           <li key={i} className="flex items-start gap-2.5 text-neutral-600 text-[15px] leading-relaxed">
@@ -140,6 +106,54 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
           </li>
         ))}
       </ul>
+    </>
+  );
+
+  return (
+    <div
+      className={[
+        'absolute inset-0 flex transition-opacity duration-150',
+        isActive ? 'opacity-100' : 'opacity-0 pointer-events-none',
+      ].join(' ')}
+      aria-hidden={isActive ? undefined : true}
+    >
+      {hasImage ? (
+        <>
+          <div
+            data-testid="slide-image-panel"
+            className="w-3/4 h-full overflow-hidden"
+          >
+            <SlideImage
+              // Story 2-45 review fix: keyed on imageUrl so a content refresh that
+              // swaps this slide's image (same slide_id, different image_url)
+              // fully remounts SlideImage, resetting its src/failed state and
+              // one-attempt re-sign guard for the genuinely new asset.
+              key={slide.image_url ?? slide.fallback_image_url ?? 'none'}
+              imageUrl={slide.image_url}
+              fallbackUrl={slide.fallback_image_url}
+              title={slide.title}
+            />
+          </div>
+          {/* data-lenis-prevent: SmoothScroll.tsx's Lenis hijacks wheel events
+              globally — this attribute tells it to delegate to the sidebar's
+              own overflow-y-auto instead. */}
+          <div
+            data-testid="slide-text-sidebar"
+            data-lenis-prevent
+            className="w-1/4 h-full overflow-y-auto overscroll-y-contain p-5 border-l border-neutral-100"
+          >
+            {textContent}
+          </div>
+        </>
+      ) : (
+        <div
+          data-testid="slide-content-full"
+          data-lenis-prevent
+          className="flex-1 h-full overflow-y-auto overscroll-y-contain p-6"
+        >
+          {textContent}
+        </div>
+      )}
     </div>
   );
 }

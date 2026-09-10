@@ -102,6 +102,54 @@ describe('SlideRenderer — isActive / visibility', () => {
   });
 });
 
+describe('SlideRenderer — S4-37 layout', () => {
+  it('renders 75/25 split panels when image is present', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-image-panel')).toBeDefined();
+    expect(screen.getByTestId('slide-text-sidebar')).toBeDefined();
+    expect(screen.queryByTestId('slide-content-full')).toBeNull();
+  });
+
+  it('renders full-width layout when both image URLs are null', () => {
+    render(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-content-full')).toBeDefined();
+    expect(screen.queryByTestId('slide-image-panel')).toBeNull();
+    expect(screen.queryByTestId('slide-text-sidebar')).toBeNull();
+  });
+
+  it('image panel does not have overflow-y-auto (image never scrolls)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const panel = screen.getByTestId('slide-image-panel') as HTMLElement;
+    expect(panel.className).not.toContain('overflow-y-auto');
+  });
+
+  it('text sidebar has overflow-y-auto (sidebar scrolls independently)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const sidebar = screen.getByTestId('slide-text-sidebar') as HTMLElement;
+    expect(sidebar.className).toContain('overflow-y-auto');
+  });
+
+  it('full-width content div has overflow-y-auto when no image', () => {
+    render(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
+    const full = screen.getByTestId('slide-content-full') as HTMLElement;
+    expect(full.className).toContain('overflow-y-auto');
+  });
+
+  it('title and bullets render inside text sidebar when image present', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const sidebar = screen.getByTestId('slide-text-sidebar');
+    expect(sidebar.querySelector('h3')).toBeDefined();
+    expect(sidebar.querySelector('ul')).toBeDefined();
+  });
+
+  it('title and bullets render inside full-width div when no image', () => {
+    render(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
+    const full = screen.getByTestId('slide-content-full');
+    expect(full.querySelector('h3')).toBeDefined();
+    expect(full.querySelector('ul')).toBeDefined();
+  });
+});
+
 describe('SlideRenderer — image handling', () => {
   it('renders an img element when image_url is set', () => {
     render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
