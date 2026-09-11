@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-07 (S4-34: 35 synthetic sessions + 37-test CI suite done; "Analyse 20+" partial → done; S4-35 EMA MagicMock regression fixed — 10 tests restored, 58/58 pass; S4-32 CES weights applied to Fly.io env vars; S4-36 DNA quality checker CI tests + false-positive fix, 20/20 pass)
+**Last updated:** 2026-09-11 (S4-34: 35 synthetic sessions + 37-test CI suite done; "Analyse 20+" partial → done; S4-35 EMA MagicMock regression fixed — 10 tests restored, 58/58 pass; S4-32 CES weights applied to Fly.io env vars; S4-36 DNA quality checker CI tests + false-positive fix, 20/20 pass; S4-37 player slide 75/25 split layout — 34/34 tests pass, 6-layer BMAD review done)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -20,10 +20,10 @@
 | Sprint 3 | Weeks 6–7 | 17 | 17 | 0 | 0 |
 | Learner Mode Sprint | Ongoing | 4 | 4 | 0 | 0 |
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
-| Sprint 4 | Weeks 8–9 | 13 | 12 | 0 | 1 |
+| Sprint 4 | Weeks 8–9 | 14 | 13 | 0 | 1 |
 | Bug Resolution Sprint | Sep 2026 | 4 | 4 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **73** | **70** | **0** | **3** |
+| **Total** | | **74** | **71** | **0** | **3** |
 
 Update this table each time a task is checked off below.
 
@@ -1011,6 +1011,17 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - **4 fixes applied:** (1) `_fake_settings()` in `test_onboarding_endpoint.py`: added `settings.dna_ema_retain = 0.7`; (2) `_build_onboarding_supabase()` in both test files: prepended `dna_select_mock` (data=None) as `side_effect[0]`; (3) `_build_teachback_supabase()` in `test_posthog_events.py`: swapped `lesson_m`/`count_m` to match actual call order; (4) Two inline test mocks for `test_process_onboarding_session_count_is_zero` and `test_process_onboarding_insert_row_payload_mapping`: same dna_select_mock prepend
   - 58/58 tests pass (10 regressions restored + 48 pre-existing); 26/26 CES guard tests pass; ruff clean
   - Branch: `sprint4/s4-35-fix-ema-mock-regression` | Story: `docs/stories/4-35-fix-ema-mock-regression.md`
+
+- [x] **(Cross-team, Dev 2-directed) Player slide 75/25 horizontal split layout (Story S4-37)** — ✓ 2026-09-11
+  - `SlideRenderer.tsx` is Dev 2-owned player territory — Dev 2 asked Dev 3 to pick up this specific task directly; noted here retroactively after Dev 2's own independent review flagged the missing cross-team tag
+  - Removed `max-h-[38vh]` cap from `SlideImage` img; added `h-full object-contain` — image fills 75% panel without cropping
+  - `SlideRenderer` restructured: flex-row split (`w-3/4` image panel + `w-1/4` text sidebar) when image present; single `flex-1` full-width div when no image
+  - `data-lenis-prevent` moved from outer div to scrollable sidebar/full-width div (SmoothScroll Lenis delegate fix)
+  - `aria-label` added to both split panels for screen reader accessibility
+  - 34/34 tests GREEN: 18 pre-existing + 16 new layout tests (AC1–AC5 + a11y regression guards)
+  - 6-layer BMAD adversarial review (2026-09-11): 5 patches applied (AC3/AC5/AC1/AC4 test coverage + a11y), 1 defer (D-img-url pre-existing)
+  - **Second-pass independent review by Dev 2 (2026-09-11)**: found the `aria-label`-on-`<div>` a11y fix didn't actually work (no `role`, so assistive tech ignores it), a `CaptionOverlay`/sidebar collision, a `min-w-0` flex-overflow gap, 3 test gaps, and an unbounded bullets/title-into-25%-sidebar Scale & Load finding. All fixed — see `docs/stories/4-37-player-slide-75-25-layout.md`'s second Review Findings section. 46/46 tests GREEN (12 new); full frontend suite 93 files / 1209 tests, zero regressions.
+  - Branch: `sprint4/s4-37-player-slide-75-25` | Story: `docs/stories/4-37-player-slide-75-25-layout.md` — status: done
 
 - [x] **CI tests for Learner DNA profile quality checker + false-positive fix (Story S4-36)** — ✓ 2026-09-07
   - Fixed bug in `check_profile()`: DPDP disclaimer stripped before banned-term scan — "clinical" in disclaimer no longer triggers FAIL on criterion 2

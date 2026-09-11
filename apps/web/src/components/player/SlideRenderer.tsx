@@ -32,7 +32,7 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
     return (
       <div
         data-testid="slide-image-placeholder"
-        className="w-full aspect-video rounded-xl bg-neutral-100 flex items-center justify-center"
+        className="w-full h-full bg-neutral-100 flex items-center justify-center"
       >
         <span className="text-neutral-400 text-sm">No image</span>
       </div>
@@ -68,16 +68,9 @@ function SlideImage({ imageUrl, fallbackUrl, title }: SlideImageProps) {
       data-testid="slide-image"
       src={src}
       alt={title}
-      // max-h caps the image so it can never push the title/bullets out of
-      // view on a wide/short viewport (review finding) -- w-full + aspect-video
-      // alone made height scale purely with container width, sometimes taller
-      // than the whole slide panel. object-contain + no fixed aspect-ratio
-      // (bug fix: object-cover + aspect-video was CROPPING the image to fill
-      // a box shaped differently than the source) -- the browser sizes the
-      // element from its own intrinsic ratio within the w-full/max-h bounds,
-      // so the full image is always visible, never cropped. mx-auto centers
-      // it on the rare image narrower than the panel once height is clamped.
-      className="w-full max-h-[38vh] object-contain rounded-xl mx-auto block"
+      // S4-37: image fills the 75% panel height without any fixed cap.
+      // object-contain preserves full infographic without cropping.
+      className="w-full h-full object-contain block"
       onError={handleImageError}
     />
   );
@@ -91,55 +84,120 @@ interface SlideRendererProps {
   jargon: JargonEntry[];
 }
 
+// S4-37 review finding (Scale & Load): neither bullet count nor title length is
+// capped anywhere upstream (_MAX_SLIDE_BULLET_CHARS bounds a single bullet's own
+// length, but nothing bounds how many bullets a slide has, or how long its title
+// is). At the sidebar's narrow 25% width that can silently render into a cramped,
+// heavily-wrapped column with no visual signal anything changed. Rather than wait
+// on an upstream pipeline cap (a separate, backend decision), this is an explicit,
+// surfaced degradation: past this threshold the sidebar switches to smaller text
+// so more of the real content is visibly readable at once, instead of silently
+// leaving it exactly as-is only more cramped.
+const _DENSE_CONTENT_CHAR_THRESHOLD = 400;
+
+function isDenseSlideContent(slide: Slide): boolean {
+  const totalChars =
+    slide.title.length + slide.bullets.reduce((sum, bullet) => sum + bullet.length, 0);
+  return totalChars > _DENSE_CONTENT_CHAR_THRESHOLD;
+}
+
 // [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
 // package_builder (Story S2-11, not yet built). Do not build a parallel
 // real-content path here -- this will be reconciled when Sprint 2 lands.
 // Ping Dev 1 (developer1-cybersmith) before changing this shape.
 export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
-  return (
-    <div
-      // data-lenis-prevent (review finding): SmoothScroll.tsx's global Lenis
-      // instance hijacks wheel events for the whole document by default. The
-      // player's root (Player.tsx) is overflow-hidden -- this div's own
-      // overflow-y-auto is the ONLY element that can ever scroll slide content
-      // taller than the panel -- but without this attribute Lenis intercepts
-      // the wheel event before it reaches here, so the mouse wheel appeared to
-      // do nothing (a scrollbar drag, which bypasses Lenis, still worked).
-      data-lenis-prevent
-      className={[
-        'absolute inset-0 overflow-y-auto overscroll-y-contain p-6 transition-opacity duration-150',
-        isActive ? 'opacity-100' : 'opacity-0 pointer-events-none',
-      ].join(' ')}
-      aria-hidden={isActive ? undefined : true}
-    >
-      <SlideImage
-        // Story 2-45 review fix: keyed on imageUrl so a content refresh that
-        // swaps this slide's image (same slide_id, different image_url --
-        // SlideRenderer's own key at its call site wouldn't catch this)
-        // fully remounts SlideImage, resetting its src/failed state AND its
-        // one-attempt re-sign guard for the genuinely new asset. Falls back
-        // to fallbackUrl for the key when imageUrl is null, so a null-image
-        // slide still has a stable key across re-renders.
-        key={slide.image_url ?? slide.fallback_image_url ?? 'none'}
-        imageUrl={slide.image_url}
-        fallbackUrl={slide.fallback_image_url}
-        title={slide.title}
-      />
+  const hasImage = !!(slide.image_url ?? slide.fallback_image_url);
+  // Density-based sizing only applies in the narrow 25% sidebar -- the full-width
+  // (no-image) layout has 4x the room and was never the shape this gap was found in.
+  const isDense = hasImage && isDenseSlideContent(slide);
 
-      <h3 className="font-serif text-xl font-semibold text-neutral-900 mt-5 mb-3 text-wrap-balance">
+  const textContent = (
+    <>
+      <h3
+        className={[
+          'font-serif font-semibold text-neutral-900 mb-3 text-wrap-balance',
+          isDense ? 'text-lg mt-3' : 'text-xl mt-5',
+        ].join(' ')}
+      >
         {slide.title}
       </h3>
-
-      <ul className="space-y-2.5" role="list">
+      <ul className={isDense ? 'space-y-1.5' : 'space-y-2.5'} role="list">
         {slide.bullets.map((bullet, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-neutral-600 text-[15px] leading-relaxed">
+          <li
+            key={i}
+            data-testid="slide-bullet-item"
+            className={[
+              'flex items-start gap-2.5 text-neutral-600 min-w-0',
+              isDense ? 'text-[13px] leading-snug' : 'text-[15px] leading-relaxed',
+            ].join(' ')}
+          >
             <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] shrink-0" aria-hidden />
-            <span>
+            <span className="min-w-0 break-words">
               <JargonHover text={bullet} jargon={jargon} />
             </span>
           </li>
         ))}
       </ul>
+    </>
+  );
+
+  return (
+    <div
+      className={[
+        'absolute inset-0 flex transition-opacity duration-150',
+        isActive ? 'opacity-100' : 'opacity-0 pointer-events-none',
+      ].join(' ')}
+      aria-hidden={isActive ? undefined : true}
+    >
+      {hasImage ? (
+        <>
+          <div
+            data-testid="slide-image-panel"
+            role="group"
+            aria-label="Slide illustration"
+            className="w-3/4 h-full min-w-0 overflow-hidden"
+          >
+            <SlideImage
+              // Story 2-45 review fix: keyed on imageUrl so a content refresh that
+              // swaps this slide's image (same slide_id, different image_url)
+              // fully remounts SlideImage, resetting its src/failed state and
+              // one-attempt re-sign guard for the genuinely new asset.
+              key={slide.image_url ?? slide.fallback_image_url ?? 'none'}
+              imageUrl={slide.image_url}
+              fallbackUrl={slide.fallback_image_url}
+              title={slide.title}
+            />
+          </div>
+          {/* data-lenis-prevent: SmoothScroll.tsx's Lenis hijacks wheel events
+              globally — this attribute tells it to delegate to the sidebar's
+              own overflow-y-auto instead. min-w-0 overrides the flex-item
+              default of min-width:auto (its min-content width), which a long
+              unbroken word/URL/jargon-term would otherwise use to force this
+              panel past w-1/4 -- break-words on the bullet text (above) is
+              the other half of that same fix. pb-24 reserves clearance at the
+              bottom for CaptionOverlay (Player.tsx), a sibling absolutely
+              positioned at max-h-[30%] across the full width -- without it,
+              a full-height bullet list's last lines render underneath the
+              caption bar with no way to scroll clear of it (review finding). */}
+          <div
+            data-testid="slide-text-sidebar"
+            data-lenis-prevent
+            role="group"
+            aria-label="Slide content"
+            className="w-1/4 h-full min-w-0 overflow-y-auto overscroll-y-contain p-5 pb-24 border-l border-neutral-100"
+          >
+            {textContent}
+          </div>
+        </>
+      ) : (
+        <div
+          data-testid="slide-content-full"
+          data-lenis-prevent
+          className="flex-1 h-full overflow-y-auto overscroll-y-contain p-6 pb-24"
+        >
+          {textContent}
+        </div>
+      )}
     </div>
   );
 }
