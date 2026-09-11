@@ -1,17 +1,19 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TeachBackModal } from '@/components/player/TeachBackModal';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
 
-const { submitTeachBackMock, captureMock } = vi.hoisted(() => ({
+const { submitTeachBackMock, submitTeachBackAudioMock, captureMock } = vi.hoisted(() => ({
   submitTeachBackMock: vi.fn(),
+  submitTeachBackAudioMock: vi.fn(),
   captureMock: vi.fn(),
 }));
 
 vi.mock('@/lib/assessment', () => ({
   submitTeachBack: submitTeachBackMock,
+  submitTeachBackAudio: submitTeachBackAudioMock,
 }));
 
 vi.mock('posthog-js', () => ({
@@ -29,7 +31,14 @@ const RESULT = {
 beforeEach(() => {
   submitTeachBackMock.mockReset();
   submitTeachBackMock.mockResolvedValue(RESULT);
+  submitTeachBackAudioMock.mockReset();
+  submitTeachBackAudioMock.mockResolvedValue(RESULT);
   captureMock.mockReset();
+  // Default jsdom has neither navigator.mediaDevices nor a global
+  // MediaRecorder, so isVoiceRecordingSupported() is false and every
+  // pre-existing test below renders exactly as it did before Story 2-63 --
+  // no toggle, typed view only. The dedicated "voice input" describe block
+  // further down opts into media support per-test instead.
   usePlayerStore.getState().loadLesson(mockLessonPackage);
   // A real sessionId is the realistic default (mintSession has already
   // resolved by the time a student reaches teach-back in normal use) --
@@ -184,5 +193,133 @@ describe('TeachBackModal — Story 2-55 accessibility (WCAG AA)', () => {
     await waitFor(() => expect(screen.getByText(RESULT.feedback)).not.toBeNull());
 
     expect(screen.getByRole('button', { name: 'Continue' }).className).toMatch(/focus-visible:ring-4/);
+  });
+});
+
+// # MOCK-CONTRACT: real microphone access and MediaRecorder encoding cannot
+// run under jsdom/vitest -- see VoiceTeachBackRecorder.test.tsx for the same
+// boundary and its own detailed rationale. This block only tests the
+// toggle/wiring in TeachBackModal itself; the recorder's own internal state
+// machine (permission denial, mime-type preference, auto-stop, etc.) is
+// fully covered there and not re-tested here.
+describe('TeachBackModal — Story 2-63 / BR-6 voice input', () => {
+  class FakeMediaRecorder {
+    static isTypeSupported = vi.fn().mockReturnValue(true);
+    state: 'inactive' | 'recording' = 'inactive';
+    ondataavailable: ((e: { data: Blob }) => void) | null = null;
+    onstop: (() => void) | null = null;
+    constructor(public stream: MediaStream) {}
+    start() {
+      this.state = 'recording';
+    }
+    stop() {
+      this.state = 'inactive';
+      this.ondataavailable?.({ data: new Blob(['fake-audio'], { type: 'audio/webm' }) });
+      this.onstop?.();
+    }
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: { getUserMedia: vi.fn().mockResolvedValue({ getTracks: () => [{ stop: vi.fn() }] }) },
+      writable: true,
+      configurable: true,
+    });
+    vi.stubGlobal('MediaRecorder', FakeMediaRecorder);
+    URL.createObjectURL = vi.fn().mockReturnValue('blob:fake-url');
+    URL.revokeObjectURL = vi.fn();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('renders the Type/Record toggle only when the browser supports voice recording', () => {
+    renderModal();
+    expect(screen.getByRole('tab', { name: 'Type' })).not.toBeNull();
+    expect(screen.getByRole('tab', { name: 'Record' })).not.toBeNull();
+  });
+
+  it('defaults to the Type tab -- textarea visible, recorder not mounted', () => {
+    renderModal();
+    expect(screen.getByPlaceholderText('Type your explanation here…')).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /start recording/i })).toBeNull();
+  });
+
+  it('switches to the recorder and hides the typed Submit button when Record is selected', async () => {
+    renderModal();
+    await userEvent.click(screen.getByRole('tab', { name: 'Record' }));
+
+    expect(screen.queryByPlaceholderText('Type your explanation here…')).toBeNull();
+    expect(screen.getByRole('button', { name: /start recording/i })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: 'Submit & Continue' })).toBeNull();
+  });
+
+  it('submits a voice recording via submitTeachBackAudio with the real session/segment ids', async () => {
+    usePlayerStore.setState({ sessionId: 'sess_42' });
+    renderModal();
+    await userEvent.click(screen.getByRole('tab', { name: 'Record' }));
+    await userEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /stop recording/i })).not.toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: /stop recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /submit recording/i })).not.toBeNull());
+
+    await userEvent.click(screen.getByRole('button', { name: /submit recording/i }));
+
+    await waitFor(() =>
+      expect(submitTeachBackAudioMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          session_id: 'sess_42',
+          segment_id: mockLessonPackage.segments[0].segment_id,
+        })
+      )
+    );
+  });
+
+  it('shows the same result view after a voice submission as after a typed one', async () => {
+    renderModal();
+    await userEvent.click(screen.getByRole('tab', { name: 'Record' }));
+    await userEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /stop recording/i })).not.toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: /stop recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /submit recording/i })).not.toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: /submit recording/i }));
+
+    await waitFor(() => expect(screen.getByText(RESULT.feedback)).not.toBeNull());
+    expect(screen.getByRole('button', { name: 'Continue' })).not.toBeNull();
+  });
+
+  it('fires teachback_submitted with source: "voice" -- the typed path\'s own capture call is untouched', async () => {
+    renderModal();
+    await userEvent.click(screen.getByRole('tab', { name: 'Record' }));
+    await userEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /stop recording/i })).not.toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: /stop recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /submit recording/i })).not.toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: /submit recording/i }));
+
+    await waitFor(() =>
+      expect(captureMock).toHaveBeenCalledWith('teachback_submitted', {
+        lesson_id: mockLessonPackage.lesson_id,
+        segment_id: mockLessonPackage.segments[0].segment_id,
+        source: 'voice',
+      })
+    );
+  });
+
+  it('does not block the student when the audio submission fails -- exits teach-back gracefully', async () => {
+    submitTeachBackAudioMock.mockRejectedValue(new Error('network error'));
+    const exitTeachBack = vi.fn();
+    usePlayerStore.setState({ exitTeachBack });
+    renderModal();
+    await userEvent.click(screen.getByRole('tab', { name: 'Record' }));
+    await userEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /stop recording/i })).not.toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: /stop recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /submit recording/i })).not.toBeNull());
+
+    await userEvent.click(screen.getByRole('button', { name: /submit recording/i }));
+
+    await waitFor(() => expect(exitTeachBack).toHaveBeenCalled());
   });
 });

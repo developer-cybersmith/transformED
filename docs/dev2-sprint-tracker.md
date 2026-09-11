@@ -1977,9 +1977,31 @@ Full suite: 91 files / 1118 tests (was 89/1085), zero regressions.
 
 ### BR-6 — Voice Teach-Back: Mic Capture UI
 **Priority:** Medium  
-**Status:** 🔲 NOT STARTED — **blocked on an STT node**  
+**Status:** ✅ DONE — ✅ 2026-09-11 (Story 2-63, branch `bug-resolution/br-6-voice-teachback-mic-capture`)  
 
-Mic capture UI, recording + upload, toggle between typed/voice input. **Dependency attribution inconsistency found across the 4 devs' own task lists, not yet resolved**: this task (as given to Dev 2) says "depends on Dev 1's STT node," Dev 3's own Bug Resolution list has Dev 3 building "Whisper/OpenAI STT node to transcribe audio submissions," and Dev 4's list says its own real-time mic capture task "depends on Dev 3's STT node." Confirm with the team who actually owns the STT node before starting — do not assume Dev 1 based on this task's own wording alone.
+Mic capture UI, recording + upload, toggle between typed/voice input. **Dependency attribution
+inconsistency resolved**: the earlier note here (and in Dev 3's/Dev 4's own lists) disagreed on who
+owned the STT node. Confirmed 2026-09-11: **Dev 3 built it** — Story F2-4 (`docs/stories/f2-4-voice-teachback-stt.md`,
+branch `feature2/f2-4-voice-teachback-stt`, PR #197, merged to `main` 2026-09-04). Real backend:
+`POST /assessment/teachback/{session_id}/{segment_id}/audio` (multipart `UploadFile`), `WhisperProvider`
+(`apps/api/app/providers/stt/whisper.py`), transcript fed into the existing `grade_teachback()` scorer,
+graceful `score_source="fallback"` on transcription failure (never a 500), cost tracked via
+`accumulate_cost()`, raw audio never persisted (DPDP). CLAUDE.md's "No STT in MVP" rule was formally
+lifted for this one endpoint.
+
+Built the frontend half: new `VoiceTeachBackRecorder.tsx` (idle → requesting → recording → recorded
+state machine, mic-permission handling that never dead-ends the student, `MediaRecorder` mime-type
+fallback chain, a 5-minute auto-stop with a one-time surfaced notice — **never a live countdown**,
+per CLAUDE.md's "No teach-back timer" rule, independently guarded by its own regex test). Wired into
+`TeachBackModal` via a Type/Record toggle (hidden entirely on browsers without `MediaRecorder`
+support — explicit degradation, not a broken button) that defaults to Type, so every one of the 13
+pre-existing typed-mode tests passes unmodified. New `submitTeachBackAudio()` posts to the real F2-4
+endpoint; `TeachBackResult` gained an accurately-typed `score_source` field (no new UI built on it —
+out of scope). Voice submissions fire the same `teachback_submitted` PostHog event with an added
+`source: 'voice'` property via a separate capture call, deliberately not touching the typed path's
+own exact-match capture assertion. 22 new tests (15 recorder + 7 modal-wiring); full frontend suite
+94 files / 1231 tests (was 1209), zero regressions. Full detail in
+`docs/stories/2-63-voice-teachback-mic-capture.md`.
 
 ### BR-7 — Reports Index Page (ad-hoc, added 2026-09-05)
 **Priority:** High
