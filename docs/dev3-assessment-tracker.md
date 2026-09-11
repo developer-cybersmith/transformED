@@ -1012,13 +1012,15 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - 58/58 tests pass (10 regressions restored + 48 pre-existing); 26/26 CES guard tests pass; ruff clean
   - Branch: `sprint4/s4-35-fix-ema-mock-regression` | Story: `docs/stories/4-35-fix-ema-mock-regression.md`
 
-- [x] **Player slide 75/25 horizontal split layout (Story S4-37)** — ✓ 2026-09-11
+- [x] **(Cross-team, Dev 2-directed) Player slide 75/25 horizontal split layout (Story S4-37)** — ✓ 2026-09-11
+  - `SlideRenderer.tsx` is Dev 2-owned player territory — Dev 2 asked Dev 3 to pick up this specific task directly; noted here retroactively after Dev 2's own independent review flagged the missing cross-team tag
   - Removed `max-h-[38vh]` cap from `SlideImage` img; added `h-full object-contain` — image fills 75% panel without cropping
   - `SlideRenderer` restructured: flex-row split (`w-3/4` image panel + `w-1/4` text sidebar) when image present; single `flex-1` full-width div when no image
   - `data-lenis-prevent` moved from outer div to scrollable sidebar/full-width div (SmoothScroll Lenis delegate fix)
   - `aria-label` added to both split panels for screen reader accessibility
   - 34/34 tests GREEN: 18 pre-existing + 16 new layout tests (AC1–AC5 + a11y regression guards)
   - 6-layer BMAD adversarial review (2026-09-11): 5 patches applied (AC3/AC5/AC1/AC4 test coverage + a11y), 1 defer (D-img-url pre-existing)
+  - **Second-pass independent review by Dev 2 (2026-09-11)**: found the `aria-label`-on-`<div>` a11y fix didn't actually work (no `role`, so assistive tech ignores it), a `CaptionOverlay`/sidebar collision, a `min-w-0` flex-overflow gap, 3 test gaps, and an unbounded bullets/title-into-25%-sidebar Scale & Load finding. All fixed — see `docs/stories/4-37-player-slide-75-25-layout.md`'s second Review Findings section. 46/46 tests GREEN (12 new); full frontend suite 93 files / 1209 tests, zero regressions.
   - Branch: `sprint4/s4-37-player-slide-75-25` | Story: `docs/stories/4-37-player-slide-75-25-layout.md` — status: done
 
 - [x] **CI tests for Learner DNA profile quality checker + false-positive fix (Story S4-36)** — ✓ 2026-09-07

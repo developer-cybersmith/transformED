@@ -31,6 +31,17 @@ const nullImageSlide: Slide = {
   fallback_image_url: null,
 };
 
+const fallbackOnlySlide: Slide = {
+  ...mockSlide,
+  slide_id: 'sl_fallback_only',
+  image_url: null,
+  fallback_image_url: 'https://cdn.hie.ai/mock/slide_0_fallback.jpg',
+};
+
+function makeSlide(overrides: Partial<Slide>): Slide {
+  return { ...mockSlide, ...overrides };
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe('SlideRenderer — content', () => {
@@ -209,6 +220,140 @@ describe('SlideRenderer — S4-37 layout', () => {
     render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
     const sidebar = screen.getByTestId('slide-text-sidebar') as HTMLElement;
     expect(sidebar.getAttribute('aria-label')).not.toBeNull();
+  });
+
+  // Review fix: aria-label on a bare <div> (role "generic") does not support
+  // name-from-author -- role="group" makes the label actually reach the
+  // accessibility tree, not just sit inertly in the DOM.
+  it('review fix: image panel and text sidebar carry role="group" so aria-label is exposed to AT', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-image-panel').getAttribute('role')).toBe('group');
+    expect(screen.getByTestId('slide-text-sidebar').getAttribute('role')).toBe('group');
+  });
+
+  // Review fix (AC Completeness gap): regression guard for the exact defect
+  // this story fixes -- object-cover would crop the infographic to fill the
+  // panel instead of showing it in full.
+  it('review fix: slide image uses object-contain, never object-cover (AC3)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const img = screen.getByTestId('slide-image') as HTMLElement;
+    expect(img.className).toContain('object-contain');
+    expect(img.className).not.toContain('object-cover');
+  });
+
+  // Review fix (Test Coverage gap): AC1 says "has image_url OR fallback_image_url" --
+  // only the fallback-only ("or" via the second operand) branch was untested.
+  it('review fix: renders the 75/25 split when only fallback_image_url is set (AC1 "or" branch)', () => {
+    render(<SlideRenderer slide={fallbackOnlySlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-image-panel')).toBeDefined();
+    expect(screen.getByTestId('slide-text-sidebar')).toBeDefined();
+    expect(screen.queryByTestId('slide-content-full')).toBeNull();
+  });
+
+  // Review fix (Test Coverage + Blind Hunter): hasImage flipping on a re-render
+  // swaps the fragment shape (two-div split <-> one-div full-width), which React
+  // can only handle by unmounting/remounting -- confirm the layout actually
+  // swaps correctly rather than leaving stale panels behind.
+  it('review fix: layout swaps correctly when hasImage flips true -> false on re-render', () => {
+    const { rerender } = render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-image-panel')).toBeDefined();
+
+    rerender(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
+
+    expect(screen.queryByTestId('slide-image-panel')).toBeNull();
+    expect(screen.queryByTestId('slide-text-sidebar')).toBeNull();
+    expect(screen.getByTestId('slide-content-full')).toBeDefined();
+    expect(screen.getByText('Defining AI')).toBeDefined();
+  });
+
+  it('review fix: layout swaps correctly when hasImage flips false -> true on re-render', () => {
+    const { rerender } = render(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-content-full')).toBeDefined();
+
+    rerender(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+
+    expect(screen.queryByTestId('slide-content-full')).toBeNull();
+    expect(screen.getByTestId('slide-image-panel')).toBeDefined();
+    expect(screen.getByTestId('slide-text-sidebar')).toBeDefined();
+  });
+
+  // Review fix (Edge Case Hunter): CaptionOverlay (Player.tsx sibling, absolute
+  // bottom-0, full width, max-h-[30%]) has no clearance reserved without this --
+  // confirm the scrollable regions now reserve bottom padding for it.
+  it('review fix: text sidebar and full-width content reserve bottom clearance for CaptionOverlay', () => {
+    const { rerender } = render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-text-sidebar').className).toContain('pb-24');
+
+    rerender(<SlideRenderer slide={nullImageSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-content-full').className).toContain('pb-24');
+  });
+
+  // Review fix (Blind Hunter + Edge Case Hunter): min-w-0 + break-words guard
+  // against a long unbroken token (URL/jargon term) forcing the sidebar past
+  // its w-1/4 share via the flex-item default min-width:auto.
+  it('review fix: image panel and text sidebar have min-w-0 to prevent flex overflow', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-image-panel').className).toContain('min-w-0');
+    expect(screen.getByTestId('slide-text-sidebar').className).toContain('min-w-0');
+  });
+
+  it('review fix: bullet text wraps long unbroken tokens instead of forcing overflow', () => {
+    const longTokenSlide = makeSlide({ bullets: ['a'.repeat(150)] });
+    render(<SlideRenderer slide={longTokenSlide} isActive jargon={[]} />);
+    const bullet = screen.getByText('a'.repeat(150));
+    expect(bullet.className).toContain('break-words');
+  });
+});
+
+// ── Dense-content safety net (Story S4-37 review fix, Scale & Load finding) ─────
+//
+// Neither bullet count nor title length is capped upstream in the content
+// pipeline (only a single bullet's own character length is). At the sidebar's
+// narrow 25% width, real content near that per-bullet ceiling can silently
+// render into a cramped, heavily-wrapped column with no visual signal anything
+// changed. Past a combined-content-length threshold, the sidebar switches to
+// smaller text so more of the real content is visibly readable -- an explicit,
+// surfaced degradation rather than a silent one.
+describe('SlideRenderer — dense content safety net', () => {
+  it('uses default text sizing for a short, typical slide', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    const bullet = screen.getAllByTestId('slide-bullet-item')[0];
+    expect(bullet.className).toContain('text-[15px]');
+    expect(bullet.className).not.toContain('text-[13px]');
+  });
+
+  it('switches to smaller, denser text once combined title+bullet length exceeds the threshold', () => {
+    // title (11 chars) + 3 bullets at 150 chars each = 461 chars > 400 threshold.
+    const denseSlide = makeSlide({ bullets: ['b'.repeat(150), 'c'.repeat(150), 'd'.repeat(150)] });
+    render(<SlideRenderer slide={denseSlide} isActive jargon={[]} />);
+    const bullet = screen.getAllByTestId('slide-bullet-item')[0];
+    expect(bullet.className).toContain('text-[13px]');
+    expect(bullet.className).not.toContain('text-[15px]');
+  });
+
+  it('does not apply dense sizing to the full-width (no-image) layout even with the same long content', () => {
+    // Same combined length as the dense case above, but no image -- full width
+    // has 4x the room, so this was never the shape the gap was found in.
+    const denseNoImageSlide = makeSlide({
+      image_url: null,
+      fallback_image_url: null,
+      bullets: ['b'.repeat(150), 'c'.repeat(150), 'd'.repeat(150)],
+    });
+    render(<SlideRenderer slide={denseNoImageSlide} isActive jargon={[]} />);
+    const bullet = screen.getAllByTestId('slide-bullet-item')[0];
+    expect(bullet.className).toContain('text-[15px]');
+  });
+
+  it('applies dense sizing right at the boundary (401 chars dense, 400 chars not)', () => {
+    // title "Defining AI" = 11 chars. One bullet of 389 chars -> 400 total (not dense).
+    const atThreshold = makeSlide({ bullets: ['e'.repeat(389)] });
+    const { rerender } = render(<SlideRenderer slide={atThreshold} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-bullet-item').className).toContain('text-[15px]');
+
+    // One bullet of 390 chars -> 401 total (dense).
+    const overThreshold = makeSlide({ bullets: ['f'.repeat(390)] });
+    rerender(<SlideRenderer slide={overThreshold} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-bullet-item').className).toContain('text-[13px]');
   });
 });
 

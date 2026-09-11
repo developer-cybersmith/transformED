@@ -84,23 +84,55 @@ interface SlideRendererProps {
   jargon: JargonEntry[];
 }
 
+// S4-37 review finding (Scale & Load): neither bullet count nor title length is
+// capped anywhere upstream (_MAX_SLIDE_BULLET_CHARS bounds a single bullet's own
+// length, but nothing bounds how many bullets a slide has, or how long its title
+// is). At the sidebar's narrow 25% width that can silently render into a cramped,
+// heavily-wrapped column with no visual signal anything changed. Rather than wait
+// on an upstream pipeline cap (a separate, backend decision), this is an explicit,
+// surfaced degradation: past this threshold the sidebar switches to smaller text
+// so more of the real content is visibly readable at once, instead of silently
+// leaving it exactly as-is only more cramped.
+const _DENSE_CONTENT_CHAR_THRESHOLD = 400;
+
+function isDenseSlideContent(slide: Slide): boolean {
+  const totalChars =
+    slide.title.length + slide.bullets.reduce((sum, bullet) => sum + bullet.length, 0);
+  return totalChars > _DENSE_CONTENT_CHAR_THRESHOLD;
+}
+
 // [DEV1-SPRINT2-PENDING] This depends on the real LessonPackage from Dev 1's
 // package_builder (Story S2-11, not yet built). Do not build a parallel
 // real-content path here -- this will be reconciled when Sprint 2 lands.
 // Ping Dev 1 (developer1-cybersmith) before changing this shape.
 export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
   const hasImage = !!(slide.image_url ?? slide.fallback_image_url);
+  // Density-based sizing only applies in the narrow 25% sidebar -- the full-width
+  // (no-image) layout has 4x the room and was never the shape this gap was found in.
+  const isDense = hasImage && isDenseSlideContent(slide);
 
   const textContent = (
     <>
-      <h3 className="font-serif text-xl font-semibold text-neutral-900 mt-5 mb-3 text-wrap-balance">
+      <h3
+        className={[
+          'font-serif font-semibold text-neutral-900 mb-3 text-wrap-balance',
+          isDense ? 'text-lg mt-3' : 'text-xl mt-5',
+        ].join(' ')}
+      >
         {slide.title}
       </h3>
-      <ul className="space-y-2.5" role="list">
+      <ul className={isDense ? 'space-y-1.5' : 'space-y-2.5'} role="list">
         {slide.bullets.map((bullet, i) => (
-          <li key={i} className="flex items-start gap-2.5 text-neutral-600 text-[15px] leading-relaxed">
+          <li
+            key={i}
+            data-testid="slide-bullet-item"
+            className={[
+              'flex items-start gap-2.5 text-neutral-600 min-w-0',
+              isDense ? 'text-[13px] leading-snug' : 'text-[15px] leading-relaxed',
+            ].join(' ')}
+          >
             <span className="mt-2 w-1.5 h-1.5 rounded-full bg-[var(--accent-primary)] shrink-0" aria-hidden />
-            <span>
+            <span className="min-w-0 break-words">
               <JargonHover text={bullet} jargon={jargon} />
             </span>
           </li>
@@ -121,8 +153,9 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
         <>
           <div
             data-testid="slide-image-panel"
+            role="group"
             aria-label="Slide illustration"
-            className="w-3/4 h-full overflow-hidden"
+            className="w-3/4 h-full min-w-0 overflow-hidden"
           >
             <SlideImage
               // Story 2-45 review fix: keyed on imageUrl so a content refresh that
@@ -137,12 +170,21 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
           </div>
           {/* data-lenis-prevent: SmoothScroll.tsx's Lenis hijacks wheel events
               globally — this attribute tells it to delegate to the sidebar's
-              own overflow-y-auto instead. */}
+              own overflow-y-auto instead. min-w-0 overrides the flex-item
+              default of min-width:auto (its min-content width), which a long
+              unbroken word/URL/jargon-term would otherwise use to force this
+              panel past w-1/4 -- break-words on the bullet text (above) is
+              the other half of that same fix. pb-24 reserves clearance at the
+              bottom for CaptionOverlay (Player.tsx), a sibling absolutely
+              positioned at max-h-[30%] across the full width -- without it,
+              a full-height bullet list's last lines render underneath the
+              caption bar with no way to scroll clear of it (review finding). */}
           <div
             data-testid="slide-text-sidebar"
             data-lenis-prevent
+            role="group"
             aria-label="Slide content"
-            className="w-1/4 h-full overflow-y-auto overscroll-y-contain p-5 border-l border-neutral-100"
+            className="w-1/4 h-full min-w-0 overflow-y-auto overscroll-y-contain p-5 pb-24 border-l border-neutral-100"
           >
             {textContent}
           </div>
@@ -151,7 +193,7 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
         <div
           data-testid="slide-content-full"
           data-lenis-prevent
-          className="flex-1 h-full overflow-y-auto overscroll-y-contain p-6"
+          className="flex-1 h-full overflow-y-auto overscroll-y-contain p-6 pb-24"
         >
           {textContent}
         </div>
