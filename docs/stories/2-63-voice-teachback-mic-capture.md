@@ -1,6 +1,6 @@
 ---
 title: "Story 2-63 — Voice Teach-Back: Mic Capture UI (BR-6)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -127,7 +127,51 @@ endpoint.
 
 ### Completion Notes
 
-_(filled in after implementation)_
+- **AC1-DONE.** `TeachBackModal` gains an `inputMode` state defaulting to `'typed'`; every
+  pre-existing test (13) passes unmodified — the default render path is byte-for-byte the same as
+  before this story.
+- **AC2-DONE.** New `isVoiceRecordingSupported()` (exported from `VoiceTeachBackRecorder.tsx`)
+  feature-detects `MediaRecorder` + `navigator.mediaDevices.getUserMedia`; the Type/Record toggle is
+  only rendered when it returns `true`. jsdom's default test environment has neither, so all
+  pre-existing tests see no toggle at all with zero mocking required.
+- **AC3-DONE.** `VoiceTeachBackRecorder` implements the full state machine (`idle` → `requesting` →
+  `recording` → `recorded`, plus `permission-denied`) exactly as specified. Permission denial shows
+  an inline message and keeps "Start Recording" available to retry — never a dead end.
+- **AC4-DONE.** No timer/countdown anywhere in either the recording or recorded states — a
+  non-numeric pulsing dot signals "recording is live." Verified by a dedicated regex test
+  (`/\d+:\d{2}/`) mirroring the existing typed-view guard test exactly.
+- **AC5-DONE.** `MAX_RECORDING_MS = 5 * 60 * 1000` auto-stops recording; a one-time notice
+  ("stopped automatically after 5 minutes") appears in the `recorded` state — never a live
+  countdown. Verified with `vi.useFakeTimers()`.
+- **AC6-DONE.** `pickSupportedMimeType()` tries `audio/webm;codecs=opus` → `audio/webm` →
+  `audio/mp4` via `MediaRecorder.isTypeSupported()`, falling through to the browser default
+  (`undefined` options) if none match or the check throws.
+- **AC7-DONE.** `submitTeachBackAudio()` posts the recorded `Blob` as multipart `FormData` (field
+  `audio`) to `POST /assessment/teachback/{session_id}/{segment_id}/audio` — no explicit
+  `Content-Type` header, matching `uploadService.uploadLesson`'s established pattern. Returns the
+  same `TeachBackResult`; the existing result view is reused with zero changes.
+- **AC8-DONE.** `TeachBackResult.score_source: 'llm' | 'fallback' | 'skipped'` added, matching the
+  real backend field exactly. No new UI branch built on it, per the story's own stated scope.
+- **AC9-DONE.** `releaseStream()` called on recording stop, re-record, and component unmount
+  (cleanup effect) — verified by a dedicated test asserting the mock track's `stop()` is called.
+- **AC10-DONE.** Voice submission fires `teachback_submitted` with an added `source: 'voice'` via
+  its own separate `posthog.capture()` call in `handleAudioSubmit` — the typed path's existing
+  capture call in `handleSubmit` is untouched, so its pre-existing exact-match test
+  (`{lesson_id, segment_id}`, no `source` field) passes unmodified.
+- **AC11-DONE.** 15 new tests in `VoiceTeachBackRecorder.test.tsx` (state machine, mic release,
+  mime-type preference, permission denial, auto-stop, no-timer guard) + 7 new tests in
+  `TeachBackModal.test.tsx` (toggle rendering/switching, voice submission wiring, shared result
+  view, `source: 'voice'` capture, graceful failure handling).
+- **AC12-DONE.** `tsc --noEmit` clean, targeted `eslint` clean (one pre-existing unused-directive
+  warning found and removed during implementation, not shipped). Full frontend suite: 94 files /
+  1231 tests (was 93/1209 pre-story), zero regressions.
+- **Test-infra note, not an AC**: two testing-library/jsdom gotchas were hit and fixed during RED
+  phase — (1) stubbing the whole `URL` global via `vi.stubGlobal` raced against
+  `@testing-library/react`'s own cleanup-on-unmount timing (jsdom has no real
+  `createObjectURL`/`revokeObjectURL` to fall back to); fixed by assigning directly onto the real
+  `URL` constructor instead of replacing it wholesale. (2) `userEvent` under `vi.useFakeTimers()`
+  deadlocked even with `delay: null`; fixed by using `fireEvent.click` + explicit microtask flushes
+  for the one test that needed both a click and fake-timer advancement in the same test.
 
 ### File List
 
