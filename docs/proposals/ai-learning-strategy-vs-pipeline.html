@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Plan vs Pipeline</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400..900&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#F9F9F9;
+    --surface:#FFFFFF;
+    --surface-2:#F1EDE4;
+    --ink:#07172C;
+    --ink-2:#3C4656;
+    --muted:#6B6D6F;
+    --accent:#C6A45C;
+    --line:rgba(7,23,44,0.14);
+    --line-soft:rgba(7,23,44,0.08);
+    --good:#2E7D5B;
+    --good-bg:#E8F3ED;
+    --warn:#B8722E;
+    --warn-bg:#FBF1E4;
+    --crit:#A6413A;
+    --crit-bg:#F8E9E7;
+  }
+  *{box-sizing:border-box;}
+  html,body{background:var(--bg);}
+  body{
+    color:var(--ink);
+    font-family:'IBM Plex Sans', system-ui, sans-serif;
+    line-height:1.6;
+    padding-inline:20px;
+    margin:0;
+  }
+  .wrap{max-width:920px; margin:0 auto; padding-block:48px 80px;}
+  h1,h2,h3{font-family:'Fraunces', Georgia, serif; color:var(--ink); font-weight:650;}
+  h1{font-size:2.4rem; margin:0 0 6px; letter-spacing:-0.01em;}
+  h2{font-size:1.5rem; margin:0 0 4px;}
+  h3{font-size:1.05rem; margin:0; font-weight:600;}
+  p{margin:0 0 1em; max-width:66ch; color:var(--ink-2);}
+  .mono{font-family:'IBM Plex Mono', ui-monospace, monospace;}
+  code{font-family:'IBM Plex Mono', ui-monospace, monospace; font-size:0.88em; background:var(--surface-2); padding:0.1em 0.4em; border-radius:3px; color:var(--ink);}
+
+  .masthead{border-bottom:1px solid var(--line); padding-bottom:28px; margin-bottom:36px;}
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace; text-transform:uppercase; letter-spacing:0.12em;
+    font-size:0.72rem; color:var(--accent); font-weight:600; margin-bottom:10px; display:block;
+  }
+  .meta-row{
+    display:flex; flex-wrap:wrap; gap:6px 20px; margin-top:16px;
+    font-family:'IBM Plex Mono', monospace; font-size:0.78rem; color:var(--muted);
+  }
+  .meta-row span b{color:var(--ink-2); font-weight:600;}
+
+  .callout{
+    background:var(--surface-2); border:1px solid var(--line); border-left:4px solid var(--crit);
+    padding:20px 22px; margin:28px 0 40px; border-radius:2px;
+  }
+  .callout h3{margin-bottom:12px;}
+  .callout ol{margin:0; padding-left:1.2em; color:var(--ink-2);}
+  .callout li{margin-bottom:8px;}
+  .callout li:last-child{margin-bottom:0;}
+  .callout li b{color:var(--ink);}
+
+  .legend{
+    display:flex; flex-wrap:wrap; gap:10px 22px; padding:14px 0 36px;
+    border-bottom:1px solid var(--line); margin-bottom:36px;
+  }
+  .chip{display:inline-flex; align-items:center; gap:7px; font-size:0.82rem; color:var(--ink-2);}
+  .dot{width:9px; height:9px; border-radius:50%; flex-shrink:0; display:inline-block;}
+  .dot.good{background:var(--good);}
+  .dot.warn{background:var(--warn);}
+  .dot.crit{background:var(--crit); box-shadow:0 0 0 2px var(--crit-bg);}
+  .dot.new{border:2px solid var(--muted); background:transparent;}
+
+  .domain{margin-bottom:56px; page-break-inside:avoid;}
+  .domain-head{display:flex; align-items:baseline; gap:12px; margin-bottom:6px; flex-wrap:wrap;}
+  .domain-num{font-family:'IBM Plex Mono', monospace; color:var(--muted); font-size:0.85rem;}
+  .verdict{
+    display:inline-flex; align-items:center; gap:7px; font-family:'IBM Plex Mono', monospace;
+    font-size:0.76rem; padding:3px 10px 3px 8px; border-radius:99px; margin:10px 0 18px; font-weight:500;
+  }
+  .verdict.good{background:var(--good-bg); color:var(--good);}
+  .verdict.warn{background:var(--warn-bg); color:var(--warn);}
+  .verdict.crit{background:var(--crit-bg); color:var(--crit);}
+  .verdict.new{background:var(--surface-2); color:var(--ink-2); border:1px dashed var(--muted);}
+
+  .compare{
+    display:grid; grid-template-columns:1fr 1fr; border:1px solid var(--line); background:var(--surface);
+  }
+  .compare > div{padding:18px 22px;}
+  .compare > div:first-child{border-right:1px solid var(--line);}
+  .col-label{
+    font-family:'IBM Plex Mono', monospace; font-size:0.7rem; letter-spacing:0.1em; text-transform:uppercase;
+    display:block; margin-bottom:10px; font-weight:600;
+  }
+  .col-current{border-top:3px solid var(--muted);}
+  .col-planned{border-top:3px solid var(--accent);}
+  .col-current .col-label{color:var(--muted);}
+  .col-planned .col-label{color:var(--accent);}
+  .compare p{margin:0; font-size:0.95rem; max-width:none; color:var(--ink-2);}
+  .compare p + p{margin-top:10px;}
+
+  .note{font-size:0.92rem; color:var(--ink-2); margin-top:14px; padding-left:14px; border-left:2px solid var(--line);}
+  .note b{color:var(--ink);}
+
+  .diagram-panel{
+    background:#FFFFFF; border:1px solid #DCD7C9; border-radius:4px;
+    padding:20px 16px 8px; margin:22px 0 8px; overflow-x:auto;
+  }
+  .diagram-panel .mermaid{margin:0; display:flex; justify-content:center; min-width:520px;}
+  figure{margin:0 0 30px;}
+  figcaption{
+    font-size:0.82rem; color:var(--muted); margin-top:8px; padding:0 4px;
+    font-style:italic;
+  }
+
+  .table-wrap{overflow-x:auto; border:1px solid var(--line); margin-top:14px;}
+  table{border-collapse:collapse; width:100%; min-width:640px; font-size:0.9rem; background:var(--surface);}
+  th, td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--line-soft); vertical-align:top;}
+  thead th{
+    font-family:'IBM Plex Mono', monospace; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em;
+    color:var(--muted); border-bottom:1px solid var(--line); font-weight:600;
+  }
+  tbody tr:last-child td{border-bottom:none;}
+  td.domain-cell{font-weight:600; white-space:nowrap;}
+
+  footer{margin-top:60px; padding-top:20px; border-top:1px solid var(--line); font-size:0.8rem; color:var(--muted);}
+
+  @media print{
+    body{padding-inline:0;}
+    .wrap{max-width:100%; padding:24px;}
+    .diagram-panel{break-inside:avoid;}
+    .domain{break-inside:avoid;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="masthead">
+    <span class="eyebrow">transformED &middot; strategy reconciliation</span>
+    <h1>Plan vs Pipeline</h1>
+    <p style="max-width:60ch; font-size:1.05rem;">Eight domains where the <em>AI Learning Product</em> strategy doc either extends, duplicates, or collides with what's already built. Grounded in the actual pipeline code, not the tracker's claims about it.</p>
+    <div class="meta-row">
+      <span><b>Source plan:</b> AI_Learning_Product_Final_Strategy.pdf</span>
+      <span><b>Build snapshot:</b> master-tracker.md, ces-decisions-developer-guide.md</span>
+      <span><b>As of:</b> 2026-09-11</span>
+    </div>
+  </div>
+
+  <div class="callout">
+    <h3>Three things to settle before writing any story</h3>
+    <ol>
+      <li><b>"CES" means two different things.</b> The live formula gating tutor interventions and the plan's skill-growth score share a name and nothing else. See Domain 5.</li>
+      <li><b>SQ and Research have no home in Learner DNA.</b> The 9 shipped dimensions cover IQ and EQ reasonably well; nothing today measures explanation-to-others or evidence-checking. See Domain 4.</li>
+      <li><b>Book- and chapter-level intent isn't captured anywhere.</b> Today's only inputs are a 20-question diagnostic and a duration pick. Three new forms is real, unscoped engineering. See Domain 1.</li>
+    </ol>
+  </div>
+
+  <div class="legend">
+    <span class="chip"><span class="dot good"></span> Aligned &mdash; built and matches the plan</span>
+    <span class="chip"><span class="dot warn"></span> Partial &mdash; exists, different shape</span>
+    <span class="chip"><span class="dot new"></span> Net-new &mdash; no code today</span>
+    <span class="chip"><span class="dot crit"></span> Conflict &mdash; needs a decision first</span>
+  </div>
+
+  <figure>
+    <div class="diagram-panel">
+<pre class="mermaid">
+flowchart LR
+  subgraph EXIST["Existing system - 7 modules"]
+    AUTH["auth"]
+    CONTENT["content / pipeline"]
+    ASSESS["assessment (Learner DNA + CES)"]
+    TUTOR["tutor (7-state FSM + CES)"]
+    ADMIN["admin"]
+  end
+  subgraph PLAN["Strategy doc - proposed domains"]
+    D1["Learner &amp; content profiling forms"]
+    D2["System prompt + teaching flow"]
+    D4["IQ / EQ / SQ / Research skills"]
+    D5["Cognitive Engagement Score v2"]
+    D6["Manual-first methodology"]
+  end
+  D1 -. no home yet .-> CONTENT
+  D2 --> CONTENT
+  D4 --> ASSESS
+  D5 -. same name, new formula .-> ASSESS
+  D5 -. same name, new formula .-> TUTOR
+  D6 -. process change, not code .-> ADMIN
+  class D5 conflictNode
+  class D1,D6 newNode
+  classDef conflictNode fill:#F8E9E7,stroke:#A6413A,stroke-width:2px,color:#07172C
+  classDef newNode fill:#FBF1E4,stroke:#C6A45C,stroke-width:2px,color:#07172C
+</pre>
+    </div>
+    <figcaption>Where each strategy-doc domain lands on the existing module map. Dotted edges mark domains with no current owner or a name that already means something else.</figcaption>
+  </figure>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">01</span><h2>Learner &amp; Content Profiling</h2></div>
+    <span class="verdict new">&#9675; net-new</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p>A 20-question diagnostic (<code>OnboardingFlow.tsx</code>, Story 2-3) scores the 9-dimension Learner DNA profile once, at signup. A 3-card Learner Mode picker (Deep / Balanced / Refresher, Stories S2-07&ndash;09) sets duration at upload time.</p>
+        <p>Neither captures a stated goal, a deadline, a preferred tone or pace, or anything about <em>why</em> a specific book or chapter was uploaded.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p>Three layered forms &mdash; Onboarding (goal, level, tone, pace), Book (purpose, scope, deadline), Chapter (doubts, focus, expected outcome) &mdash; merged into a priority-ordered system prompt, each optional after the first ask.</p>
+      </div>
+    </div>
+    <p class="note">No schema, storage, or UI exists for book- or chapter-level intent. This is the single largest genuinely new engineering surface in the plan &mdash; everything else below extends something already built.</p>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">02</span><h2>Lesson Generation Pipeline</h2></div>
+    <span class="verdict warn">&#9680; exists, shape undecided</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p>11-node LangGraph pipeline, code-verified end to end. Phase 1 (six economy nodes, <code>gpt-4o-mini</code>) runs in parallel; Phase 2 (<code>lesson_planner</code>, <code>slide_generator</code>, <code>gpt-4o</code>) runs sequentially on Phase-1 summaries only, never raw text &mdash; a hard 5&times; token-savings rule.</p>
+        <p>Two systemic bugs (reducer-field duplication, TTS-fallback script loss) were found and fixed 2026-07-28/29.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p>A specific 9-step teaching flow (Introduce &rarr; Explain &rarr; Simplify &rarr; Apply &rarr; Ask &rarr; Reflect &rarr; Correct &rarr; Connect &rarr; Reinforce) and a 60/40 technical-to-engagement narration ratio. Duration should reshape depth and pacing, not just section count.</p>
+      </div>
+    </div>
+    <p class="note">The nodes exist; none of their prompts encode this structure yet. Dev 1's own backlog already carries an open, unscoped item &mdash; <b>"redesign lesson_planner/slide_generator prompts: plain-language explanations + easy diagrams"</b> &mdash; that this plan would give real content to.</p>
+
+    <figure>
+      <div class="diagram-panel">
+<pre class="mermaid">
+flowchart TD
+  UP["Upload PDF"] --> ING["Phase A: extract, structure, chunk, embed"]
+  ING --> SEL["Pick chapter + Learner Mode tier"]
+  SEL --> P1
+  subgraph P1["Phase 1 - parallel, gpt-4o-mini"]
+    S1["summarise_segment"]
+    S2["quiz_generator"]
+    S3["segment_complexity"]
+    S4["jargon_extractor"]
+    S5["intervention_messages"]
+    S6["narration_generator"]
+  end
+  P1 -->|"segment summaries only"| P2
+  subgraph P2["Phase 2 - sequential, gpt-4o"]
+    L["lesson_planner"]
+    SL["slide_generator"]
+  end
+  L --> SL
+  P2 --> P3
+  subgraph P3["Phase 3 - media"]
+    TTS["tts_node"]
+    IMG["image_generator"]
+    PKG["package_builder"]
+  end
+  TTS --> PKG
+  IMG --> PKG
+  PKG --> OUT["LessonPackage JSONB"]
+</pre>
+      </div>
+      <figcaption>The pipeline as it runs today. The Phase 1 &rarr; Phase 2 handoff is the one architectural rule the plan must not violate: lesson_planner never sees raw chapter text.</figcaption>
+    </figure>
+
+    <figure>
+      <div class="diagram-panel">
+<pre class="mermaid">
+flowchart TD
+  ON["Onboarding form"] -->|"goal, tone, pace"| STACK
+  BK["Book form"] -->|"purpose, depth"| STACK
+  CH["Chapter form"] -->|"doubts, focus"| STACK
+  UPR["User prompt"] -->|"free text"| STACK
+  DNA["Learner DNA"] -->|"9 dimensions"| STACK
+  STACK["Priority-ordered system prompt"]
+  STACK --> LP["lesson_planner"]
+  LP --> SL2["slide_generator"]
+  LP --> NG["narration_generator"]
+  class ON,BK,CH,UPR newNode
+  class NG warnNode
+  classDef newNode fill:#FBF1E4,stroke:#C6A45C,stroke-width:2px,color:#07172C
+  classDef warnNode fill:#F3E7D6,stroke:#B8722E,stroke-width:2px,color:#07172C
+</pre>
+      </div>
+      <figcaption>What the plan would insert upstream of the existing nodes. The 4 new inputs (gold outline) need forms and storage; narration_generator (amber) needs new prompt content, not new code.</figcaption>
+    </figure>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">03</span><h2>Media Generation</h2></div>
+    <span class="verdict good">&#9679; already aligned</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p>TTS: Sarvam Bulbul v3 &rarr; Azure &rarr; Browser. Image: Gemini Nano Banana &rarr; GPT Image 2 &rarr; text-only. Both fallback chains locked and implemented. A human-recorded-narration node is already an open Dev 1 backlog item, for unrelated reasons.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p>No new media technology &mdash; only a content requirement (slides stay sparse, narration carries the teaching).</p>
+      </div>
+    </div>
+    <p class="note">No action needed here beyond feeding better scripts (Domain 02) into what already exists.</p>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">04</span><h2>Skills Model &mdash; Learner DNA vs IQ/EQ/SQ/Research</h2></div>
+    <span class="verdict warn">&#9680; taxonomy mismatch</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p>9 EMA-fused dimensions in <code>dna_fusion.py</code>: <span class="mono">pattern_recognition, logical_deduction, processing_speed, frustration_tolerance, persistence, help_seeking, goal_orientation, curiosity_index, study_independence</span>. Never surfaced as raw scores.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p>A 4-pillar taxonomy &mdash; IQ, EQ, SQ, Research &mdash; each with named activities (teach-back for SQ, evidence-checking for Research).</p>
+      </div>
+    </div>
+    <p class="note">IQ and EQ map cleanly to 3 dimensions each. <b>SQ and Research don't.</b> <code>help_seeking</code> / <code>study_independence</code> are the closest existing signals to SQ but don't measure explaining a concept to someone else, and nothing today scores source-checking or evidence quality.</p>
+
+    <figure>
+      <div class="diagram-panel">
+<pre class="mermaid">
+flowchart LR
+  subgraph DNA["Learner DNA - 9 dimensions, shipped"]
+    d1["pattern_recognition"]
+    d2["logical_deduction"]
+    d3["processing_speed"]
+    d4["frustration_tolerance"]
+    d5["persistence"]
+    d6["help_seeking"]
+    d7["goal_orientation"]
+    d8["curiosity_index"]
+    d9["study_independence"]
+  end
+  subgraph SK["Plan's skill taxonomy"]
+    IQ2["IQ"]
+    EQ2["EQ"]
+    SQ2["SQ"]
+    R2["Research"]
+  end
+  d1 --> IQ2
+  d2 --> IQ2
+  d3 --> IQ2
+  d4 --> EQ2
+  d5 --> EQ2
+  d6 -. "no clean fit" .-> SQ2
+  d7 --> R2
+  d8 --> R2
+  d9 -. "no clean fit" .-> SQ2
+  class SQ2 conflictNode
+  classDef conflictNode fill:#F8E9E7,stroke:#A6413A,stroke-width:2px,color:#07172C
+</pre>
+      </div>
+      <figcaption>Six of nine shipped dimensions map onto IQ or EQ without much argument. SQ (outlined red) is the pillar with no supporting signal today.</figcaption>
+    </figure>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">05</span><h2>Cognitive Engagement Score (CES)</h2></div>
+    <span class="verdict crit">&#10005; naming collision</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p><span class="mono">quiz_accuracy&times;.35 + teachback&times;.25 + behavioral&times;.20 + head_pose&times;.12 + blink&times;.08</span>. Recomputed every 5s from webcam + quiz/teach-back signals. Gates tutor interventions: 2 consecutive windows below 50 fires a nudge. Weights are env-var-validated to sum to 1.0 at startup.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p><span class="mono">IQ&times;.35 + EQ&times;.25 + SQ&times;.20 + Research&times;.20</span>. A slower, post-lesson skill-growth composite meant to adapt future lesson difficulty. No attention or webcam component at all.</p>
+      </div>
+    </div>
+    <p class="note">Two unrelated formulas share one name across two teams' mental models. <b>Resolve before any story references "CES."</b> Suggestion: keep the name for the live, load-bearing score already gating the tutor FSM; give the plan's version a different name (e.g. "Skill Growth Index") or fold it into Learner DNA's existing growth-tracking instead.</p>
+
+    <figure>
+      <div class="diagram-panel">
+<pre class="mermaid">
+flowchart LR
+  subgraph LIVE["CES today - ces.py + tutor/service.py"]
+    direction TB
+    Q["quiz_accuracy .35"] --> C1(("CES"))
+    T["teachback_score .25"] --> C1
+    B["behavioral .20"] --> C1
+    H["head_pose .12"] --> C1
+    BL["blink .08"] --> C1
+    C1 -->|"threshold 50, every 5s"| INT["tutor intervention"]
+  end
+  subgraph PDFC["CES proposed - strategy doc"]
+    direction TB
+    IQ["IQ .35"] --> C2(("CES"))
+    EQ["EQ .25"] --> C2
+    SQ["SQ .20"] --> C2
+    R["Research .20"] --> C2
+    C2 -->|"per lesson"| GROWTH["adapts next lesson's difficulty"]
+  end
+  C1 -. "same name, unrelated formula" .-> C2
+  class C1,C2 conflictNode
+  classDef conflictNode fill:#F8E9E7,stroke:#A6413A,stroke-width:2px,color:#07172C
+</pre>
+      </div>
+      <figcaption>Same three-letter acronym, two formulas with no shared inputs and two different consumers &mdash; one real-time and attention-driven, one a slow skill composite.</figcaption>
+    </figure>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">06</span><h2>Manual-First Development Methodology</h2></div>
+    <span class="verdict new">&#9675; process, not code</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p>BMAD story-first process: a story is committed before implementation, and every PR passes a 6-agent adversarial review. That rigor is applied to code the pipeline already generates automatically &mdash; never to a hand-built reference lesson.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p>Hand-build one complete 45-minute lesson first, score it against a Quality Threshold checklist, then treat it as the benchmark the automated pipeline's output is graded against.</p>
+      </div>
+    </div>
+    <p class="note">This doesn't need a module &mdash; it needs a decision to spend one cycle producing a manual reference lesson (using the same underlying models directly) <em>before</em> the next round of Domain 02's prompt changes ships.</p>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">07</span><h2>Lesson Formats &amp; Duration</h2></div>
+    <span class="verdict warn">&#9680; container exists, contract doesn't</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p>Learner Mode tiers already ship end-to-end: T1 Deep (45m), T2 Balanced (30m), T3 Refresher (15m) &mdash; selection screen, tier disclaimers, and tier-to-generation wiring all live (Stories S2-07&ndash;09). One open item asks to show explicit "15/30/45 min" labels &mdash; cosmetic only.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p>Duration must change depth, pace, example density, and skill-activity count &mdash; not just which tier's pipeline runs or how much gets truncated.</p>
+      </div>
+    </div>
+    <p class="note">Whether <code>lesson_planner</code> actually varies content depth per tier, versus truncating the same plan, hasn't been given the file:line audit treatment the CES formula got. Worth the same scrutiny before assuming it's handled.</p>
+  </section>
+
+  <section class="domain">
+    <div class="domain-head"><span class="domain-num">08</span><h2>Real-time Tutor State Machine</h2></div>
+    <span class="verdict good">&#9679; no functional change</span>
+    <div class="compare">
+      <div class="col-current">
+        <span class="col-label">Current</span>
+        <p>7-state FSM, live, fully tested (884-line suite), gated by the live CES above, with a 2-minute cooldown and a 3-intervention cap per session.</p>
+      </div>
+      <div class="col-planned">
+        <span class="col-label">Planned</span>
+        <p>Not addressed directly &mdash; but every story that touches this domain inherits Domain 05's naming collision the moment it says "CES."</p>
+      </div>
+    </div>
+    <p class="note">Annotate, don't rebuild: this FSM is unaffected except by name-collision spillover from Domain 05.</p>
+  </section>
+
+  <h2 style="margin-top:8px;">Recap</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Domain</th><th>Status</th><th>What it needs</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="domain-cell">01 &middot; Profiling forms</td><td>&#9675; Net-new</td><td>Schema + UI for book/chapter intent; onboarding goal capture beyond the diagnostic.</td></tr>
+        <tr><td class="domain-cell">02 &middot; Pipeline prompts</td><td>&#9680; Partial</td><td>Encode the 9-step flow and 60/40 ratio into existing node prompts.</td></tr>
+        <tr><td class="domain-cell">03 &middot; Media generation</td><td>&#9679; Aligned</td><td>Nothing &mdash; already matches.</td></tr>
+        <tr><td class="domain-cell">04 &middot; Skills taxonomy</td><td>&#9680; Mismatch</td><td>Decide how (or whether) SQ and Research get real signals.</td></tr>
+        <tr><td class="domain-cell">05 &middot; CES</td><td>&#10005; Conflict</td><td>Rename one formula before either is referenced in a new story.</td></tr>
+        <tr><td class="domain-cell">06 &middot; Manual-first process</td><td>&#9675; Net-new</td><td>A sequencing decision, not a build task.</td></tr>
+        <tr><td class="domain-cell">07 &middot; Duration formats</td><td>&#9680; Partial</td><td>Verify tier actually changes depth, not just duration label.</td></tr>
+        <tr><td class="domain-cell">08 &middot; Tutor FSM</td><td>&#9679; Aligned</td><td>None &mdash; downstream of Domain 05's fix.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    Built from <span class="mono">AI_Learning_Product_Final_Strategy.pdf</span> against <span class="mono">docs/master-tracker.md</span> and <span class="mono">docs/ces-decisions-developer-guide.md</span>, transformED repo, 2026-09-11.
+  </footer>
+
+</div>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'base', themeVariables: {
+    primaryColor: '#F1EDE4',
+    primaryTextColor: '#07172C',
+    primaryBorderColor: '#6B6D6F',
+    lineColor: '#6B6D6F',
+    fontFamily: 'IBM Plex Sans, sans-serif'
+  }});
+</script>
+</body>
+</html>

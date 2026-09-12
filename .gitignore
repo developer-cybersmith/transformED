@@ -151,6 +151,9 @@ tmp/
 # ---- Playwright MCP (local browser automation artifacts) ----
 .playwright-mcp/
 
+# ---- Claude Code workflow worktrees (nested repo copies, tool-internal) ----
+.claude/worktrees/
+
 # ---- Local-only developer docs (not for the repo) ----
 docs/LOCAL_DEV_SETUP.md
 docs/DEPLOYMENT-OPS-NOTES.md
