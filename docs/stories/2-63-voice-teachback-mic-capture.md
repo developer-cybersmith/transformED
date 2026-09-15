@@ -173,6 +173,38 @@ endpoint.
   deadlocked even with `delay: null`; fixed by using `fireEvent.click` + explicit microtask flushes
   for the one test that needed both a click and fake-timer advancement in the same test.
 
+## Review Findings (Dev 3's 6-layer review, PR #226, 2026-09-15)
+
+Dev 3's review found the actual PR #226 diff contained unrelated content from a different,
+already-merged PR — corrected below with evidence. One real finding on this story's own code
+survived and was addressed.
+
+- [x] [Review][Correction] The review's Layer 1/5 findings (SlideRenderer.tsx/`.test.tsx` changes,
+      `docs/dev3-assessment-tracker.md` edits, missing story-first commit for those) do not apply to
+      PR #226. `gh pr view 226 --json files` confirms PR #226's diff contains exactly the 7 files in
+      this story's own File List — no `SlideRenderer.tsx`, no `SlideRenderer.test.tsx`, no
+      `dev3-assessment-tracker.md`, no `4-37-*` story file. Those all belong to PR #225 (Story S4-37
+      + Dev 2's independent second-pass review), already merged to `main` on 2026-09-11, five days
+      before this review — `bug-resolution/br-6-voice-teachback-mic-capture` was branched from
+      `main` *after* that merge (confirmed: `68381d9`, the #225 merge commit, is an ancestor of this
+      branch's first commit). The reviewer's tooling appears to have diffed against a stale local
+      `main` that predated the #225 merge.
+- [x] [Review][Answered] "Does `submit_audio_teachback` need `lesson_id` for cost tracking?" —
+      Confirmed by reading `apps/api/app/modules/assessment/service.py::transcribe_and_score_audio`
+      directly (lines 1029-1046): it loads `lesson_id` itself from the `sessions` table via
+      `session_id` (`supabase.table("sessions").select("lesson_id, user_id")...`), and uses that for
+      `accumulate_cost()`. The client was never expected to send `lesson_id` on this endpoint — no
+      change needed; `submitTeachBackAudio()`'s payload is correct as-is.
+- [x] [Review][Defer] The silent-413 edge case (a backend 413 falling into the generic
+      `catch { exitTeachBack(); }`) is real, currently unreachable (5-min cap ≈ 4.8MB max vs. the
+      25MB backend ceiling), and registered in `docs/stories/deferred-work.md` with an explicit
+      trigger (revisit if `MAX_RECORDING_MS` is ever raised without re-deriving it against the
+      backend limit) — per the reviewer's own "RECOMMENDED" framing, not a merge blocker.
+- [ ] [Review][Not this story] `_DENSE_CONTENT_CHAR_THRESHOLD = 400`'s lack of a calibration study
+      is a real, previously-acknowledged gap — but it's `SlideRenderer.tsx` (Story S4-37 / PR #225),
+      not part of PR #226's actual diff. No action taken here; already visible in Story
+      S4-37's own file if it needs following up.
+
 ### File List
 
 - `apps/web/src/components/player/VoiceTeachBackRecorder.tsx` (new)
