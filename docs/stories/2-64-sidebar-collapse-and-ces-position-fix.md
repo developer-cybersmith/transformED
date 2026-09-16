@@ -1,6 +1,6 @@
 ---
 title: "Story 2-64 — Slide Sidebar Collapse Toggle + CES Indicator/Dashboard Link Overlap Fix (BR-9)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -99,7 +99,33 @@ order at the same z-index). This is a real, reproducible bug, not a hypothetical
 
 ### Completion Notes
 
-_(filled in after implementation)_
+- **AC1-DONE.** `isSidebarCollapsed`/`onToggleSidebarCollapsed` added as optional props, defaulting
+  to `false`/`undefined`; every pre-existing `SlideRenderer` test (46) passes unmodified.
+- **AC2-DONE.** Image panel className switches `w-3/4` ↔ `w-full`; `slide-text-sidebar` is
+  conditionally rendered (`{!isSidebarCollapsed && (...)}`), not just CSS-hidden — absent from the
+  DOM entirely when collapsed.
+- **AC3-DONE.** Toggle button (`sidebar-collapse-toggle`) always rendered when `hasImage` and a
+  handler is provided; `right-1/4` when expanded, `right-0` when collapsed; `aria-expanded` +
+  `aria-label` both reflect state.
+- **AC4-DONE.** Toggle omitted when `!hasImage` or no handler provided — both cases tested
+  explicitly.
+- **AC5-DONE.** `Player.tsx` lifts `isSidebarCollapsed` as local `useState` (not the Zustand
+  store), passed to every `SlideRenderer` instance in `segment.slides.map(...)` — shared across the
+  whole segment.
+- **AC6-DONE.** Confirmed via a dedicated test: `SlideImage`'s `key` is unaffected by the collapse
+  toggle, so its `src` is byte-identical before and after toggling — no remount, no reload.
+- **AC7-DONE.** `CESIndicator` moved from `top-3 right-3` to `top-12 right-3`.
+- **AC8-DONE.** New regression test asserts `top-12` present, `top-3` absent from the badge's
+  className.
+- **AC12 (suite-wide)**: `tsc --noEmit` clean, targeted `eslint` clean (one pre-existing, unrelated
+  `<img>`/`next/image` warning, not introduced here). Full frontend suite: 93 files / 1219 tests
+  (was 1209 pre-story on this branch's base), zero regressions. `Player.test.tsx`'s own 57 tests
+  re-run explicitly given the direct edit there — all pass.
+- **Verification method, disclosed explicitly**: verified via the unit/integration test suite
+  (exact CSS class + DOM-presence assertions for every state transition) rather than a live browser
+  check — this is a well-bounded, purely client-side CSS/conditional-rendering change with no new
+  data dependency, and the test coverage directly exercises the same class names that produce the
+  visual behavior.
 
 ### File List
 

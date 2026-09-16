@@ -2034,6 +2034,28 @@ same PR per direct user request: a persistent "Dashboard" link on the player (pr
 way back to the dashboard mid-lesson was closing the tab). See `docs/stories/2-57-slide-transition-pause.md`'s
 "Follow-up" section.
 
+### BR-9 — Slide Sidebar Collapse Toggle + CES Indicator/Dashboard Link Overlap Fix (ad-hoc, added 2026-09-16)
+**Priority:** Medium
+**Status:** ✅ DONE — ✅ 2026-09-16 (Story 2-64, branch `bug-resolution/br-9-sidebar-collapse-toggle`)
+
+Two direct user requests, bundled per explicit instruction ("fix this as well in the same run").
+(1) A minimizer button on `SlideRenderer`'s S4-37 75/25 split: click it and the 25% notes sidebar
+collapses (removed from the DOM, not just hidden), the image panel expands to `w-full`; click again
+to restore 75/25. Shared across every slide in the segment via `Player.tsx`'s own local
+`isSidebarCollapsed` state (not the Zustand store — ephemeral UI preference, not something else in
+the player needs to react to), not reset per slide. Toggle button always reachable regardless of
+state (`right-1/4` expanded, `right-0` collapsed) so the last action is always reversible.
+(2) **Real, confirmed bug**: `CESIndicator` and `Player.tsx`'s Dashboard link were both positioned
+at the exact same `absolute top-3 right-3 z-10` — both visible simultaneously during normal
+playback, so the CES dot rendered directly on top of the Dashboard button. Moved `CESIndicator` to
+`top-12 right-3`, clearing both the Dashboard link above and `TutorInterventionCard` below
+(`top-24`), with a regression test guarding the exact colliding value never returns. 13 new tests
+(9 collapse-toggle + 1 CES-position regression + coverage in `Player.test.tsx`'s existing 57);
+full frontend suite 93 files / 1219 tests, zero regressions. Verified via test suite only (exact
+CSS class + DOM-presence assertions for every state transition), not a live browser check — a
+well-bounded, purely client-side CSS/conditional-rendering change. Full detail in
+`docs/stories/2-64-sidebar-collapse-and-ces-position-fix.md`.
+
 ---
 
 ## 14. Launch Week

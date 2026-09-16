@@ -1,9 +1,11 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { Slide, JargonEntry } from '@hie/shared/types/lesson';
 import { JargonHover } from './JargonHover';
 import { refreshSignedUrl } from '@/lib/media/refreshSignedUrl';
+import { FOCUS_RING } from '@/lib/a11y/focusRing';
 
 // ── SlideImage ────────────────────────────────────────────────────────────────
 
@@ -82,6 +84,13 @@ interface SlideRendererProps {
   slide: Slide;
   isActive: boolean;
   jargon: JargonEntry[];
+  // Story 2-64 / BR-9. Both optional -- omitting them (every pre-existing
+  // caller/test) renders exactly as before this story. Lifted to Player.tsx
+  // as shared, session-local state (not the Zustand store -- no other part
+  // of the player needs to react to this) so collapsing on one slide stays
+  // collapsed across the whole segment, not just the slide it was clicked on.
+  isSidebarCollapsed?: boolean;
+  onToggleSidebarCollapsed?: () => void;
 }
 
 // S4-37 review finding (Scale & Load): neither bullet count nor title length is
@@ -105,7 +114,13 @@ function isDenseSlideContent(slide: Slide): boolean {
 // package_builder (Story S2-11, not yet built). Do not build a parallel
 // real-content path here -- this will be reconciled when Sprint 2 lands.
 // Ping Dev 1 (developer1-cybersmith) before changing this shape.
-export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
+export function SlideRenderer({
+  slide,
+  isActive,
+  jargon,
+  isSidebarCollapsed = false,
+  onToggleSidebarCollapsed,
+}: SlideRendererProps) {
   const hasImage = !!(slide.image_url ?? slide.fallback_image_url);
   // Density-based sizing only applies in the narrow 25% sidebar -- the full-width
   // (no-image) layout has 4x the room and was never the shape this gap was found in.
@@ -155,13 +170,15 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
             data-testid="slide-image-panel"
             role="group"
             aria-label="Slide illustration"
-            className="w-3/4 h-full min-w-0 overflow-hidden"
+            className={`${isSidebarCollapsed ? 'w-full' : 'w-3/4'} h-full min-w-0 overflow-hidden`}
           >
             <SlideImage
               // Story 2-45 review fix: keyed on imageUrl so a content refresh that
               // swaps this slide's image (same slide_id, different image_url)
               // fully remounts SlideImage, resetting its src/failed state and
-              // one-attempt re-sign guard for the genuinely new asset.
+              // one-attempt re-sign guard for the genuinely new asset. Collapsing
+              // the sidebar (Story 2-64) never changes this key, so toggling
+              // never remounts/reloads the image.
               key={slide.image_url ?? slide.fallback_image_url ?? 'none'}
               imageUrl={slide.image_url}
               fallbackUrl={slide.fallback_image_url}
@@ -178,16 +195,45 @@ export function SlideRenderer({ slide, isActive, jargon }: SlideRendererProps) {
               bottom for CaptionOverlay (Player.tsx), a sibling absolutely
               positioned at max-h-[30%] across the full width -- without it,
               a full-height bullet list's last lines render underneath the
-              caption bar with no way to scroll clear of it (review finding). */}
-          <div
-            data-testid="slide-text-sidebar"
-            data-lenis-prevent
-            role="group"
-            aria-label="Slide content"
-            className="w-1/4 h-full min-w-0 overflow-y-auto overscroll-y-contain p-5 pb-24 border-l border-neutral-100"
-          >
-            {textContent}
-          </div>
+              caption bar with no way to scroll clear of it (review finding).
+              Story 2-64: removed from the DOM entirely (not just hidden) when
+              collapsed, so it can't be tabbed into or scrolled while gone. */}
+          {!isSidebarCollapsed && (
+            <div
+              data-testid="slide-text-sidebar"
+              data-lenis-prevent
+              role="group"
+              aria-label="Slide content"
+              className="w-1/4 h-full min-w-0 overflow-y-auto overscroll-y-contain p-5 pb-24 border-l border-neutral-100"
+            >
+              {textContent}
+            </div>
+          )}
+          {/* Story 2-64 / BR-9: minimizer toggle. Always rendered at the same
+              vertical center regardless of collapsed state so it's always
+              reachable to reverse the last action -- right-1/4 sits it right
+              at the panel/sidebar boundary when expanded, right-0 flush to
+              the edge once the sidebar is gone. */}
+          {onToggleSidebarCollapsed && (
+            <button
+              type="button"
+              data-testid="sidebar-collapse-toggle"
+              onClick={onToggleSidebarCollapsed}
+              aria-expanded={!isSidebarCollapsed}
+              aria-label={isSidebarCollapsed ? 'Expand slide notes panel' : 'Collapse slide notes panel'}
+              className={`absolute top-1/2 -translate-y-1/2 z-20 flex items-center justify-center
+                         w-6 h-12 bg-white border border-neutral-200 shadow-sm rounded-l-md
+                         hover:bg-neutral-50 transition-all ${FOCUS_RING} ${
+                           isSidebarCollapsed ? 'right-0' : 'right-1/4'
+                         }`}
+            >
+              {isSidebarCollapsed ? (
+                <ChevronLeft className="w-4 h-4 text-neutral-500" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-neutral-500" />
+              )}
+            </button>
+          )}
         </>
       ) : (
         <div

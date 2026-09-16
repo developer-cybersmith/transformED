@@ -33,6 +33,14 @@ function bandFor(score: number): CesBand {
  * without needing a fresh WS message, same pattern as
  * CheckingInTransition/TutorInterventionCard. Distinct corner from the tier
  * badge (top-3 left-3) and TutorInterventionCard (top-24 right-4).
+ *
+ * Review fix (Story 2-64 / BR-9): was `top-3 right-3` -- the EXACT same
+ * coordinates as Player.tsx's Dashboard link ("absolute top-3 right-3
+ * z-10"), which can be visible at the same time (Dashboard shows whenever
+ * status !== 'ENDED'; this shows whenever status === 'PLAYING'). Moved to
+ * `top-12` -- clears the Dashboard link above (which ends well before 48px)
+ * and stays clear of TutorInterventionCard below (`top-24` = 96px; this
+ * badge's own fixed 40px height means it ends at 88px, an 8px gap).
  */
 export function CESIndicator() {
   const cesScore = usePlayerStore((s) => s.cesScore);
@@ -47,7 +55,7 @@ export function CESIndicator() {
       data-testid="ces-indicator"
       data-band={band}
       title={BAND_LABELS[band]}
-      className={`absolute top-3 right-3 z-10 w-10 h-10 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm`}
+      className={`absolute top-12 right-3 z-10 w-10 h-10 rounded-full flex items-center justify-center bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm`}
     >
       <span className={`w-2.5 h-2.5 rounded-full ${BAND_COLORS[band]}`} />
     </div>
