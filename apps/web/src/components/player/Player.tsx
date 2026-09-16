@@ -68,6 +68,12 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
   const audioError = usePlayerStore((s) => s.audioError);
   const audioRetryCount = usePlayerStore((s) => s.audioRetryCount);
   const retryAudio = usePlayerStore((s) => s.retryAudio);
+  // Story 2-64 / BR-9: shared across every slide in the segment (passed to
+  // every SlideRenderer instance below), not per-slide -- a student who
+  // collapses the notes sidebar on one slide does not expect it to silently
+  // reappear on the next. Local state, not the Zustand store -- no other
+  // part of the player needs to react to this ephemeral UI preference.
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   // Guards against a rapid double-click firing two overlapping refetch+retry
   // cycles (review fix) -- audioError only clears once retryAudio() actually
   // runs at the end of the (possibly slow) refetch, so the button stays
@@ -320,6 +326,8 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             slide={slide}
             isActive={slide.slide_id === currentSlideId}
             jargon={segment.jargon}
+            isSidebarCollapsed={isSidebarCollapsed}
+            onToggleSidebarCollapsed={() => setIsSidebarCollapsed((v) => !v)}
           />
         ))}
 
@@ -460,7 +468,10 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             toast; never shows during TEACH_BACK (render-level guard inside). */}
         <TutorInterventionCard />
 
-        {/* CES indicator (S3-04) — subtle, qualitative-only engagement dot; top-3 right-3, distinct from the tier badge (top-3 left-3). */}
+        {/* CES indicator (S3-04) — subtle, qualitative-only engagement dot; top-12 right-3,
+            distinct from the tier badge (top-3 left-3) and the Dashboard link above (top-3
+            right-3) -- moved from top-3 to top-12 (Story 2-64 / BR-9 review fix) after the two
+            were found rendering on top of each other at the same coordinates. */}
         <CESIndicator />
 
         {/* Attention consent modal (S3-01) — self-contained, shown once before

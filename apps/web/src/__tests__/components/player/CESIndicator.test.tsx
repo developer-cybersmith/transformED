@@ -65,6 +65,19 @@ describe('CESIndicator (S3-04 AC-3/AC-4/AC-5)', () => {
     expect(el.className).toContain('h-10');
   });
 
+  it('review fix (Story 2-64 / BR-9): does not sit at top-3 right-3, the same corner as Player.tsx\'s Dashboard link', () => {
+    act(() => {
+      usePlayerStore.setState({ cesScore: 0.5, status: 'PLAYING' });
+    });
+    render(<CESIndicator />);
+    const el = screen.getByTestId('ces-indicator');
+    // Player.tsx's Dashboard link is "absolute top-3 right-3 z-10" -- this
+    // badge previously collided with it exactly. Moved to top-12 to clear
+    // both the Dashboard link above and TutorInterventionCard (top-24) below.
+    expect(el.className).toContain('top-12');
+    expect(el.className).not.toContain('top-3');
+  });
+
   it.each([
     ['low', 'bg-red-400'],
     ['engaged', 'bg-amber-400'],

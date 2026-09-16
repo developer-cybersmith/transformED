@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '@/test/server';
@@ -354,6 +354,139 @@ describe('SlideRenderer — dense content safety net', () => {
     const overThreshold = makeSlide({ bullets: ['f'.repeat(390)] });
     rerender(<SlideRenderer slide={overThreshold} isActive jargon={[]} />);
     expect(screen.getByTestId('slide-bullet-item').className).toContain('text-[13px]');
+  });
+});
+
+// ── Sidebar collapse toggle (Story 2-64 / BR-9) ──────────────────────────────
+
+describe('SlideRenderer — sidebar collapse toggle (BR-9)', () => {
+  it('renders exactly as before when isSidebarCollapsed/onToggleSidebarCollapsed are omitted (AC1)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} />);
+    expect(screen.getByTestId('slide-image-panel').className).toContain('w-3/4');
+    expect(screen.getByTestId('slide-text-sidebar')).not.toBeNull();
+    expect(screen.queryByTestId('sidebar-collapse-toggle')).toBeNull();
+  });
+
+  it('expands the image panel to w-full and removes the sidebar from the DOM when collapsed (AC2)', () => {
+    render(
+      <SlideRenderer
+        slide={mockSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed
+        onToggleSidebarCollapsed={() => {}}
+      />
+    );
+    const panel = screen.getByTestId('slide-image-panel');
+    expect(panel.className).toContain('w-full');
+    expect(panel.className).not.toContain('w-3/4');
+    expect(screen.queryByTestId('slide-text-sidebar')).toBeNull();
+  });
+
+  it('keeps the 75/25 split when isSidebarCollapsed is explicitly false', () => {
+    render(
+      <SlideRenderer
+        slide={mockSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed={false}
+        onToggleSidebarCollapsed={() => {}}
+      />
+    );
+    expect(screen.getByTestId('slide-image-panel').className).toContain('w-3/4');
+    expect(screen.getByTestId('slide-text-sidebar')).not.toBeNull();
+  });
+
+  it('renders the toggle button positioned at the panel/sidebar boundary when expanded (AC3)', () => {
+    render(
+      <SlideRenderer
+        slide={mockSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed={false}
+        onToggleSidebarCollapsed={() => {}}
+      />
+    );
+    const toggle = screen.getByTestId('sidebar-collapse-toggle');
+    expect(toggle.className).toContain('right-1/4');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(toggle.getAttribute('aria-label')).toMatch(/collapse/i);
+  });
+
+  it('renders the toggle button flush to the right edge when collapsed (AC3)', () => {
+    render(
+      <SlideRenderer
+        slide={mockSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed
+        onToggleSidebarCollapsed={() => {}}
+      />
+    );
+    const toggle = screen.getByTestId('sidebar-collapse-toggle');
+    expect(toggle.className).toContain('right-0');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-label')).toMatch(/expand/i);
+  });
+
+  it('calls onToggleSidebarCollapsed when the toggle button is clicked', () => {
+    const onToggle = vi.fn();
+    render(
+      <SlideRenderer
+        slide={mockSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed={false}
+        onToggleSidebarCollapsed={onToggle}
+      />
+    );
+    fireEvent.click(screen.getByTestId('sidebar-collapse-toggle'));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+  });
+
+  it('never renders the toggle when hasImage is false, even with a handler provided (AC4)', () => {
+    render(
+      <SlideRenderer
+        slide={nullImageSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed={false}
+        onToggleSidebarCollapsed={() => {}}
+      />
+    );
+    expect(screen.queryByTestId('sidebar-collapse-toggle')).toBeNull();
+  });
+
+  it('never renders the toggle when onToggleSidebarCollapsed is not provided, even with hasImage true (AC4)', () => {
+    render(<SlideRenderer slide={mockSlide} isActive jargon={[]} isSidebarCollapsed={false} />);
+    expect(screen.queryByTestId('sidebar-collapse-toggle')).toBeNull();
+  });
+
+  it('does not remount SlideImage (no src reset) when toggling collapse (AC6)', () => {
+    const { rerender } = render(
+      <SlideRenderer
+        slide={mockSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed={false}
+        onToggleSidebarCollapsed={() => {}}
+      />
+    );
+    const imgBefore = screen.getByTestId('slide-image') as HTMLImageElement;
+    const srcBefore = imgBefore.src;
+
+    rerender(
+      <SlideRenderer
+        slide={mockSlide}
+        isActive
+        jargon={[]}
+        isSidebarCollapsed
+        onToggleSidebarCollapsed={() => {}}
+      />
+    );
+
+    const imgAfter = screen.getByTestId('slide-image') as HTMLImageElement;
+    expect(imgAfter.src).toBe(srcBefore);
   });
 });
 
