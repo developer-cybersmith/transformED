@@ -70,10 +70,55 @@ export interface TeachBackResult {
   overall_score: number;
   ces_contribution: number;
   feedback: string;
+  // F2-2/F2-4 (backend): how the score was produced -- "llm" = real rubric
+  // scoring, "fallback" = pre-computed default (LLM or Whisper STT
+  // unavailable), "skipped" = student chose to skip. No differentiated UI is
+  // built on this here (Story 2-63 AC8) -- the existing `feedback` text
+  // already covers the fallback case server-side; this is accurate typing
+  // matching apps/api/app/modules/assessment/schemas.py::TeachbackResult,
+  // not a new behavior.
+  score_source: 'llm' | 'fallback' | 'skipped';
 }
 
 export async function submitTeachBack(payload: TeachBackSubmitPayload): Promise<TeachBackResult> {
   const { data } = await api.post<TeachBackResult>('/assessment/teachback', payload);
+  return data;
+}
+
+// ── Voice teach-back (Story 2-63 / BR-6, real backend: Story F2-4) ──────────
+
+export interface TeachBackAudioSubmitPayload {
+  session_id: string;
+  segment_id: string;
+  audioBlob: Blob;
+  mimeType: string;
+}
+
+// Backend filename fallback (router.py: `audio.filename or "audio.webm"`)
+// doesn't need this to be exact -- Whisper detects real format from content,
+// not the extension -- but a matching extension keeps the upload honest for
+// anyone inspecting network traffic or server logs.
+function extensionForMimeType(mimeType: string): string {
+  if (mimeType.includes('mp4')) return 'mp4';
+  if (mimeType.includes('wav')) return 'wav';
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3';
+  return 'webm';
+}
+
+// Matches apps/api/app/modules/assessment/router.py::submit_audio_teachback
+// (Story F2-4) exactly: POST .../teachback/{session_id}/{segment_id}/audio,
+// multipart field name "audio". No explicit Content-Type header -- same
+// reasoning as uploadService.uploadLesson: axios/the browser must generate
+// the multipart boundary themselves for a FormData body.
+export async function submitTeachBackAudio(
+  payload: TeachBackAudioSubmitPayload
+): Promise<TeachBackResult> {
+  const formData = new FormData();
+  formData.append('audio', payload.audioBlob, `recording.${extensionForMimeType(payload.mimeType)}`);
+  const { data } = await api.post<TeachBackResult>(
+    `/assessment/teachback/${encodeURIComponent(payload.session_id)}/${encodeURIComponent(payload.segment_id)}/audio`,
+    formData
+  );
   return data;
 }
 
