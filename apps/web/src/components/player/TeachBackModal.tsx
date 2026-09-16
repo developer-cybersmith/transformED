@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import posthog from 'posthog-js';
 import { usePlayerStore } from '@/stores/player.machine';
 import { submitTeachBack, submitTeachBackAudio, type TeachBackResult } from '@/lib/assessment';
@@ -34,8 +34,34 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
   // Record tab entirely on an unsupported browser (AC2) rather than showing
   // a button that would only fail when clicked.
   const [voiceSupported] = useState(isVoiceRecordingSupported);
+  // Review fix (PR #226): completes the WAI-ARIA Tabs pattern the
+  // role="tablist"/role="tab" markup implies -- refs let arrow-key
+  // navigation move focus to the newly-active tab, matching native tab
+  // behavior (roving tabindex below).
+  const typedTabRef = useRef<HTMLButtonElement>(null);
+  const voiceTabRef = useRef<HTMLButtonElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const segment = lesson?.segments[currentSegmentIndex];
+
+  function handleTabKeyDown(e: React.KeyboardEvent<HTMLButtonElement>) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const next = inputMode === 'typed' ? 'voice' : 'typed';
+    setInputMode(next);
+    (next === 'typed' ? typedTabRef : voiceTabRef).current?.focus();
+  }
+
+  // Review fix (PR #226): was a plain `autoFocus` prop on the textarea. That
+  // re-fires every time the student switches back to the Type tab (the
+  // textarea unmounts/remounts on each toggle), stealing focus away from
+  // whichever tab the arrow-key navigation above just moved it to. A
+  // mount-once effect preserves the original "focus the textarea when the
+  // modal opens" behavior exactly (still true on first render, since
+  // inputMode defaults to 'typed') without re-firing on every toggle.
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
 
   async function handleSubmit() {
     // Bug fix: sessionId can still be '' here -- mintSession (Player.tsx) is
@@ -168,10 +194,15 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
         {voiceSupported && (
           <div role="tablist" aria-label="Response input mode" className="px-6 pt-3 flex gap-2">
             <button
+              ref={typedTabRef}
               type="button"
+              id="teachback-tab-typed"
               role="tab"
               aria-selected={inputMode === 'typed'}
+              aria-controls="teachback-input-panel"
+              tabIndex={inputMode === 'typed' ? 0 : -1}
               onClick={() => setInputMode('typed')}
+              onKeyDown={handleTabKeyDown}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${FOCUS_RING} ${
                 inputMode === 'typed'
                   ? 'bg-[var(--accent-secondary)] text-primary'
@@ -181,10 +212,15 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
               Type
             </button>
             <button
+              ref={voiceTabRef}
               type="button"
+              id="teachback-tab-voice"
               role="tab"
               aria-selected={inputMode === 'voice'}
+              aria-controls="teachback-input-panel"
+              tabIndex={inputMode === 'voice' ? 0 : -1}
               onClick={() => setInputMode('voice')}
+              onKeyDown={handleTabKeyDown}
               className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${FOCUS_RING} ${
                 inputMode === 'voice'
                   ? 'bg-[var(--accent-secondary)] text-primary'
@@ -196,23 +232,33 @@ export function TeachBackModal({ prompt, segmentTitle }: TeachBackModalProps) {
           </div>
         )}
 
-        {inputMode === 'typed' ? (
-          <div className="px-6 py-4">
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Type your explanation here…"
-              rows={5}
-              autoFocus
-              className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3
-                         text-neutral-900 text-base sm:text-sm placeholder:text-neutral-400
-                         focus:outline-none focus:border-[var(--accent-primary)] focus:ring-4 focus:ring-[var(--accent-primary)]/20
-                         resize-none transition-colors"
-            />
-          </div>
-        ) : (
-          <VoiceTeachBackRecorder onSubmit={handleAudioSubmit} isSubmitting={isSubmitting} />
-        )}
+        <div
+          {...(voiceSupported
+            ? {
+                id: 'teachback-input-panel',
+                role: 'tabpanel' as const,
+                'aria-labelledby': inputMode === 'typed' ? 'teachback-tab-typed' : 'teachback-tab-voice',
+              }
+            : {})}
+        >
+          {inputMode === 'typed' ? (
+            <div className="px-6 py-4">
+              <textarea
+                ref={textareaRef}
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Type your explanation here…"
+                rows={5}
+                className="w-full bg-neutral-50 border border-neutral-200 rounded-xl px-4 py-3
+                           text-neutral-900 text-base sm:text-sm placeholder:text-neutral-400
+                           focus:outline-none focus:border-[var(--accent-primary)] focus:ring-4 focus:ring-[var(--accent-primary)]/20
+                           resize-none transition-colors"
+              />
+            </div>
+          ) : (
+            <VoiceTeachBackRecorder onSubmit={handleAudioSubmit} isSubmitting={isSubmitting} />
+          )}
+        </div>
 
         {/* Actions. The typed path's own Submit & Continue button only makes
             sense in typed mode -- the voice path submits via

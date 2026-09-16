@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { TeachBackModal } from '@/components/player/TeachBackModal';
 import { usePlayerStore } from '@/stores/player.machine';
@@ -321,5 +321,57 @@ describe('TeachBackModal — Story 2-63 / BR-6 voice input', () => {
     await userEvent.click(screen.getByRole('button', { name: /submit recording/i }));
 
     await waitFor(() => expect(exitTeachBack).toHaveBeenCalled());
+  });
+
+  // ── Review fix (PR #226, Dev 4 review): complete WAI-ARIA Tabs pattern ────
+
+  it('review fix: each tab has aria-controls pointing at a real tabpanel element', () => {
+    renderModal();
+    const typeTab = screen.getByRole('tab', { name: 'Type' });
+    const recordTab = screen.getByRole('tab', { name: 'Record' });
+    const controlsId = typeTab.getAttribute('aria-controls');
+
+    expect(controlsId).not.toBeNull();
+    expect(recordTab.getAttribute('aria-controls')).toBe(controlsId);
+    expect(screen.getByRole('tabpanel').id).toBe(controlsId);
+  });
+
+  it('review fix: the tabpanel is labelled by whichever tab is currently selected', async () => {
+    renderModal();
+    const typeTab = screen.getByRole('tab', { name: 'Type' });
+    const recordTab = screen.getByRole('tab', { name: 'Record' });
+
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(typeTab.id);
+
+    await userEvent.click(recordTab);
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(recordTab.id);
+  });
+
+  it('review fix: uses a roving tabindex -- only the selected tab is in the Tab order', () => {
+    renderModal();
+    const typeTab = screen.getByRole('tab', { name: 'Type' });
+    const recordTab = screen.getByRole('tab', { name: 'Record' });
+
+    expect(typeTab.getAttribute('tabindex')).toBe('0');
+    expect(recordTab.getAttribute('tabindex')).toBe('-1');
+  });
+
+  it('review fix: ArrowRight/ArrowLeft switches tabs and moves focus to the newly-active tab', async () => {
+    renderModal();
+    const typeTab = screen.getByRole('tab', { name: 'Type' });
+    const recordTab = screen.getByRole('tab', { name: 'Record' });
+    typeTab.focus();
+
+    fireEvent.keyDown(typeTab, { key: 'ArrowRight' });
+
+    expect(recordTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(recordTab);
+    expect(recordTab.getAttribute('tabindex')).toBe('0');
+    expect(typeTab.getAttribute('tabindex')).toBe('-1');
+
+    fireEvent.keyDown(recordTab, { key: 'ArrowLeft' });
+
+    expect(typeTab.getAttribute('aria-selected')).toBe('true');
+    expect(document.activeElement).toBe(typeTab);
   });
 });

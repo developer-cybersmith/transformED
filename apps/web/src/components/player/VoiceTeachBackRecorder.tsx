@@ -69,6 +69,11 @@ export function VoiceTeachBackRecorder({ onSubmit, isSubmitting }: VoiceTeachBac
   const maxDurationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioBlobRef = useRef<Blob | null>(null);
   const audioUrlRef = useRef<string | null>(null);
+  // Review fix (PR #226): both getUserMedia's permission prompt and
+  // MediaRecorder's onstop fire asynchronously, after this component may
+  // already have unmounted. Checked right after each async boundary so
+  // neither path ever sets up a stream/URL nobody can ever clean up again.
+  const isMountedRef = useRef(true);
 
   // AC9: the mic stream is always released as soon as it's no longer needed
   // -- recording stop, re-record, or unmount -- never left running with the
@@ -79,8 +84,17 @@ export function VoiceTeachBackRecorder({ onSubmit, isSubmitting }: VoiceTeachBac
   }
 
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
+      isMountedRef.current = false;
       if (maxDurationTimerRef.current) clearTimeout(maxDurationTimerRef.current);
+      // Stopping the stream's own tracks (rather than calling
+      // recorder.stop()) is deliberate -- per the MediaRecorder spec, ending
+      // every track in the stream implicitly fires the recorder's own
+      // `onstop` asynchronously afterward. That handler's own
+      // isMountedRef.current check (below) is what prevents it from
+      // creating an object URL nobody will ever revoke once this cleanup
+      // has already run.
       releaseStream();
       if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
     };
@@ -91,6 +105,15 @@ export function VoiceTeachBackRecorder({ onSubmit, isSubmitting }: VoiceTeachBac
     setAutoStopped(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!isMountedRef.current) {
+        // Unmounted while the permission prompt was pending -- release
+        // immediately. Without this, the unmount cleanup already ran (and
+        // found streamRef.current still null, a no-op), so nothing would
+        // ever stop this stream again -- the mic-in-use indicator would stay
+        // lit until the tab closes (review fix, PR #226).
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
 
       const mimeType = pickSupportedMimeType();
@@ -102,6 +125,15 @@ export function VoiceTeachBackRecorder({ onSubmit, isSubmitting }: VoiceTeachBac
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
       recorder.onstop = () => {
+        if (!isMountedRef.current) {
+          // Unmounted mid-recording: the unmount cleanup's releaseStream()
+          // stopped every track synchronously, which is what triggered this
+          // handler -- but it fires asynchronously per the MediaRecorder
+          // spec, after that same cleanup already ran and revoked whatever
+          // URL existed at the time. Never create a new one here; nothing
+          // will ever revoke it (review fix, PR #226).
+          return;
+        }
         const blob = new Blob(chunksRef.current, {
           type: mimeTypeRef.current || recorder.mimeType || 'audio/webm',
         });
@@ -149,7 +181,14 @@ export function VoiceTeachBackRecorder({ onSubmit, isSubmitting }: VoiceTeachBac
 
   function handleSubmit() {
     if (audioBlobRef.current) {
-      onSubmit(audioBlobRef.current, mimeTypeRef.current || 'audio/webm');
+      // The Blob's own .type is the source of truth for what was actually
+      // encoded -- onstop set it to `mimeTypeRef.current || recorder.mimeType
+      // || 'audio/webm'`. Re-deriving a fallback from mimeTypeRef.current
+      // alone here disagreed with it whenever mimeTypeRef.current was ''
+      // (no preferred type supported) and the browser's real default
+      // encoding wasn't webm, mislabeling the file extension sent to the
+      // Whisper endpoint (review fix, PR #226).
+      onSubmit(audioBlobRef.current, audioBlobRef.current.type || 'audio/webm');
     }
   }
 

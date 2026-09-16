@@ -15,6 +15,12 @@ import {
 
 class FakeMediaRecorder {
   static isTypeSupported = vi.fn().mockReturnValue(true);
+  // Real browsers fire a live MediaRecorder's own onstop asynchronously once
+  // every track in its stream ends (per spec) -- this fake doesn't model
+  // that relationship automatically (its stop() must be called explicitly),
+  // so tests that need to simulate "onstop fires after the tracks were
+  // stopped elsewhere" grab the instance here and invoke onstop() directly.
+  static instances: FakeMediaRecorder[] = [];
   state: 'inactive' | 'recording' = 'inactive';
   mimeType: string;
   ondataavailable: ((e: { data: Blob }) => void) | null = null;
@@ -24,7 +30,12 @@ class FakeMediaRecorder {
     public stream: MediaStream,
     options?: { mimeType?: string }
   ) {
-    this.mimeType = options?.mimeType ?? '';
+    // Real browsers report their own actual default encoding via
+    // recorder.mimeType even when constructed with no options -- simulated
+    // here as something other than 'audio/webm' specifically so a test can
+    // prove the component uses this real value, not a hardcoded guess.
+    this.mimeType = options?.mimeType ?? 'audio/ogg';
+    FakeMediaRecorder.instances.push(this);
   }
 
   start() {
@@ -72,6 +83,7 @@ function mockMediaSupport() {
 beforeEach(() => {
   mockMediaSupport();
   FakeMediaRecorder.isTypeSupported.mockReset().mockReturnValue(true);
+  FakeMediaRecorder.instances = [];
 });
 
 afterEach(() => {
@@ -258,5 +270,76 @@ describe('VoiceTeachBackRecorder', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  // ── Review fixes (PR #226, Dev 4 review) ───────────────────────────────────
+
+  it('review fix: releases the mic stream if the component unmounts while the permission prompt is still pending', async () => {
+    let resolveGetUserMedia!: (stream: { getTracks: () => { stop: ReturnType<typeof vi.fn> }[] }) => void;
+    const pendingTrack = { stop: vi.fn() };
+    getUserMediaMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveGetUserMedia = resolve;
+      })
+    );
+
+    const { unmount } = render(<VoiceTeachBackRecorder onSubmit={vi.fn()} isSubmitting={false} />);
+    fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+    await waitFor(() => expect(getUserMediaMock).toHaveBeenCalled());
+
+    unmount();
+    // getUserMedia resolves AFTER unmount -- previously this set up a live
+    // stream/recorder with no cleanup effect left to ever release it.
+    await act(async () => {
+      resolveGetUserMedia({ getTracks: () => [pendingTrack] });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(pendingTrack.stop).toHaveBeenCalled();
+  });
+
+  it('review fix: never creates an object URL when onstop fires after the component already unmounted', async () => {
+    const { unmount } = render(<VoiceTeachBackRecorder onSubmit={vi.fn()} isSubmitting={false} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /stop recording/i })).not.toBeNull();
+    const recorderInstance = FakeMediaRecorder.instances.at(-1);
+    createObjectURLMock.mockClear();
+
+    unmount();
+    // Real browsers fire onstop asynchronously once every track in the
+    // stream ends (which the unmount cleanup's releaseStream() just did) --
+    // this fake doesn't wire that relationship automatically, so it's
+    // invoked directly here to simulate the same real-world timing the
+    // review finding described.
+    recorderInstance?.onstop?.();
+
+    expect(createObjectURLMock).not.toHaveBeenCalled();
+  });
+
+  it('review fix: uses the recorded Blob\'s own real type, not a hardcoded audio/webm fallback, when no preferred mime type is supported', async () => {
+    FakeMediaRecorder.isTypeSupported.mockReturnValue(false); // pickSupportedMimeType() -> ''
+    const onSubmit = vi.fn();
+    render(<VoiceTeachBackRecorder onSubmit={onSubmit} isSubmitting={false} />);
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /start recording/i }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /stop recording/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /submit recording/i })).not.toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /submit recording/i }));
+
+    // FakeMediaRecorder's own real default (simulating a browser whose
+    // actual encoding isn't webm) is 'audio/ogg' -- the fixed code reads
+    // this from the Blob's own .type instead of falling back to a hardcoded
+    // 'audio/webm' that would mislabel the upload.
+    const [, mimeType] = onSubmit.mock.calls[0];
+    expect(mimeType).toBe('audio/ogg');
   });
 });

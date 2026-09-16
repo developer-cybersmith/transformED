@@ -205,6 +205,50 @@ survived and was addressed.
       not part of PR #226's actual diff. No action taken here; already visible in Story
       S4-37's own file if it needs following up.
 
+## Review Findings (Dev 4's review, PR #226, 2026-09-16)
+
+Unlike Dev 3's prior review, this one is correctly scoped to PR #226's actual diff. All 4 findings
+independently verified against the real code before fixing — all 4 were real. Fixed with tests that
+were confirmed to fail against the pre-fix code (not trivially-true assertions) before being
+confirmed to pass against the fix.
+
+- [x] [Review][Patch] **Mic stream leak on unmount during a pending permission prompt.**
+      `startRecording()` had no guard against unmounting while `getUserMedia()`'s promise was still
+      in flight — the unmount cleanup ran immediately, found `streamRef.current` still `null` (a
+      no-op), and when the promise resolved afterward the code set up a live stream/recorder with
+      no cleanup effect left to ever release it (mic-in-use indicator stays lit until tab close).
+      **Fixed**: a `isMountedRef` checked immediately after the `await getUserMedia(...)` resolves —
+      if unmounted, the newly-acquired stream's tracks are stopped immediately and nothing is set up.
+      [`apps/web/src/components/player/VoiceTeachBackRecorder.tsx`]
+- [x] [Review][Patch] **Blob URL leak on unmount mid-recording.** Unmounting while actively
+      recording stops the stream's tracks synchronously, but per the `MediaRecorder` spec this fires
+      `onstop` *asynchronously* afterward — that handler still ran, created a fresh object URL, and
+      stored it in a ref the (already-run) unmount cleanup would never revoke again. **Fixed**: the
+      same `isMountedRef` checked at the top of `onstop` — if unmounted, it returns before creating
+      any URL. [`apps/web/src/components/player/VoiceTeachBackRecorder.tsx`]
+- [x] [Review][Patch] **Wrong file extension on mimeType fallback.** `handleSubmit()` fell back to
+      a hardcoded `'audio/webm'` when `mimeTypeRef.current` was empty, instead of the same
+      `recorder.mimeType` fallback `onstop` already used when constructing the Blob — on a browser
+      whose real default encoding isn't webm, the uploaded filename's extension could disagree with
+      what was actually encoded. **Fixed**: `handleSubmit` now reads the Blob's own `.type` (the
+      authoritative record of what `onstop` actually encoded) instead of re-deriving a possibly
+      different fallback independently. [`apps/web/src/components/player/VoiceTeachBackRecorder.tsx`]
+- [x] [Review][Patch] **Incomplete ARIA Tabs pattern.** The `role="tablist"`/`role="tab"` markup had
+      no `aria-controls`, no roving `tabindex`, and no arrow-key navigation — incomplete against the
+      WAI-ARIA Tabs authoring practice the markup implies. **Fixed**: both tabs get `aria-controls`
+      pointing at a real `role="tabpanel"` wrapping the content region (`aria-labelledby` tracking
+      the active tab), a roving `tabIndex` (0 on the selected tab, -1 otherwise), and
+      ArrowLeft/ArrowRight switch tabs and move focus. **Found and fixed in the same pass**: writing
+      the arrow-key test surfaced a real, pre-existing interaction bug — the textarea's `autoFocus`
+      prop re-fired every time the student switched back to the Type tab (it unmounts/remounts on
+      each toggle), stealing focus away from the tab the arrow key had just moved to. Replaced with
+      a mount-once `useEffect` + ref, preserving the original "focus on modal open" behavior exactly
+      (verified: the pre-existing "auto-focuses the textarea on open" test still passes unmodified)
+      without re-firing on every toggle. [`apps/web/src/components/player/TeachBackModal.tsx`]
+
+7 new tests (3 in `VoiceTeachBackRecorder.test.tsx`, 4 in `TeachBackModal.test.tsx`); full frontend
+suite 94 files / 1238 tests (was 1231), zero regressions.
+
 ### File List
 
 - `apps/web/src/components/player/VoiceTeachBackRecorder.tsx` (new)
