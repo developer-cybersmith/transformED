@@ -6,6 +6,21 @@ Items deferred out of a code review — real issues, not caused by the change un
 
 - **No URL scheme validation on `img src` in `SlideImage`** — `slide.image_url` and `slide.fallback_image_url` flow directly into `<img src>` without a `https://` or allowlist check. React 17+ refuses `javascript:` URIs but this is unverified for all paths through the error-fallback chain. Pre-existing gap; not introduced by S4-37 (which only changed CSS classes). The S4-37 split layout gives the image 75% of the viewport, widening the blast radius if a malicious URL ever reached the component — but the root cause is upstream. [`apps/web/src/components/player/SlideRenderer.tsx`]
 
+## Deferred from: code review of 2-63-voice-teachback-mic-capture (2026-09-15)
+
+- **A backend 413 (audio blob over `stt_max_file_mb`) falls into `handleAudioSubmit`'s generic
+  `catch { exitTeachBack(); }` in `TeachBackModal.tsx`, silently exiting the student with no
+  explanation, same as any other failure.** Currently unreachable in practice: `MAX_RECORDING_MS`
+  (5 min) at a generous upper-bound bitrate (128 kbps) caps a recording at ~4.8MB, well under the
+  backend's 25MB `stt_max_file_mb` ceiling (Story F2-4) — so the client-side cap was deliberately
+  derived to keep this case out of reach (Story 2-63's own Scale & Load §5). Flagged by Dev 3's
+  code review of PR #226. **Trigger to revisit: if `MAX_RECORDING_MS` is ever raised** (e.g. to
+  support longer explanations) without re-deriving it against the 25MB backend limit — at that
+  point, `submitTeachBackAudio()`'s error handling should distinguish a 413 specifically and show
+  the student an explicit "recording too long, please re-record shorter" message instead of a
+  silent exit. [`apps/web/src/components/player/TeachBackModal.tsx`,
+  `apps/web/src/lib/assessment.ts`]
+
 ## Deferred from: code review of 5-4-rate-limiting-per-route (2026-08-25)
 
 - **`test_rate_limit_redis_storage.py`'s cross-instance test depends on an internal (undocumented-as-a-contract) call path of the `limits` library** — `RedisStorage.__init__` calling `self.dependency.from_url(uri, **options)`, which the test monkeypatches. A future `limits` version bump changing that internal call shape could silently stop the test from proving what it claims, without ever failing. No cleaner public seam exists in `limits` today to avoid this coupling. [`apps/api/tests/unit/test_rate_limit_redis_storage.py`]
