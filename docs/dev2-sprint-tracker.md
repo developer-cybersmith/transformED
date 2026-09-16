@@ -2049,11 +2049,17 @@ state (`right-1/4` expanded, `right-0` collapsed) so the last action is always r
 at the exact same `absolute top-3 right-3 z-10` — both visible simultaneously during normal
 playback, so the CES dot rendered directly on top of the Dashboard button. Moved `CESIndicator` to
 `top-12 right-3`, clearing both the Dashboard link above and `TutorInterventionCard` below
-(`top-24`), with a regression test guarding the exact colliding value never returns. 13 new tests
-(9 collapse-toggle + 1 CES-position regression + coverage in `Player.test.tsx`'s existing 57);
-full frontend suite 93 files / 1219 tests, zero regressions. Verified via test suite only (exact
-CSS class + DOM-presence assertions for every state transition), not a live browser check — a
-well-bounded, purely client-side CSS/conditional-rendering change. Full detail in
+(`top-24`), with a regression test guarding the exact colliding value never returns. 11 new tests
+(9 collapse-toggle unit tests on `SlideRenderer` directly + 1 CES-position regression + 1
+`Player.test.tsx` integration test proving the collapse state is genuinely shared across every
+slide in the segment, not per-slide — added after review caught that the original 9 unit tests all
+rendered a single `SlideRenderer` in isolation and so couldn't have caught a regression to per-slide
+state); full frontend suite 93 files / 1220 tests, zero regressions. Verified via test suite only
+(exact CSS class + DOM-presence assertions for every state transition), not a live browser check —
+a well-bounded, purely client-side CSS/conditional-rendering change. **Post-merge-review fixes**
+(2026-09-16): corrected this entry's own test-count arithmetic (previously miscounted as "13", the
+actual number was 10 before the coverage-gap fix above), fixed a stale comment in `Player.tsx` that
+still described `CESIndicator` as `top-3 right-3` after the position fix. Full detail in
 `docs/stories/2-64-sidebar-collapse-and-ces-position-fix.md`.
 
 ---

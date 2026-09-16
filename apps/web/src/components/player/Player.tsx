@@ -468,7 +468,10 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
             toast; never shows during TEACH_BACK (render-level guard inside). */}
         <TutorInterventionCard />
 
-        {/* CES indicator (S3-04) — subtle, qualitative-only engagement dot; top-3 right-3, distinct from the tier badge (top-3 left-3). */}
+        {/* CES indicator (S3-04) — subtle, qualitative-only engagement dot; top-12 right-3,
+            distinct from the tier badge (top-3 left-3) and the Dashboard link above (top-3
+            right-3) -- moved from top-3 to top-12 (Story 2-64 / BR-9 review fix) after the two
+            were found rendering on top of each other at the same coordinates. */}
         <CESIndicator />
 
         {/* Attention consent modal (S3-01) — self-contained, shown once before

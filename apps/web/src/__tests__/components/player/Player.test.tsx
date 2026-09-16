@@ -348,6 +348,61 @@ describe('Player — slide area is height-bounded (D88)', () => {
   });
 });
 
+describe('Player — sidebar collapse state is shared across every slide (Story 2-64 / BR-9)', () => {
+  // mockLessonPackage's own slides have no image_url/fallback_image_url set,
+  // so they render the full-width (no-split) layout with no toggle at all --
+  // the collapse toggle only exists on the 75/25 split (SlideRenderer's
+  // hasImage branch). This override gives segment 0's slides real image URLs
+  // so both actually render the split + toggle this test needs.
+  const lessonWithImageSlides = {
+    ...mockLessonPackage,
+    segments: mockLessonPackage.segments.map((seg, i) =>
+      i === 0
+        ? {
+            ...seg,
+            slides: seg.slides.map((slide) => ({
+              ...slide,
+              image_url: 'https://cdn.hie.ai/mock/slide.jpg',
+              fallback_image_url: 'https://cdn.hie.ai/mock/slide_fallback.jpg',
+            })),
+          }
+        : seg
+    ),
+  };
+
+  it('collapsing the sidebar on one slide is reflected on every other slide in the segment, not reset', async () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={lessonWithImageSlides} />);
+
+    // Player.tsx mounts every slide in the segment simultaneously (toggled by
+    // opacity/aria-hidden, never unmounted) -- both of segment 0's slides
+    // should already show the 75/25 split + a toggle.
+    const toggles = screen.getAllByTestId('sidebar-collapse-toggle');
+    expect(toggles).toHaveLength(lessonWithImageSlides.segments[0].slides.length);
+    expect(screen.getAllByTestId('slide-text-sidebar')).toHaveLength(
+      lessonWithImageSlides.segments[0].slides.length
+    );
+
+    // Click only the FIRST slide's toggle.
+    await act(async () => {
+      toggles[0].click();
+    });
+
+    // If collapse were per-slide (local) state instead of the intended
+    // lifted/shared state, only the clicked slide's sidebar would disappear
+    // and the other slide's `slide-image-panel` would still read w-3/4 --
+    // this is exactly the regression a per-slide-state bug would produce
+    // while every existing SlideRenderer-level test (which only ever renders
+    // ONE instance at a time) would keep passing.
+    expect(screen.queryAllByTestId('slide-text-sidebar')).toHaveLength(0);
+    const panels = screen.getAllByTestId('slide-image-panel');
+    expect(panels).toHaveLength(lessonWithImageSlides.segments[0].slides.length);
+    panels.forEach((panel) => {
+      expect(panel.className).toContain('w-full');
+      expect(panel.className).not.toContain('w-3/4');
+    });
+  });
+});
+
 describe('Player — caption overlay shows current segment narration (D90)', () => {
   it('renders the current segment\'s narration script text', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);

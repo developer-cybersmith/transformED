@@ -111,27 +111,53 @@ order at the same z-index). This is a real, reproducible bug, not a hypothetical
   explicitly.
 - **AC5-DONE.** `Player.tsx` lifts `isSidebarCollapsed` as local `useState` (not the Zustand
   store), passed to every `SlideRenderer` instance in `segment.slides.map(...)` — shared across the
-  whole segment.
+  whole segment. **Coverage gap found and fixed post-review** (see Review Findings below): the
+  original 9 `SlideRenderer`-level tests only ever rendered one instance directly with props, so
+  none of them could have caught a regression to per-slide (rather than lifted/shared) state — a
+  new `Player.test.tsx` integration test now renders a real multi-slide segment and asserts
+  toggling one slide's button collapses every slide's sidebar.
 - **AC6-DONE.** Confirmed via a dedicated test: `SlideImage`'s `key` is unaffected by the collapse
   toggle, so its `src` is byte-identical before and after toggling — no remount, no reload.
 - **AC7-DONE.** `CESIndicator` moved from `top-3 right-3` to `top-12 right-3`.
 - **AC8-DONE.** New regression test asserts `top-12` present, `top-3` absent from the badge's
   className.
 - **AC12 (suite-wide)**: `tsc --noEmit` clean, targeted `eslint` clean (one pre-existing, unrelated
-  `<img>`/`next/image` warning, not introduced here). Full frontend suite: 93 files / 1219 tests
-  (was 1209 pre-story on this branch's base), zero regressions. `Player.test.tsx`'s own 57 tests
-  re-run explicitly given the direct edit there — all pass.
+  `<img>`/`next/image` warning, not introduced here). Full frontend suite: 93 files / 1220 tests
+  (was 1209 pre-story on this branch's base), zero regressions.
 - **Verification method, disclosed explicitly**: verified via the unit/integration test suite
   (exact CSS class + DOM-presence assertions for every state transition) rather than a live browser
   check — this is a well-bounded, purely client-side CSS/conditional-rendering change with no new
   data dependency, and the test coverage directly exercises the same class names that produce the
   visual behavior.
 
+## Review Findings (2026-09-16)
+
+Three findings, all confirmed real against the current code before fixing. None were functional
+blockers; all addressed rather than waved off.
+
+- [x] [Review][Patch] **Stale comment** — `Player.tsx`'s comment above `<CESIndicator />` still
+      read "top-3 right-3" after AC7 moved the real className to `top-12 right-3` — the exact class
+      of drift (comment says one thing, code does another) that caused the original overlap bug in
+      the first place. Fixed: comment now states the real position and explicitly names what it was
+      moved to avoid.
+- [x] [Review][Patch] **Test count arithmetic error** — the dev2-sprint-tracker.md entry claimed
+      "13 new tests (9 collapse-toggle + 1 CES-position regression)," which doesn't add up (9+1=10)
+      and didn't match the diff (10 actual new `it(...)` blocks at the time). Corrected in the
+      tracker entry, now 11 after the AC5 coverage-gap test below was added.
+- [x] [Review][Patch] **AC5 coverage gap** — all 9 original collapse-toggle tests rendered a single
+      `SlideRenderer` directly with props, exercising the component in isolation but never proving
+      the *lifted, shared-across-slides* part of AC5's own stated intent — a regression that
+      accidentally made this per-slide state instead of Player-lifted state would have passed every
+      existing test. Fixed: new integration test in `Player.test.tsx` renders a real two-slide
+      segment (image URLs added via fixture override, since `mockLessonPackage`'s own slides have
+      none), clicks one slide's toggle, and asserts both slides' panels reflect the change.
+
 ### File List
 
 - `apps/web/src/components/player/SlideRenderer.tsx`
 - `apps/web/src/__tests__/components/player/SlideRenderer.test.tsx`
 - `apps/web/src/components/player/Player.tsx`
+- `apps/web/src/__tests__/components/player/Player.test.tsx`
 - `apps/web/src/components/player/CESIndicator.tsx`
 - `apps/web/src/__tests__/components/player/CESIndicator.test.tsx`
 
