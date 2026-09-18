@@ -268,6 +268,121 @@ describe('pauseForSlideTransition / pauseForIntervention (Story 2-57 / BR-5)', (
   });
 });
 
+describe('cancelIntervention (Story 2-66 / BR-11)', () => {
+  it('AC2: pauseForIntervention() from PLAYING captures preInterventionPauseReason as null', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+  });
+
+  it('AC2: pauseForIntervention() from a slide-transition pause captures that reason', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().pauseReason).toBe('intervention');
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBe('slide-transition');
+  });
+
+  it('AC2: pauseForIntervention() from a manual pause captures that reason', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pause();
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBe('manual');
+  });
+
+  it('AC3/AC6: cancelIntervention() resumes playback when there was no prior pause (asked while PLAYING)', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForIntervention();
+
+    usePlayerStore.getState().cancelIntervention();
+
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+  });
+
+  it('AC3/AC5: cancelIntervention() restores a slide-transition pause exactly, not a generic resume', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    usePlayerStore.getState().pauseForIntervention();
+
+    usePlayerStore.getState().cancelIntervention();
+
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+  });
+
+  it('AC3: cancelIntervention() restores a manual pause exactly', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pause();
+    usePlayerStore.getState().pauseForIntervention();
+
+    usePlayerStore.getState().cancelIntervention();
+
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('manual');
+  });
+
+  it('AC1: advanceSegment() resets preInterventionPauseReason to null', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBe('slide-transition');
+
+    usePlayerStore.getState().advanceSegment();
+
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+  });
+
+  it('AC1: loadLesson() resets preInterventionPauseReason to null', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBe('slide-transition');
+
+    usePlayerStore.getState().loadLesson(makeLesson());
+
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+  });
+
+  it('review finding: pauseForIntervention() called again while already in intervention does not overwrite preInterventionPauseReason with "intervention" itself', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    usePlayerStore.getState().pauseForIntervention();
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBe('slide-transition');
+
+    // Not reachable through the real UI today (canAskTutor already excludes
+    // pauseReason === 'intervention'), but the action itself must stay
+    // correct under a direct/defensive call -- a naive re-capture here would
+    // silently replace the real prior reason with 'intervention', making
+    // cancelIntervention() restore into itself.
+    usePlayerStore.getState().pauseForIntervention();
+
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBe('slide-transition');
+  });
+
+  it('AC1: play() defensively clears preInterventionPauseReason', () => {
+    usePlayerStore.getState().loadLesson(makeLesson());
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().pauseForSlideTransition();
+    usePlayerStore.getState().pauseForIntervention();
+
+    usePlayerStore.getState().play();
+
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+  });
+});
+
 describe('setSkipTransitionPauseForSegment (Story 2-57 AC10)', () => {
   it('sets skipTransitionPauseForSegment', () => {
     usePlayerStore.getState().loadLesson(makeLesson());

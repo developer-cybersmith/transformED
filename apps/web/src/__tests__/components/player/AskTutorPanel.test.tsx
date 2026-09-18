@@ -86,15 +86,6 @@ describe('AskTutorPanel — Story 2-57 / BR-5, D159 (wired to the real D158 back
     expect(screen.queryByText(/here'?s (the|your) answer/i)).toBeNull();
   });
 
-  it('"Resume without asking" calls play() directly without submitting anything', async () => {
-    render(<AskTutorPanel />);
-    await userEvent.click(screen.getByRole('button', { name: /resume without asking/i }));
-
-    expect(usePlayerStore.getState().status).toBe('PLAYING');
-    expect(usePlayerStore.getState().pauseReason).toBeNull();
-    expect(submitTutorQuestionMock).not.toHaveBeenCalled();
-  });
-
   it('degrades gracefully (resumes playback) if the submit call rejects', async () => {
     submitTutorQuestionMock.mockRejectedValue(new Error('network'));
     render(<AskTutorPanel />);
@@ -102,5 +93,63 @@ describe('AskTutorPanel — Story 2-57 / BR-5, D159 (wired to the real D158 back
     await userEvent.click(screen.getByRole('button', { name: /submit/i }));
 
     expect(usePlayerStore.getState().status).toBe('PLAYING');
+  });
+});
+
+describe('AskTutorPanel — Cancel (Story 2-66 / BR-11)', () => {
+  it('AC6: "Cancel" resumes playback (not a restore) when Ask Tutor was opened from PLAYING', async () => {
+    // beforeEach's setState (bypassing pauseForIntervention()) leaves
+    // preInterventionPauseReason at loadLesson()'s null default -- the
+    // "opened while PLAYING" case.
+    render(<AskTutorPanel />);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+    expect(submitTutorQuestionMock).not.toHaveBeenCalled();
+  });
+
+  it('AC4: "Cancel" restores a prior slide-transition pause instead of forcing resume', async () => {
+    usePlayerStore.setState({ preInterventionPauseReason: 'slide-transition' });
+    render(<AskTutorPanel />);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+    expect(submitTutorQuestionMock).not.toHaveBeenCalled();
+  });
+
+  it('AC4: "Cancel" restores a prior manual pause instead of forcing resume', async () => {
+    usePlayerStore.setState({ preInterventionPauseReason: 'manual' });
+    render(<AskTutorPanel />);
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('manual');
+    expect(usePlayerStore.getState().preInterventionPauseReason).toBeNull();
+  });
+
+  it('AC7: post-submission "Continue" still calls play() directly, even with a prior pause recorded', async () => {
+    usePlayerStore.setState({ preInterventionPauseReason: 'slide-transition' });
+    render(<AskTutorPanel />);
+    await userEvent.type(screen.getByPlaceholderText("What's your question?"), 'Why does this work?');
+    await userEvent.click(screen.getByRole('button', { name: /submit/i }));
+
+    await userEvent.click(await screen.findByRole('button', { name: /continue/i }));
+
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
+  });
+
+  it('AC7: the error-path catch still calls play() directly, even with a prior pause recorded', async () => {
+    usePlayerStore.setState({ preInterventionPauseReason: 'slide-transition' });
+    submitTutorQuestionMock.mockRejectedValue(new Error('network'));
+    render(<AskTutorPanel />);
+    await userEvent.type(screen.getByPlaceholderText("What's your question?"), 'Why does this work?');
+    await userEvent.click(screen.getByRole('button', { name: /submit/i }));
+
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().pauseReason).toBeNull();
   });
 });

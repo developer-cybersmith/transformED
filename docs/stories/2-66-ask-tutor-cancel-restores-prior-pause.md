@@ -1,6 +1,6 @@
 ---
 title: "Story 2-66 — Ask Tutor: Cancel Restores the Prior Pause Instead of Forcing Resume (BR-11)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -93,7 +93,28 @@ call, no new query, no concurrency-sensitive sequence (single-client React state
 
 ### Completion Notes
 
-_(filled in after implementation)_
+- `player.machine.ts`: added `preInterventionPauseReason: PauseReason` (default `null`), reset to
+  `null` in `loadLesson()`, `play()`, and `advanceSegment()`. `pauseForIntervention()` now captures
+  the pre-call `pauseReason` into it in the same `set()` that overwrites to `'intervention'`, guarded
+  by `pauseReason !== 'intervention'` so a defensive double-call can't clobber the captured value with
+  `'intervention'` itself (self-found while writing tests, not reachable through the real UI today
+  since `canAskTutor` already excludes it). New `cancelIntervention()` action: `play()` when
+  `preInterventionPauseReason === null`, otherwise restores `status: 'PAUSED'` +
+  `pauseReason: preInterventionPauseReason` and clears the captured field back to `null`.
+- `AskTutorPanel.tsx`: pre-submission exit button now calls `cancelIntervention()` and is relabeled
+  "Cancel". Post-submission "Continue" and the error-path `catch` both deliberately still call
+  `play()` directly, unchanged (AC7).
+- Tests: `player.machine.test.ts` gained a dedicated `cancelIntervention` describe block (10 tests,
+  covering AC1/AC2/AC3/AC5/AC6 plus the double-call regression guard) — 94/94 passing.
+  `AskTutorPanel.test.tsx`'s old "Resume without asking" test was replaced with an equivalent
+  "Cancel" test plus new AC4 (slide-transition and manual restore) and AC7 (Continue / catch
+  unchanged) coverage — 11/11 passing. `Player.test.tsx` gained the AC5 integration test: full
+  `Player` render → slide-transition pause → modal's Ask Tutor → `AskTutorPanel` mounts → its Cancel
+  button → `SlideTransitionPauseModal` re-mounts, `status`/`pauseReason` back to
+  `PAUSED`/`'slide-transition'` — 60/60 passing.
+- Verification: `tsc --noEmit` clean, targeted `eslint` clean on all 5 touched files, full suite
+  green — 95 files / 1269 tests, zero regressions (baseline was 95 files / 1254 tests before this
+  story; net +15 new tests).
 
 ### File List
 

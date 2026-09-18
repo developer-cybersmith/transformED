@@ -12,6 +12,7 @@ import { FOCUS_RING } from '@/lib/a11y/focusRing';
 // but never fabricates an answer client-side.
 export function AskTutorPanel() {
   const play = usePlayerStore((s) => s.play);
+  const cancelIntervention = usePlayerStore((s) => s.cancelIntervention);
   const sessionId = usePlayerStore((s) => s.sessionId);
   const lesson = usePlayerStore((s) => s.lesson);
   const currentSegmentIndex = usePlayerStore((s) => s.currentSegmentIndex);
@@ -119,10 +120,18 @@ export function AskTutorPanel() {
 
         <div className="px-6 pb-6 flex justify-between items-center">
           <button
-            onClick={play}
+            // Story 2-66 / BR-11: was `play()` directly, which always forced
+            // playback to resume even if the student had been paused for a
+            // slide-transition (or manually) before clicking Ask Tutor --
+            // cancelIntervention() restores that exact prior pause instead,
+            // falling through to play() only when there was none (asked
+            // while PLAYING). Relabeled "Cancel" since "Resume without
+            // asking" is no longer always an accurate description of the
+            // outcome.
+            onClick={cancelIntervention}
             className={`text-neutral-500 hover:text-neutral-900 text-sm transition-colors rounded ${FOCUS_RING}`}
           >
-            Resume without asking
+            Cancel
           </button>
           <button
             onClick={handleSubmit}
