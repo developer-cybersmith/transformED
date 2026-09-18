@@ -18,6 +18,7 @@ import { SlideRenderer } from './SlideRenderer';
 import { PlayerControls } from './PlayerControls';
 import { QuizOverlay } from './QuizOverlay';
 import { TeachBackModal } from './TeachBackModal';
+import { SlideTransitionPauseModal } from './SlideTransitionPauseModal';
 import { CheckingInTransition } from './CheckingInTransition';
 import { TutorInterventionCard } from './TutorInterventionCard';
 import { CESIndicator } from './CESIndicator';
@@ -373,20 +374,13 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
           <AskTutorPanel />
         )}
 
-        {/* Slide-transition pause pill (Story 2-57 follow-up) — the only
-            visual cue for this auto-pause used to be the transport button's
-            icon swap (PlayerControls' Next button), which a student easily
-            never notices. Styled after the buffering indicator below. Text is
-            static, not branched on canAskTutor: within this exact mount
-            condition (status PAUSED, reason 'slide-transition') that helper's
-            own formula is always true, since 'slide-transition' !== 'intervention'. */}
+        {/* Slide-transition pause modal (Story 2-65 / BR-10) — replaces the
+            2026-09-07 follow-up's bottom-right pill entirely. Direct user
+            feedback: a small corner pill was too easy to miss ("didnt see
+            the pause screen"); this is now a real, centered popup carrying
+            Next, the skip-pause checkbox, and Ask Tutor together. */}
         {status === 'PAUSED' && pauseReason === 'slide-transition' && (
-          <div
-            className="absolute bottom-6 right-6 z-10 flex items-center gap-2 px-4 py-2 rounded-full bg-white/90 backdrop-blur-sm border border-neutral-200 shadow-sm text-neutral-700 text-xs"
-            data-testid="slide-transition-pause-pill"
-          >
-            New slide — paused briefly. Tap Next to continue, or Ask Tutor to ask a question.
-          </div>
+          <SlideTransitionPauseModal />
         )}
 
         {/* Lesson complete screen */}

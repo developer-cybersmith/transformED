@@ -1,6 +1,6 @@
 ---
 title: "Story 2-65 — Slide-Transition Pause: Popup Modal (BR-10)"
-status: in-progress
+status: done
 owners: [Dev 2]
 sprint: bug-resolution
 ---
@@ -100,7 +100,36 @@ The existing 5000ms auto-resume timer (Story 2-57's own already-answered Q2) is 
 
 ### Completion Notes
 
-_(filled in after implementation)_
+- **AC1-DONE.** `SlideTransitionPauseModal.tsx` reuses `AskTutorPanel`/`TeachBackModal`'s exact
+  overlay-card markup (`absolute inset-0 z-20`, white rounded-2xl card, backdrop-blur).
+- **AC2-DONE.** "Next" button calls `play()` directly.
+- **AC3-DONE.** Skip-pause checkbox bound to the pre-existing `skipTransitionPauseForSegment`/
+  `setSkipTransitionPauseForSegment` store fields — no new store state.
+- **AC4-DONE.** "Ask Tutor" button calls `pauseForIntervention()`; confirmed via a `Player.test.tsx`
+  integration test that clicking it inside the modal actually unmounts the modal and mounts the
+  real `AskTutorPanel`.
+- **AC5-DONE.** Checkbox removed from `PlayerControls.tsx`; its Ask Tutor button and every one of
+  its existing `canAskTutor`-gated tests are untouched.
+- **AC6-DONE.** Pill removed entirely from `Player.tsx`; a dedicated assertion confirms
+  `slide-transition-pause-pill` no longer exists anywhere, not just that the modal is additionally
+  present.
+- **AC7-DONE.** No timer/countdown text anywhere in the new modal — dedicated regex test.
+- **AC8-DONE.** All 4 pill-presence tests in `Player.test.tsx` rewritten to assert the modal
+  instead (same underlying mount-condition logic, different testid) — plus one new test covering
+  the Ask-Tutor hand-off between the modal and `AskTutorPanel` that didn't exist for the pill
+  (the pill was purely informational and had no interactive elements of its own to test a
+  transition from).
+- **AC9-DONE.** `PlayerControls.test.tsx`'s checkbox test removed with a pointer to its new home;
+  all 4 Ask-Tutor-button tests there pass completely unmodified.
+- **AC10-DONE.** `tsc --noEmit` clean, targeted `eslint` clean. Full frontend suite: 95 files /
+  1254 tests, zero regressions.
+- **Real interaction bug found and fixed while writing tests**: `screen.getByRole('button', {name:
+  'Ask Tutor'})` throws "multiple elements found" during a slide-transition pause, because
+  `PlayerControls`'s persistent Ask Tutor button and the new modal's own Ask Tutor button are BOTH
+  rendered and enabled simultaneously (by design — see the Design section's consolidation
+  decision) with the identical accessible name. Not a product bug (both buttons doing the same
+  thing is intentional), but a real test-authoring trap this story's own new test had to route
+  around with `within(modal)` rather than paper over.
 
 ### File List
 

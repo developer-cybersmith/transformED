@@ -2084,6 +2084,28 @@ actual number was 10 before the coverage-gap fix above), fixed a stale comment i
 still described `CESIndicator` as `top-3 right-3` after the position fix. Full detail in
 `docs/stories/2-64-sidebar-collapse-and-ces-position-fix.md`.
 
+### BR-10 — Slide-Transition Pause: Popup Modal (ad-hoc, added 2026-09-18)
+**Priority:** Medium
+**Status:** ✅ DONE — ✅ 2026-09-18 (Story 2-65, branch `bug-resolution/br-10-slide-transition-pause-modal`)
+
+Direct user feedback: the slide-transition auto-pause (Story 2-57/BR-5) surfaced only as a small,
+easy-to-miss pill in the bottom-right corner ("the toast at bottom"). New
+`SlideTransitionPauseModal.tsx` replaces it with a real centered popup (reusing
+`AskTutorPanel`/`TeachBackModal`'s existing overlay-card pattern) containing the **Next** button,
+the **"Skip pause for this segment"** checkbox, and **Ask Tutor** together, per direct request.
+Consolidation decisions made explicit: the skip-pause checkbox **moved** out of `PlayerControls`'s
+persistent row into the modal exclusively (it was only ever meaningful in-context, at the moment of
+an actual pause); **Ask Tutor stays available in `PlayerControls` unchanged** (Story 2-57's own
+AC11 explicitly designed it to be available any time, not just at a slide transition) and is
+additionally offered inside the modal for convenience — both call the identical
+`pauseForIntervention()` action. No live countdown/timer anywhere in the new modal, matching this
+codebase's established pattern. 5 new tests on the modal itself + `Player.test.tsx`'s pill-presence
+tests rewritten to assert the modal instead (one new test added covering the Ask-Tutor hand-off
+from the modal to the real `AskTutorPanel`, which the old non-interactive pill had nothing
+equivalent to test) + `PlayerControls.test.tsx`'s moved checkbox test removed with a pointer to its
+new home. Full frontend suite: 95 files / 1254 tests, zero regressions. Full detail in
+`docs/stories/2-65-slide-transition-pause-modal.md`.
+
 ---
 
 ## 14. Launch Week

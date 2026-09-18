@@ -61,8 +61,6 @@ export function PlayerControls() {
   const pause         = usePlayerStore((s) => s.pause);
   const pauseForIntervention = usePlayerStore((s) => s.pauseForIntervention);
   const pauseReason      = usePlayerStore((s) => s.pauseReason);
-  const skipTransitionPauseForSegment = usePlayerStore((s) => s.skipTransitionPauseForSegment);
-  const setSkipTransitionPauseForSegment = usePlayerStore((s) => s.setSkipTransitionPauseForSegment);
   const audioPositionMs  = usePlayerStore((s) => s.audioPositionMs);
   const audioDurationMs  = usePlayerStore((s) => s.audioDurationMs);
   const requestSeek      = usePlayerStore((s) => s.requestSeek);
@@ -142,17 +140,12 @@ export function PlayerControls() {
         )}
       </div>
 
-      {/* Story 2-57: Ask Tutor + skip-pause-for-segment row */}
-      <div className="flex items-center justify-between gap-3 px-5 pt-2 text-xs">
-        <label className="flex items-center gap-1.5 text-neutral-500 select-none cursor-pointer">
-          <input
-            type="checkbox"
-            checked={skipTransitionPauseForSegment}
-            onChange={(e) => setSkipTransitionPauseForSegment(e.target.checked)}
-            className="rounded border-neutral-300 text-[var(--accent-secondary)] focus:ring-[var(--accent-secondary)]"
-          />
-          Skip pause for this segment
-        </label>
+      {/* Story 2-57: Ask Tutor — general-purpose, available any time (not
+          tied to a slide-transition pause). The "skip pause for this
+          segment" checkbox that used to live in this row moved into
+          SlideTransitionPauseModal (Story 2-65 / BR-10) -- it was only ever
+          meaningful in-context, at the moment of an actual pause. */}
+      <div className="flex items-center justify-end gap-3 px-5 pt-2 text-xs">
         <button
           type="button"
           onClick={pauseForIntervention}

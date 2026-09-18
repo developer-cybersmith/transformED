@@ -41,20 +41,10 @@ describe('PlayerControls — transport button', () => {
   });
 });
 
-describe('PlayerControls — skip-pause-for-segment checkbox (Story 2-57 AC10)', () => {
-  it('reflects and toggles skipTransitionPauseForSegment', () => {
-    usePlayerStore.setState({ status: 'PLAYING', skipTransitionPauseForSegment: false });
-    render(<PlayerControls />);
-
-    const checkbox = screen.getByRole('checkbox', { name: /skip pause for this segment/i }) as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
-
-    fireEvent.click(checkbox);
-
-    expect(usePlayerStore.getState().skipTransitionPauseForSegment).toBe(true);
-    expect(checkbox.checked).toBe(true);
-  });
-});
+// Story 2-65 / BR-10: the "skip pause for this segment" checkbox that used to
+// live here moved into SlideTransitionPauseModal.test.tsx — see that file for
+// its coverage (was only ever meaningful in-context, at the moment of an
+// actual pause, not as a persistent control).
 
 describe('PlayerControls — Ask Tutor button (Story 2-57 AC11)', () => {
   it('is enabled while PLAYING and pauses for intervention when clicked', () => {
