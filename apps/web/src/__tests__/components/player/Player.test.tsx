@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, within } from '@testing-library/react';
 import Player from '@/components/player/Player';
 import { usePlayerStore } from '@/stores/player.machine';
 import { mockLessonPackage } from '@/mocks/data/lessonPackage';
@@ -454,45 +454,67 @@ describe('Player — restores saved progress on mount (S2-05)', () => {
   });
 });
 
-describe('Player — slide-transition pause pill (Story 2-57 follow-up)', () => {
-  it('shows the pill when paused for a slide-transition', () => {
+describe('Player — slide-transition pause modal (Story 2-65 / BR-10, replaces the 2026-09-07 pill)', () => {
+  it('shows the modal when paused for a slide-transition', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'slide-transition' });
     });
 
-    expect(screen.getByTestId('slide-transition-pause-pill')).not.toBeNull();
+    expect(screen.getByTestId('slide-transition-pause-modal')).not.toBeNull();
+    // The old pill is gone entirely, not just superseded.
+    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
   });
 
-  it('does not show the pill for a manual pause', () => {
+  it('does not show the modal for a manual pause', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'manual' });
     });
 
-    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+    expect(screen.queryByTestId('slide-transition-pause-modal')).toBeNull();
   });
 
-  it('does not show the pill for an intervention pause (AskTutorPanel owns that state instead)', () => {
+  it('does not show the modal for an intervention pause (AskTutorPanel owns that state instead)', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'intervention' });
     });
 
-    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+    expect(screen.queryByTestId('slide-transition-pause-modal')).toBeNull();
+    expect(screen.getByTestId('ask-tutor-panel')).not.toBeNull();
   });
 
-  it('does not show the pill while PLAYING', () => {
+  it('does not show the modal while PLAYING', () => {
     render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
 
     act(() => {
       usePlayerStore.setState({ status: 'PLAYING', pauseReason: null });
     });
 
-    expect(screen.queryByTestId('slide-transition-pause-pill')).toBeNull();
+    expect(screen.queryByTestId('slide-transition-pause-modal')).toBeNull();
+  });
+
+  it('clicking the modal\'s Ask Tutor button transitions to the AskTutorPanel', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'slide-transition' });
+    });
+    const modal = screen.getByTestId('slide-transition-pause-modal');
+
+    // PlayerControls' own persistent Ask Tutor button is ALSO enabled during
+    // a slide-transition pause (Story 2-57 AC11) -- both share the same
+    // accessible name, so this scopes to the modal's own copy specifically.
+    act(() => {
+      within(modal).getByRole('button', { name: 'Ask Tutor' }).click();
+    });
+
+    expect(screen.queryByTestId('slide-transition-pause-modal')).toBeNull();
+    expect(screen.getByTestId('ask-tutor-panel')).not.toBeNull();
   });
 });
 
