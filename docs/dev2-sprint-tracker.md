@@ -2106,6 +2106,34 @@ equivalent to test) + `PlayerControls.test.tsx`'s moved checkbox test removed wi
 new home. Full frontend suite: 95 files / 1254 tests, zero regressions. Full detail in
 `docs/stories/2-65-slide-transition-pause-modal.md`.
 
+### BR-11 — Ask Tutor: Cancel Restores the Prior Pause Instead of Forcing Resume (ad-hoc, added 2026-09-18)
+**Priority:** Medium
+**Status:** ✅ DONE — ✅ 2026-09-18 (Story 2-66, branch `bug-resolution/br-11-ask-tutor-cancel-restores-prior-pause`)
+
+Direct user feedback: *"there is not way to go back in popup modal's ask tutor. once clicked ask
+tutor, no option to abort that or cancelled."* Root cause: `pauseForIntervention()` unconditionally
+overwrote `pauseReason` to `'intervention'` with no memory of what it was before, so
+`AskTutorPanel`'s only exit — "Resume without asking", calling `play()` directly — always forced
+playback to resume even if the student had been paused at a slide transition (BR-10's new modal) or
+manually before curiously clicking Ask Tutor. Fix: new store field
+`preInterventionPauseReason: PauseReason`, captured by `pauseForIntervention()` in the same `set()`
+call that switches to `'intervention'`, plus a new `cancelIntervention()` action that restores the
+exact prior `status`/`pauseReason` pair when one was captured, falling back to `play()` only when
+there wasn't (asked while `PLAYING` — unchanged behavior). `AskTutorPanel`'s pre-submission exit
+button now calls `cancelIntervention()` and is relabeled **"Cancel"** (the old "Resume without
+asking" label asserted an outcome no longer always true). Deliberately unchanged: post-submission
+"Continue" and the error-path `catch` both still call `play()` directly — resuming normally after an
+actual answer, or after a failed submission, remains correct; only the pre-submission cancel path
+changes. 10 new store tests (`cancelIntervention` describe block, including a self-found defensive
+regression guard: a second `pauseForIntervention()` call while already `'intervention'` must not
+clobber the captured value with `'intervention'` itself) + `AskTutorPanel.test.tsx`'s old "Resume
+without asking" test replaced with equivalent "Cancel" coverage plus new restore-from-slide-transition
+and restore-from-manual tests, and explicit tests confirming Continue/catch stayed unchanged + one
+`Player.test.tsx` integration test proving the concrete reported scenario end-to-end (slide-transition
+pause → modal's Ask Tutor → `AskTutorPanel` → its Cancel button → `SlideTransitionPauseModal`
+re-mounts). Full frontend suite: 95 files / 1269 tests, zero regressions. Full detail in
+`docs/stories/2-66-ask-tutor-cancel-restores-prior-pause.md`.
+
 ---
 
 ## 14. Launch Week

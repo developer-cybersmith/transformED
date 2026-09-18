@@ -98,6 +98,14 @@ export interface PlayerStore {
    *  AC10). Resets to false on every new segment via advanceSegment()/loadLesson() —
    *  a student's choice for one segment must not silently carry into the next. */
   skipTransitionPauseForSegment: boolean;
+  /** The `pauseReason` that was active right before `pauseForIntervention()`
+   *  overwrote it (Story 2-66 / BR-11) — `null` means the student clicked Ask
+   *  Tutor while `PLAYING`, not while already paused for another reason.
+   *  `cancelIntervention()` reads this to restore the exact prior pause
+   *  (e.g. back to `SlideTransitionPauseModal`) instead of unconditionally
+   *  forcing playback to resume. Reset alongside `skipTransitionPauseForSegment`
+   *  on the same per-segment/per-lesson boundaries. */
+  preInterventionPauseReason: PauseReason;
 
   // ── Actions ────────────────────────────────────────────────────────────────
   /** Load a LessonPackage and reset all derived state to the beginning. */
@@ -120,6 +128,12 @@ export interface PlayerStore {
    *  button (Story 2-57 AC11) — no auto-resume timer, unlike
    *  pauseForSlideTransition. No-op unless currently PLAYING. */
   pauseForIntervention: () => void;
+  /** Backs out of an Ask-Tutor intervention without submitting anything
+   *  (Story 2-66 / BR-11) — restores the exact pause the student was in
+   *  before clicking Ask Tutor (e.g. SlideTransitionPauseModal) rather than
+   *  unconditionally forcing playback to resume. Falls through to play()
+   *  only when there was no prior pause to restore (asked while PLAYING). */
+  cancelIntervention: () => void;
   setSkipTransitionPauseForSegment: (skip: boolean) => void;
   /** Queue a seek; AudioTimeline applies it to the audio element and clears it. */
   requestSeek: (ms: number) => void;
@@ -182,6 +196,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   audioRetryCount: 0,
   pauseReason: null,
   skipTransitionPauseForSegment: false,
+  preInterventionPauseReason: null,
 
   // ── Actions ────────────────────────────────────────────────────────────────
   loadLesson: (pkg) => {
@@ -211,6 +226,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       audioRetryCount: 0,
       pauseReason: null,
       skipTransitionPauseForSegment: false,
+      preInterventionPauseReason: null,
     });
   },
 
@@ -227,7 +243,10 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       // effect's dependency is pauseReason itself, so if it never returned
       // to null in between, the effect would not see a new 'slide-transition'
       // value the second time and the timer would silently never start.
-      set({ status: 'PLAYING', pauseReason: null });
+      // preInterventionPauseReason cleared defensively (Story 2-66) -- always
+      // already null by the time play() runs on a normal path, but a stray
+      // leftover must never be read by a later, unrelated cancelIntervention().
+      set({ status: 'PLAYING', pauseReason: null, preInterventionPauseReason: null });
     }
   },
 
@@ -252,9 +271,31 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // reclassifies the existing pause as an intervention (cancels the
     // transition's auto-resume timer via the pauseReason change) rather than
     // requiring status to transition through PLAYING again.
-    const { status } = get();
-    if (status === 'PLAYING' || status === 'PAUSED') {
-      set({ status: 'PAUSED', pauseReason: 'intervention' });
+    //
+    // Guarded against pauseReason already being 'intervention' (Story 2-66
+    // review finding, while writing that story's own tests): without this,
+    // calling pauseForIntervention() a second time while already paused for
+    // intervention would overwrite preInterventionPauseReason with
+    // 'intervention' itself, making cancelIntervention() restore into a
+    // no-op instead of the real prior pause. Not reachable through the real
+    // UI today (canAskTutor already excludes this case), but the action
+    // itself must stay correct under a direct/defensive call.
+    const { status, pauseReason } = get();
+    if ((status === 'PLAYING' || status === 'PAUSED') && pauseReason !== 'intervention') {
+      set({ status: 'PAUSED', pauseReason: 'intervention', preInterventionPauseReason: pauseReason });
+    }
+  },
+
+  cancelIntervention: () => {
+    const { preInterventionPauseReason } = get();
+    if (preInterventionPauseReason === null) {
+      // Asked while PLAYING -- nothing to "go back" to except playing.
+      get().play();
+    } else {
+      // Restore the exact prior pause (e.g. SlideTransitionPauseModal)
+      // rather than forcing playback to resume -- the whole point of this
+      // being a genuine cancel, not a second Next/Play button (Story 2-66).
+      set({ status: 'PAUSED', pauseReason: preInterventionPauseReason, preInterventionPauseReason: null });
     }
   },
 
@@ -315,6 +356,9 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       // Story 2-57 AC10: a skip-pause choice is per-segment, not lesson-wide —
       // must not silently carry into the next segment.
       skipTransitionPauseForSegment: false,
+      // Story 2-66: a stray intervention-cancel target must not leak into the
+      // next segment either.
+      preInterventionPauseReason: null,
     });
     get().saveProgress();
   },

@@ -516,6 +516,29 @@ describe('Player — slide-transition pause modal (Story 2-65 / BR-10, replaces 
     expect(screen.queryByTestId('slide-transition-pause-modal')).toBeNull();
     expect(screen.getByTestId('ask-tutor-panel')).not.toBeNull();
   });
+
+  it('AC5 (Story 2-66 / BR-11): canceling out of the AskTutorPanel re-mounts the slide-transition modal, not a forced resume', () => {
+    render(<Player onRefetchLesson={mockOnRefetchLesson} lesson={mockLessonPackage} />);
+
+    act(() => {
+      usePlayerStore.setState({ status: 'PAUSED', pauseReason: 'slide-transition' });
+    });
+    const modal = screen.getByTestId('slide-transition-pause-modal');
+    act(() => {
+      within(modal).getByRole('button', { name: 'Ask Tutor' }).click();
+    });
+    expect(screen.getByTestId('ask-tutor-panel')).not.toBeNull();
+
+    const panel = screen.getByTestId('ask-tutor-panel');
+    act(() => {
+      within(panel).getByRole('button', { name: /^cancel$/i }).click();
+    });
+
+    expect(screen.queryByTestId('ask-tutor-panel')).toBeNull();
+    expect(screen.getByTestId('slide-transition-pause-modal')).not.toBeNull();
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+    expect(usePlayerStore.getState().pauseReason).toBe('slide-transition');
+  });
 });
 
 describe('Player — audio buffering / error retry UI (S2-26)', () => {
