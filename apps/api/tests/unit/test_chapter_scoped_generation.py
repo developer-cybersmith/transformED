@@ -1117,7 +1117,7 @@ async def test_ac7_package_builder_diagnoses_a_missing_chapter_id() -> None:
         "slides": [],
         "slide_images": [],
         "audio_assets": [],
-        "narration_scripts": [],
+        "narration_scripts_final": [],
         "quiz_questions": [],
         "glossary": [],
         "intervention_prompts": [],

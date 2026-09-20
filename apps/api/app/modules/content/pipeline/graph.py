@@ -65,17 +65,23 @@ from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
 logger = logging.getLogger(__name__)
 
-# Story 2-1 AC-0: the six Phase 1 "economy" nodes. Each is fanned out once per
+# Story 2-1 AC-0: the five Phase 1 "economy" nodes. Each is fanned out once per
 # `state["sections"]` entry via Send() and must ALL complete before Phase 2
 # (lesson_planner) starts — violating this silently 5xs pipeline cost by
 # feeding lesson_planner raw chapter text instead of cheap summaries.
+#
+# Issue #236 (2026-09-21): narration_generator used to be the 6th member of
+# this list, but a Phase-1 dispatch has no lesson outline to give it — the
+# outline doesn't exist until lesson_planner runs, which is exactly what
+# blocked cross-section narration continuity. narration_generator now runs in
+# a SEPARATE post-planner fan-out (see `_fan_out_narration_after_planning`,
+# dispatched from `slide_generator`), not here.
 _ECONOMY_NODES: list[str] = [
     "summarise_segment",
     "quiz_generator",
     "segment_complexity",
     "jargon_extractor",
     "intervention_messages",
-    "narration_generator",
 ]
 
 
@@ -147,20 +153,37 @@ class PipelineState(TypedDict, total=False):
         list[dict[str, Any]], operator.add
     ]  # [{trigger, message, type}]
 
-    # Node 12: narration_generator
+    # Node 12: narration_generator (post-planner fan-out, issue #236 — see
+    # `_fan_out_narration_after_planning`). Raw, per-section, NOT lesson-order-
+    # guaranteed (same Send()-fan-in caveat as every other Annotated channel
+    # here) — narration_stitch_node is the only reader.
     narration_scripts: Annotated[
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, script, narration_style, word_count}]
 
+    # Node 12b: narration_stitch (issue #236). Plain field, NOT a reducer —
+    # narration_stitch_node runs once, sequentially, after the narration_scripts
+    # fan-in join, so writing back into narration_scripts itself would DOUBLE it
+    # (CLAUDE.md's reducer-channel rule). This is the one and only narration
+    # field tts_node/package_builder_node read from now on: ordered (via
+    # _segment_order_key), transition-stitched, and char-capped
+    # (_apply_narration_char_cap moved here from tts_node — see
+    # narration_stitch_node's docstring for why).
+    # [{segment_id, script, narration_style, word_count}]
+    narration_scripts_final: list[dict[str, Any]]
+
     # Story 3-39: surfaces _get_section_body's truncation signal, previously
     # only a logger.warning nobody reads (CLAUDE.md's own headline example of
-    # the banned "silent truncation" pattern). Populated by all 6 Phase 1
-    # economy nodes (same fan-out as segment_summaries etc. above) — each
-    # dispatch appends AT MOST the one entry IT produced (or an empty list),
-    # never re-emits accumulated state, so this channel is additive-safe
-    # under the same operator.add reducer. Consumed by package_builder_node,
-    # which writes it verbatim into lesson_jobs.node_outputs for admin
-    # visibility (mirrors package_builder_degraded's existing pattern).
+    # the banned "silent truncation" pattern). Populated by the 5 Phase 1
+    # economy nodes AND narration_generator's post-planner dispatch (issue
+    # #236 moved narration out of the Phase-1 fan-out, but it's still a
+    # per-section Send() dispatch contributing to this same repo-wide channel)
+    # — each dispatch appends AT MOST the one entry IT produced (or an empty
+    # list), never re-emits accumulated state, so this channel is
+    # additive-safe under the same operator.add reducer. Consumed by
+    # package_builder_node, which writes it verbatim into
+    # lesson_jobs.node_outputs for admin visibility (mirrors
+    # package_builder_degraded's existing pattern).
     section_truncations: Annotated[
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, node, original_chars, capped_chars}]
@@ -171,6 +194,12 @@ class PipelineState(TypedDict, total=False):
     _section: dict[str, Any]
     _section_index: int
     _total_sections: int  # len(sections) * len(_ECONOMY_NODES) — Story 2-1b AC-4 progress logging
+
+    # Set by `_fan_out_narration_after_planning` (issue #236) for each
+    # post-planner narration dispatch — the one small slice of `lesson_plan`
+    # that dispatch needs (never the whole plan, matching _FAN_OUT_STATE_KEYS'
+    # own "don't copy full state into every dispatch" discipline).
+    _plan_segment: dict[str, Any]  # {segment_id, title, continuity_notes}
 
     # Node 13: tts_node
     audio_assets: list[
@@ -1160,11 +1189,22 @@ class _LessonPlanSegmentLLM(BaseModel):
     lesson_planner_node's response — deliberately has no `summary` field: the
     ORIGINAL segment_summaries text is carried forward verbatim (Story 2-6
     AC-3/Task 2.6), never re-paraphrased by the LLM, so there is nothing for
-    it to fabricate a summary from."""
+    it to fabricate a summary from.
+
+    `continuity_notes` (issue #236): a free-text, per-segment note on what
+    earlier segment(s) this one should briefly callback to or reiterate — the
+    only place in the pipeline that ever sees every segment at once, so the
+    only place this can be authored. Deliberately generic free text, not a
+    structured topic-grouping field — issue #233's "1-or-2 topics per lesson"
+    grouping has no design yet (its own text defers it to a separate story),
+    so this does not attempt to guess that shape. Empty string, never null,
+    when nothing earlier is worth reiterating (always empty for the first
+    segment in lesson order)."""
 
     segment_id: str
     title: str
     duration_min: float
+    continuity_notes: str = ""
 
 
 class _LessonPlanLLM(BaseModel):
@@ -1314,8 +1354,16 @@ def _planner_system_prompt(tier_framing: str) -> str:
         "one outline segment per summary provided, echoing back each "
         "summary's segment_id UNCHANGED — do not invent, merge, split, "
         "omit, or reorder segment_ids. For each segment, provide a short "
-        "title and an estimated duration_min (minutes of narration/slide "
-        "time for that segment)." + tier_framing + _UNTRUSTED_CONTENT_GUARD
+        "title, an estimated duration_min (minutes of narration/slide "
+        "time for that segment), and continuity_notes: a brief note on "
+        "any EARLIER segment (by its content, not by an id you weren't "
+        "given) this segment should briefly callback to or reiterate, "
+        "since you can see the whole lesson's segments at once and no "
+        "later step can. Leave continuity_notes empty for the first "
+        "segment and for any segment with nothing worth reiterating — "
+        "do not invent a callback that isn't genuinely useful."
+        + tier_framing
+        + _UNTRUSTED_CONTENT_GUARD
     )
 
 
@@ -1521,6 +1569,13 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # small enough to echo 1:1, then reassemble. The degrade-not-fabricate guard
     # block below runs on the assembled response exactly as before, so a batch
     # that drops/duplicates an id is still caught.
+    #
+    # Accepted limitation (issue #236): continuity_notes is authored per-batch,
+    # not lesson-wide — a segment in batch 2 can only reference segments WITHIN
+    # batch 2, since batch 1's segments are never shown to it. Same latent-until-
+    # an-operator-raises-structure_max_sections shape as the existing
+    # objectives-reflect-first-batch-only limitation a few lines below; not
+    # fixed here for the same reason (default config never takes this path).
     batch_size = settings.lesson_planner_batch_size
     if len(segment_summaries) <= batch_size:
         response = await _run_planner_batch(
@@ -1650,6 +1705,14 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             "summary": summary_by_id[s["segment_id"]],
             "duration_min": llm_segment_by_id[s["segment_id"]].duration_min,
             "slide_budget": {"min": slide_budgets[i][0], "max": slide_budgets[i][1]},
+            # Issue #236: forced empty for the first segment in lesson order
+            # regardless of what the LLM returned — there is nothing earlier
+            # to callback to, so trusting an LLM-invented value here would be
+            # exactly the "LLM enum drift"/fabrication class every other guard
+            # in this node rejects, not a place to newly permit it.
+            "continuity_notes": (
+                "" if i == 0 else llm_segment_by_id[s["segment_id"]].continuity_notes.strip()
+            ),
         }
         for i, s in enumerate(segment_summaries)
     ]
@@ -2253,17 +2316,19 @@ def _section_truncation_entries(
     ]
 
 
-# All 6 economy nodes are checkpointed/progress-instrumented as of Story 2-1
-# AC-3..AC-6 (2026-07-14) — used to compute an honest progress denominator
-# (Story 2-1b review finding: a 6xN denominator with fewer than 6 node types
-# ever incrementing the counter can never reach 100%).
+# All 5 Phase-1 economy nodes are checkpointed/progress-instrumented as of
+# Story 2-1 AC-3..AC-6 (2026-07-14) — used to compute an honest progress
+# denominator (Story 2-1b review finding: a 5xN denominator with fewer than 5
+# node types ever incrementing the counter can never reach 100%).
+# narration_generator moved to the post-planner fan-out (issue #236) — its
+# progress denominator is now computed separately in
+# `_fan_out_narration_after_planning` (`len(_POST_PLANNER_FAN_OUT_NODES)`).
 _PHASE1_INSTRUMENTED_NODES: tuple[str, ...] = (
     "summarise_segment",
     "segment_complexity",
     "quiz_generator",
     "jargon_extractor",
     "intervention_messages",
-    "narration_generator",
 )
 
 
@@ -3515,25 +3580,35 @@ def _narration_is_valid_shape(cached: dict[str, Any]) -> bool:
 
 @traced_node("narration_generator_node")
 async def narration_generator_node(state: PipelineState) -> PipelineState:
-    """Node 12 (Story 2-1 AC-6): write a narration script for one section.
+    """Node 12 (Story 2-1 AC-6; re-positioned by issue #236): write a
+    narration script for one section.
 
-    Send()-dispatched once per section (see AC-0). Returns only this node's
-    own reduced key (fan-out-safe, see quiz_generator_node's docstring).
+    Send()-dispatched once per section, but — since issue #236 — from
+    `_fan_out_narration_after_planning`, AFTER `lesson_planner` (and
+    `slide_generator`) have already run, not from Phase 1's
+    `_fan_out_phase1_economy_nodes`. Returns only this node's own reduced key
+    (fan-out-safe, see quiz_generator_node's docstring).
 
     AC-6 requires narration tone to match `SegmentComplexity.narration_style`
-    from segment_complexity_node's output for the SAME section — but Phase 1
-    nodes are all Send()-dispatched into the same LangGraph superstep with no
-    cross-node ordering guarantee, so segment_complexity_node's checkpoint for
-    this section may or may not exist yet when this node runs (see Story 2-1
-    AC-6 Note in docs/stories/2-1-phase1-economy-nodes.md — this residual gap
-    is documented at the story level, not just here, per review finding
-    2026-07-14). Best-effort handling: opportunistically read
-    segment_complexity's checkpoint first; if it's already there (a real,
-    frequent case — Send()-dispatched calls do not all resolve in lockstep),
-    use its narration_style as an instruction to the LLM and as the value
-    written to state, satisfying AC-6 exactly. Only when it's genuinely not
-    yet available does this fall back to asking the LLM to self-report a
-    narration_style, same as before.
+    from segment_complexity_node's output for the SAME section. Historically
+    this was best-effort: Phase 1 nodes are all Send()-dispatched into the
+    same LangGraph superstep with no cross-node ordering guarantee, so
+    segment_complexity_node's checkpoint for this section might not exist yet
+    when this node ran (Story 2-1 AC-6 Note,
+    docs/stories/2-1-phase1-economy-nodes.md). Issue #236 changes this in
+    practice, not just in code: because this node now runs strictly after
+    ALL Phase 1 nodes (including segment_complexity_node) have joined into
+    lesson_planner, that checkpoint is always written by the time this node
+    dispatches. The opportunistic-read code path is left in place regardless
+    — never assume a checkpoint exists rather than checking — but the
+    fallback (LLM self-reports its own narration_style) should now be dead
+    code in normal operation, not the common case it used to be.
+
+    Issue #236 also adds `state["_plan_segment"]["continuity_notes"]` —
+    lesson_planner_node's cross-section callback note for this segment,
+    generated at planning time (the one place that sees every segment at
+    once). When non-empty, spliced into the same user-role, untrusted-content-
+    guarded message as narration_style/section body below.
     """
     from app.config import get_settings
     from app.providers.llm.factory import get_llm_provider
@@ -3603,6 +3678,14 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             "available — choose a narration_style yourself (e.g. conversational, "
             "formal, energetic) and return it."
         )
+    # Issue #236: continuity_notes comes from lesson_planner_node's own LLM
+    # call (untrusted, free-text, no enum constraint) — same trust level as
+    # narration_style above, so it goes in the same user-role message under
+    # the same _UNTRUSTED_CONTENT_GUARD, never the system-role message.
+    continuity_notes = (state.get("_plan_segment") or {}).get("continuity_notes") or ""
+    continuity_instruction = (
+        f"Briefly reiterate/callback to: {continuity_notes}" if continuity_notes else ""
+    )
     # 2026-07-14 review finding, second pass (Blind Hunter, DECISION resolved
     # same day): `known_narration_style` is itself an LLM output from
     # segment_complexity_node (untrusted, free-text `str`, no enum
@@ -3626,7 +3709,10 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
                 f"{_UNTRUSTED_CONTENT_GUARD}"
             ),
         },
-        {"role": "user", "content": f"{style_instruction}\n\n{body}"},
+        {
+            "role": "user",
+            "content": f"{style_instruction}\n{continuity_instruction}\n\n{body}".strip(),
+        },
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _NarrationScriptLLM)
     if response is None:
@@ -3887,10 +3973,12 @@ def _apply_narration_char_cap(
 
     This cannot live inside narration_generator_node — that node is
     Send()-dispatched once per section with no visibility into any other
-    section's output (see that node's own docstring). tts_node is the first
-    point all segments' scripts are available together, and it runs
-    immediately before the actual (dominant, 67-73% of lesson cost) TTS
-    spend, so the cap is enforced here instead.
+    section's output (see that node's own docstring). Called from
+    `narration_stitch_node` (issue #236; previously called from `tts_node`
+    directly, before `narration_stitch_node` existed) — the first point all
+    segments' scripts are available together, running immediately before the
+    actual (dominant, 67-73% of lesson cost) TTS spend, so the cap is
+    enforced there instead.
 
     Once the running total would exceed `max_chars`, the segment that
     crosses the boundary is truncated to a grapheme-safe slice that fills
@@ -3990,18 +4078,210 @@ def _apply_narration_char_cap(
     }
 
 
+class _StitchedNarrationSegmentLLM(BaseModel):
+    """One segment's revised script from narration_stitch_node's LLM call —
+    deliberately just `segment_id` + `script`: narration_style/word_count are
+    NOT re-generated (voice style shouldn't change because of a transition
+    pass; word_count is recomputed locally from the returned script, not
+    trusted from the LLM)."""
+
+    segment_id: str
+    script: str
+
+
+class _StitchedNarrationLLM(BaseModel):
+    """Internal structured-output shape for narration_stitch_node —
+    deliberately loose (no extra="forbid"), same rationale as
+    _LessonPlanLLM/_QuizQuestionLLM: this node's own degrade-not-fabricate
+    guards run before any strict validation."""
+
+    segments: list[_StitchedNarrationSegmentLLM]
+
+
+@traced_node("narration_stitch_node")
+async def narration_stitch_node(state: PipelineState) -> PipelineState:
+    """Node 12c (issue #236): the lightweight cross-section polish pass over
+    ALL of a lesson's narration, run once (NOT Send()-dispatched) after every
+    post-planner `narration_generator` dispatch joins, before `tts_node`.
+
+    This is the first — and, per issue #236's design, the ONLY — node with
+    true whole-lesson narration visibility before the TTS spend. Two jobs,
+    done in this order:
+
+    1. One `settings.llm_mini` call over the ordered `[{segment_id, script}]`
+       list asking for brief inserted slide-transition phrasing and trimmed
+       duplicate phrasing across sections — NOT a rewrite of content, a
+       polish pass. Guarded exactly like `lesson_planner_node`'s
+       degrade-not-fabricate block (segment_id set/count/uniqueness must
+       match, no blank script): any guard failure, or the LLM call returning
+       nothing, falls through to the unmodified-but-ordered scripts rather
+       than failing an otherwise-complete lesson over a cosmetic pass.
+    2. `_apply_narration_char_cap` (moved here from `tts_node` — see that
+       function's docstring for why this is now the correct call site) on
+       whichever of the two script sets above was actually used.
+
+    Writes `narration_scripts_final` — a PLAIN `PipelineState` field, not the
+    `narration_scripts` reducer channel. Writing back into `narration_scripts`
+    itself would DOUBLE it (this node runs once, after the fan-in, exactly
+    the shape CLAUDE.md's reducer-channel rule warns about), so a new field
+    is the only safe option; `tts_node`/`package_builder_node` read this field
+    now, never `narration_scripts` directly.
+
+    Checkpointed like `lesson_planner_node`/`slide_generator_node` (a single
+    sequential node, not Send()-fanned-out) — a plain read-modify-write, not
+    the atomic `merge_lesson_job_node_output` RPC Phase-1 nodes need, because
+    there is exactly one writer to this key per pipeline run.
+    """
+    from app.config import get_settings
+    from app.core.db import get_supabase
+    from app.providers.llm.factory import get_llm_provider
+
+    lesson_id = state["lesson_id"]
+    narration_scripts = state.get("narration_scripts", [])
+    # Same rationale as tts_node's own canary call: this node is the first to
+    # read the narration_scripts fan-in result and is about to spend money
+    # (an LLM call) on it — a duplicated channel here would mean stitching
+    # (and then capping/billing TTS for) the same segment N times over.
+    _warn_if_duplicated(lesson_id, "narration_stitch", "narration_scripts", narration_scripts)
+
+    supabase = get_supabase()
+
+    # ── Idempotency: return cached output if this node already completed ──────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
+
+    if "narration_stitch" in node_outputs:
+        cached = node_outputs["narration_stitch"]
+        logger.info("[%s] narration_stitch_node: cache hit, skipping LLM call", lesson_id)
+        await _update_job_progress(lesson_id, 60.0, "narration_stitch")
+        return {"narration_scripts_final": cached, "progress_pct": 60.0}
+
+    # Same non-dict-entry defense _apply_narration_char_cap already needs —
+    # applied here too since this node now runs first and feeds that function.
+    clean_entries = [entry for entry in narration_scripts if isinstance(entry, dict)]
+    ordered_entries = sorted(
+        enumerate(clean_entries), key=lambda pair: _segment_order_key(pair[1], pair[0])
+    )
+    ordered_scripts = [entry for _, entry in ordered_entries]
+
+    settings = get_settings()
+    stitched_scripts = ordered_scripts
+    if ordered_scripts:
+        provider = get_llm_provider(settings.llm_mini, lesson_id)
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are given a lesson's narration scripts, one per section, "
+                    "already in lesson order. Insert brief slide-transition phrasing "
+                    "between sections (a short sentence announcing the switch, e.g. "
+                    "'Now let's move on to...') and trim any duplicate phrasing that "
+                    "appears across sections. Do NOT rewrite, summarise, or shorten "
+                    "the core content of any section — only touch transitions and "
+                    "duplicate phrasing. Return EXACTLY one entry per section "
+                    "provided, echoing back each section's segment_id UNCHANGED — do "
+                    "not invent, merge, split, omit, or reorder segment_ids."
+                    + _UNTRUSTED_CONTENT_GUARD
+                ),
+            },
+            {
+                "role": "user",
+                # Same "- segment_id=X: <single-line text>" convention as
+                # lesson_planner_node/slide_generator_node's prompts.
+                "content": "\n".join(
+                    f"- segment_id={e.get('segment_id')}: {_single_line(_safe_narration_script(e))}"
+                    for e in ordered_scripts
+                ),
+            },
+        ]
+        response = await provider.complete_structured(
+            messages, settings.llm_mini, _StitchedNarrationLLM
+        )
+
+        # Degrade-not-fabricate guard block, same shape as lesson_planner_node's:
+        # a wrong/incomplete response is rejected wholesale (fall back to the
+        # unmodified-but-ordered scripts) rather than patched piecemeal — this
+        # is a cosmetic pass, never worth failing an otherwise-complete lesson.
+        if response is None:
+            logger.warning(
+                "[%s] narration_stitch_node: LLM returned no parsed response — "
+                "falling back to unstitched, ordered scripts",
+                lesson_id,
+            )
+        else:
+            input_ids = [e.get("segment_id") for e in ordered_scripts]
+            response_ids = [seg.segment_id for seg in response.segments]
+            guard_failure: str | None = None
+            if len(response.segments) != len(ordered_scripts):
+                guard_failure = (
+                    f"segment count mismatch — expected {len(ordered_scripts)}, "
+                    f"got {len(response.segments)}"
+                )
+            elif set(response_ids) != set(input_ids):
+                guard_failure = f"returned unknown/missing segment_id(s): {response_ids}"
+            elif len(set(response_ids)) != len(response_ids):
+                guard_failure = f"returned duplicate segment_id(s): {response_ids}"
+            elif any(not seg.script.strip() for seg in response.segments):
+                guard_failure = "returned a blank script for at least one segment"
+
+            if guard_failure:
+                logger.warning(
+                    "[%s] narration_stitch_node: %s — falling back to unstitched, ordered scripts",
+                    lesson_id,
+                    guard_failure,
+                )
+            else:
+                stitched_by_id = {seg.segment_id: seg.script.strip() for seg in response.segments}
+                stitched_scripts = [
+                    {
+                        **entry,
+                        "script": stitched_by_id[entry["segment_id"]],
+                        "word_count": len(stitched_by_id[entry["segment_id"]].split()),
+                    }
+                    for entry in ordered_scripts
+                ]
+
+    capped_scripts, narration_cap_record = _apply_narration_char_cap(
+        lesson_id, stitched_scripts, settings.max_narration_chars_per_lesson
+    )
+
+    supabase.table("lesson_jobs").update(
+        {
+            "last_node": "narration_stitch",
+            "node_outputs": {
+                **node_outputs,
+                "narration_stitch": capped_scripts,
+                "narration_cap_applied": narration_cap_record,
+            },
+        }
+    ).eq("lesson_id", lesson_id).execute()
+
+    await _update_job_progress(lesson_id, 60.0, "narration_stitch")
+    return {"narration_scripts_final": capped_scripts, "progress_pct": 60.0}
+
+
 @traced_node("tts_node")
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
     Sarvam -> Azure -> Browser Speech fallback chain.
 
-    Input is `state["narration_scripts"]` ONLY (AC-1) — never sections/
-    chapter_content/slides (slide-level timestamp mapping is out of scope,
-    see Story 2-8's Dev Notes). This node NEVER hard-fails the pipeline
-    (AC-2/AC-11) — including on an empty `narration_scripts` list, a
-    deliberate divergence from lesson_planner_node/slide_generator_node's
-    stricter empty-input guards (their premium single-shot calls have no
-    fallback; this node's whole design IS the fallback).
+    Input is `state["narration_scripts_final"]` ONLY (AC-1; renamed from
+    `narration_scripts` by issue #236 — see `narration_stitch_node`, which now
+    runs immediately before this node and owns ordering/transition-stitching/
+    the lesson-wide char cap) — never sections/chapter_content/slides
+    (slide-level timestamp mapping is out of scope, see Story 2-8's Dev
+    Notes). This node NEVER hard-fails the pipeline (AC-2/AC-11) — including
+    on an empty `narration_scripts_final` list, a deliberate divergence from
+    lesson_planner_node/slide_generator_node's stricter empty-input guards
+    (their premium single-shot calls have no fallback; this node's whole
+    design IS the fallback).
 
     `Narration.timestamps` always ships `[]` — Story 2-8's explicit scope
     decision (word-to-slide timestamp mapping deferred to a follow-up story).
@@ -4028,16 +4308,19 @@ async def tts_node(state: PipelineState) -> PipelineState:
 
     from tinytag import TinyTag
 
-    from app.config import get_settings
     from app.core.db import get_supabase
     from app.schemas.lesson import Narration
 
     lesson_id = state["lesson_id"]
-    narration_scripts = state.get("narration_scripts", [])
+    narration_scripts = state.get("narration_scripts_final", [])
     logger.info("[%s] tts_node: synthesising %d narrations", lesson_id, len(narration_scripts))
     # Last checkpoint before PAID synthesis — duplicated narration here means
-    # paying the TTS vendor N times for the same text.
-    _warn_if_duplicated(lesson_id, "tts_node", "narration_scripts", narration_scripts)
+    # paying the TTS vendor N times for the same text. narration_scripts_final
+    # is a PLAIN (non-reducer) field written once by narration_stitch_node, so
+    # this canary should never actually fire post-#236 — kept as defense in
+    # depth, same as lesson_planner_node's/narration_stitch_node's own canary
+    # calls on their respective fan-in-derived inputs.
+    _warn_if_duplicated(lesson_id, "tts_node", "narration_scripts_final", narration_scripts)
 
     # 2026-07-20 review finding (Blind Hunter): lesson_id is used to build a
     # Storage path (f"{lesson_id}/{segment_id}.mp3") but was unguarded here,
@@ -4066,16 +4349,13 @@ async def tts_node(state: PipelineState) -> PipelineState:
         await _update_job_progress(lesson_id, 86.0, "tts_node")
         return {"audio_assets": cached, "progress_pct": 86.0}
 
-    # Story 3-37 / decisionupdate.md §8: enforce the lesson-wide narration
-    # character cap BEFORE any TTS spend — see _apply_narration_char_cap's
-    # docstring for why this must live here and not in
-    # narration_generator_node. Always applied (a no-op when under budget)
-    # so narration_cap_applied is always available to write below, on
-    # whichever of the two branches actually runs.
-    settings = get_settings()
-    narration_scripts, narration_cap_record = _apply_narration_char_cap(
-        lesson_id, narration_scripts, settings.max_narration_chars_per_lesson
-    )
+    # Story 3-37 / decisionupdate.md §8's lesson-wide narration character cap
+    # is enforced upstream now, in narration_stitch_node (issue #236) — the
+    # first point all segments' scripts are available together, immediately
+    # before this node. `narration_scripts_final` arrives already capped;
+    # `node_outputs["narration_cap_applied"]` was already persisted by
+    # narration_stitch_node's own checkpoint write, and is carried forward
+    # unmodified by this node's own `**node_outputs` spread below.
 
     if not narration_scripts:
         logger.warning(
@@ -4093,7 +4373,6 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 "node_outputs": {
                     **node_outputs,
                     "tts_node": audio_assets_out,
-                    "narration_cap_applied": narration_cap_record,
                 },
             }
         ).eq("lesson_id", lesson_id).execute()
@@ -4248,7 +4527,6 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 "node_outputs": {
                     **node_outputs,
                     "tts_node": audio_assets_out,
-                    "narration_cap_applied": narration_cap_record,
                 },
             }
         ).eq("lesson_id", lesson_id).execute()
@@ -4955,8 +5233,10 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     # This is the ONLY runtime detector covering quiz_questions and glossary —
     # the exact channels Dev 2 observed duplicated. lesson_planner's canary sees
     # only Phase-1-origin duplication (it runs before the four doubling nodes),
-    # and tts_node's covers narration_scripts alone. AC-7's e2e assertions are
-    # CI-time on a fixture; they cannot see a real student's lesson.
+    # and narration_stitch_node's covers narration_scripts alone (issue #236 —
+    # tts_node's own canary now covers narration_scripts_final, a plain field,
+    # as defense in depth). AC-7's e2e assertions are CI-time on a fixture;
+    # they cannot see a real student's lesson.
     #
     # Keyed on EXACT identity — (segment_id, question_id) / (segment_id, term) —
     # never a count band: jargon has no per-segment cap, so any band guarantees
@@ -5133,8 +5413,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     # Story 2-31 AC-1: narration_generator_node emits a FLAT shape
     # ({"segment_id": ..., "script": ...}) — no "data" wrapper, so no value_key.
     # Used only to recover the script when a segment has no audio_assets entry.
+    # Issue #236: reads narration_scripts_final (narration_stitch_node's
+    # ordered, transition-stitched, char-capped output), not the raw
+    # narration_scripts fan-in channel — same flat shape either way.
     narration_script_by_id = _index_by_segment_id(
-        state.get("narration_scripts", []), label="narration_scripts"
+        state.get("narration_scripts_final", []), label="narration_scripts_final"
     )
     interventions_by_id = _index_by_segment_id(
         state.get("intervention_prompts", []), label="intervention_prompts", value_key="data"
@@ -5355,7 +5638,7 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 logger.warning(
                     "[%s] package_builder_node: segment %s has an audio entry "
                     "with a blank script — recovering the narration text from "
-                    "narration_scripts",
+                    "narration_scripts_final",
                     lesson_id,
                     segment_id,
                 )
@@ -5704,15 +5987,130 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
-    # Uses _PHASE1_INSTRUMENTED_NODES (all 6 as of Story 2-1 AC-3..AC-6), not
-    # len(_ECONOMY_NODES) — review finding: a 6xN denominator with fewer than
-    # 6 node types ever incrementing the counter can never reach 100%.
+    # Uses _PHASE1_INSTRUMENTED_NODES (all 5 as of issue #236 — narration_generator
+    # moved out), not len(_ECONOMY_NODES) — review finding: a denominator with
+    # fewer node types than actually increment the counter can never reach 100%.
     base["_total_sections"] = len(sections) * len(_PHASE1_INSTRUMENTED_NODES)
     return [
         Send(node_name, {**base, "_section": section, "_section_index": idx})
         for idx, section in enumerate(sections)
         for node_name in _ECONOMY_NODES
     ]
+
+
+# Issue #236: the post-planner fan-out has exactly one node type today
+# (narration_generator). A list (not a lone string) so it mirrors
+# _ECONOMY_NODES' shape and can grow (e.g. a future post-planner node) without
+# a call-site rewrite — same "graph introspection only, not an enforced
+# allow-list" caveat as _ECONOMY_NODES (see the add_conditional_edges call
+# site in _build_pipeline_graph).
+_POST_PLANNER_FAN_OUT_NODES: list[str] = ["narration_generator"]
+
+
+async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
+    """Issue #236 router: dispatch narration_generator once per
+    `state["lesson_plan"]["segments"]` entry, from an edge AFTER
+    `lesson_planner` and `slide_generator` have already run — the one thing
+    Phase 1's fan-out (`_fan_out_phase1_economy_nodes`) architecturally cannot
+    give narration_generator: the finished lesson outline, including each
+    segment's `continuity_notes`.
+
+    Drives the dispatch loop from `state["lesson_plan"]["segments"]`, NOT
+    `state["sections"]` — `segment_summaries` (and therefore `lesson_plan`)
+    only ever contains the subset `_fan_out_phase1_economy_nodes` actually
+    dispatched, which can be a truncated PREFIX of `state["sections"]` when
+    `_MAX_PHASE1_SECTIONS` was exceeded upstream (that truncation is a local
+    variable there, never written back to `state["sections"]` itself). Each
+    plan segment's original `_section`/`_section_index` is reconstructed by
+    recomputing `_derive_section_id` over the FULL `state["sections"]`, keyed
+    by `segment_id` — correct regardless of any upstream truncation, unlike
+    assuming the first N sections line up positionally with the plan.
+    """
+    lesson_plan = state.get("lesson_plan") or {}
+    plan_segments = lesson_plan.get("segments", [])
+    if not plan_segments:
+        # Mirrors _fan_out_phase1_economy_nodes' empty-sections fail-fast:
+        # lesson_planner_node itself already rejects an empty segment list
+        # before ever writing lesson_plan (AC-6 guard), so reaching here with
+        # zero segments means a malformed/partial state, not a valid empty
+        # lesson — fail loudly rather than silently end the graph.
+        raise RuntimeError(
+            f"lesson_id={state.get('lesson_id')}: lesson_plan has zero segments — "
+            "cannot dispatch post-planner narration generation."
+        )
+
+    lesson_id = state.get("lesson_id")
+    if not lesson_id:
+        raise RuntimeError(
+            "_fan_out_narration_after_planning: invalid pipeline state — missing "
+            "lesson_id, cannot proceed to post-planner narration dispatch"
+        )
+
+    from app.core.cost_tracker import check_ceiling
+
+    try:
+        over_ceiling = await check_ceiling(lesson_id)
+    except Exception:  # noqa: BLE001
+        # Same fail-open rationale as _fan_out_phase1_economy_nodes: narration
+        # runs at settings.llm_mini (cheapest tier), so there is nothing to
+        # downshift to, and aborting a lesson that has already paid for Phase
+        # 1 + lesson_planner + slide_generator over a transient Redis blip is
+        # a worse outcome than proceeding.
+        logger.warning(
+            "[%s] check_ceiling() failed — failing open (assuming not over ceiling) "
+            "before post-planner narration dispatch",
+            lesson_id,
+            exc_info=True,
+        )
+        over_ceiling = False
+
+    if over_ceiling:
+        raise RuntimeError(
+            f"cost ceiling exceeded before post-planner narration dispatch "
+            f"for lesson_id={lesson_id}"
+        )
+
+    sections = state.get("sections", [])
+    sections_by_id = {
+        _derive_section_id(section, idx): (section, idx) for idx, section in enumerate(sections)
+    }
+
+    state_any: dict[str, Any] = cast("dict[str, Any]", state)
+    base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    base["_total_sections"] = len(plan_segments) * len(_POST_PLANNER_FAN_OUT_NODES)
+
+    sends: list[Send] = []
+    for plan_segment in plan_segments:
+        segment_id = plan_segment.get("segment_id")
+        found = sections_by_id.get(segment_id)
+        if found is None:
+            # Defensive/unreachable in practice: lesson_planner_node's own
+            # AC-6 guard (unknown_ids check) already raises before writing
+            # lesson_plan if a returned segment_id doesn't trace back to a
+            # real section. Fail loudly rather than dispatch narration with
+            # no section body to work from.
+            raise RuntimeError(
+                f"lesson_id={lesson_id}: lesson_plan segment_id={segment_id!r} has no "
+                "matching entry in state['sections'] — cannot dispatch narration"
+            )
+        section, section_index = found
+        plan_slice = {
+            "segment_id": segment_id,
+            "title": plan_segment.get("title", ""),
+            "continuity_notes": plan_segment.get("continuity_notes", ""),
+        }
+        sends.append(
+            Send(
+                "narration_generator",
+                {
+                    **base,
+                    "_section": section,
+                    "_section_index": section_index,
+                    "_plan_segment": plan_slice,
+                },
+            )
+        )
+    return sends
 
 
 def _build_pipeline_graph() -> Any:  # noqa: ANN401
@@ -5726,7 +6124,7 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
 
     graph: StateGraph[Any] = StateGraph(PipelineState)
 
-    # Register all 14 nodes
+    # Register all 15 nodes (issue #236 adds narration_stitch)
     graph.add_node("extract", extract_node)
     graph.add_node("structure", structure_node)
     graph.add_node("chunk", chunk_node)
@@ -5739,6 +6137,7 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     graph.add_node("jargon_extractor", jargon_extractor_node)
     graph.add_node("intervention_messages", intervention_messages_node)
     graph.add_node("narration_generator", narration_generator_node)
+    graph.add_node("narration_stitch", narration_stitch_node)
     graph.add_node("tts_node", tts_node)
     graph.add_node("image_generator", image_generator_node)
     graph.add_node("package_builder", package_builder_node)
@@ -5749,10 +6148,13 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     graph.add_edge("structure", "chunk")
     graph.add_edge("chunk", "embed")
 
-    # Story 2-1 AC-0: embed fans out to all 6 Phase 1 economy nodes, once per
+    # Story 2-1 AC-0: embed fans out to the 5 Phase 1 economy nodes, once per
     # section, via Send() — replacing the old direct embed -> lesson_planner
     # edge that let lesson_planner run with zero segment summaries available
-    # (the exact 5x-cost-overrun bug this AC fixes).
+    # (the exact 5x-cost-overrun bug this AC fixes). narration_generator used
+    # to be the 6th member of this fan-out; issue #236 moved it to a separate
+    # post-planner fan-out below, since a Phase-1 dispatch has no lesson
+    # outline to give it.
     # NOTE: the _ECONOMY_NODES list passed here is for graph introspection /
     # visualization only (e.g. compiled.get_graph().edges in tests) — it does
     # NOT constrain what _fan_out_phase1_economy_nodes can actually dispatch at
@@ -5761,12 +6163,26 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     graph.add_conditional_edges("embed", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
 
     # Join: lesson_planner only runs once ALL fanned-out economy-node dispatches
-    # (6 nodes x N sections) have completed for this superstep.
+    # (5 nodes x N sections) have completed for this superstep.
     for node_name in _ECONOMY_NODES:
         graph.add_edge(node_name, "lesson_planner")
 
     graph.add_edge("lesson_planner", "slide_generator")
-    graph.add_edge("slide_generator", "tts_node")
+
+    # Issue #236: narration now fans out AFTER slide_generator (sequential,
+    # smallest diff to the existing linear wiring — narration doesn't depend
+    # on slides, but nothing downstream of narration needs to run any sooner
+    # than this), once per lesson_plan segment, so it can see the finished
+    # outline. Joins into narration_stitch (a single sequential node — see its
+    # own docstring for why it must NOT write back into the narration_scripts
+    # reducer channel), which is the only node tts_node now follows.
+    graph.add_conditional_edges(
+        "slide_generator", _fan_out_narration_after_planning, _POST_PLANNER_FAN_OUT_NODES
+    )
+    for node_name in _POST_PLANNER_FAN_OUT_NODES:
+        graph.add_edge(node_name, "narration_stitch")
+
+    graph.add_edge("narration_stitch", "tts_node")
     graph.add_edge("tts_node", "image_generator")
     graph.add_edge("image_generator", "package_builder")
     graph.add_edge("package_builder", END)

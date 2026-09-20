@@ -85,7 +85,9 @@ def test_residual_canary_fires_on_exact_duplicate_pairs(caplog: pytest.LogCaptur
     """AC-8 third canary: the ONLY runtime detector for quiz_questions/glossary.
 
     lesson_planner's canary runs before the four doubling nodes and so can only
-    see Phase-1-origin duplication; tts_node's covers narration_scripts alone.
+    see Phase-1-origin duplication; narration_stitch_node's covers
+    narration_scripts alone (issue #236 — tts_node's own canary now covers
+    narration_scripts_final, a plain field, as defense in depth).
     AC-7's e2e assertions are CI-time on a fixture — they cannot observe a real
     student's lesson. This is what covers the channels Dev 2 actually saw
     duplicated.
@@ -134,8 +136,16 @@ def test_residual_canary_never_raises() -> None:
 
 
 @pytest.mark.unit
-def test_both_paid_nodes_call_the_canary() -> None:
-    """Source guard: the canary is only useful where the money is spent."""
+def test_all_paid_nodes_call_the_canary() -> None:
+    """Source guard: the canary is only useful where the money is spent.
+
+    Issue #236 added a third call site: narration_stitch_node now reads the
+    narration_scripts fan-in reducer channel and spends money (an LLM call)
+    on it, before tts_node ever sees narration_scripts_final — the exact
+    class of node this canary exists to protect. tts_node's own call is kept
+    as defense in depth even though narration_scripts_final is a plain
+    (non-reducer) field that should never actually duplicate.
+    """
     from pathlib import Path
 
     src = (
@@ -148,4 +158,5 @@ def test_both_paid_nodes_call_the_canary() -> None:
     ).read_text(encoding="utf-8-sig")
 
     assert '_warn_if_duplicated(lesson_id, "lesson_planner", "segment_summaries"' in src
-    assert '_warn_if_duplicated(lesson_id, "tts_node", "narration_scripts"' in src
+    assert '_warn_if_duplicated(lesson_id, "narration_stitch", "narration_scripts"' in src
+    assert '_warn_if_duplicated(lesson_id, "tts_node", "narration_scripts_final"' in src

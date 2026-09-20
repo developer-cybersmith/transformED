@@ -92,14 +92,18 @@ THREE_SECTIONS: list[dict[str, Any]] = [
     },
 ]
 
+# Issue #236: narration_generator moved OUT of the Phase-1 economy fan-out
+# into its own post-planner fan-out (dispatched from slide_generator, after
+# lesson_planner has produced an outline) — see POST_PLANNER_FAN_OUT_NODE_NAMES.
 ECONOMY_NODE_NAMES = [
     "summarise_segment",
     "quiz_generator",
     "segment_complexity",
     "jargon_extractor",
     "intervention_messages",
-    "narration_generator",
 ]
+
+POST_PLANNER_FAN_OUT_NODE_NAMES = ["narration_generator"]
 
 
 def _base_state(**overrides: Any) -> dict[str, Any]:
@@ -139,7 +143,7 @@ class TestAC0GraphOrdering:
             "economy nodes (AC-0 violation — see Story 2-1 Context)"
         )
 
-    def test_all_six_economy_nodes_present_in_graph(self) -> None:
+    def test_all_five_economy_nodes_present_in_graph(self) -> None:
         from app.modules.content.pipeline.graph import get_pipeline_graph
 
         compiled = get_pipeline_graph()
@@ -147,13 +151,36 @@ class TestAC0GraphOrdering:
         missing = [n for n in ECONOMY_NODE_NAMES if n not in node_names]
         assert not missing, f"Economy nodes missing from compiled graph: {missing}"
 
+    def test_narration_generator_and_stitch_present_in_graph(self) -> None:
+        """Issue #236: narration_generator moved out of ECONOMY_NODE_NAMES into
+        its own post-planner fan-out; narration_stitch is the new join node.
+        Both must still exist in the compiled graph, checked separately from
+        the 5-node economy list above."""
+        from app.modules.content.pipeline.graph import get_pipeline_graph
+
+        compiled = get_pipeline_graph()
+        node_names = set(compiled.get_graph().nodes.keys())
+        assert "narration_generator" in node_names
+        assert "narration_stitch" in node_names
+
     @pytest.mark.asyncio
     async def test_economy_nodes_run_before_lesson_planner_and_fan_out_per_section(self) -> None:
-        """Behavioral test: instrument every node function to record call order
-        and state snapshot, run the graph end-to-end from a post-embed state,
-        and assert (a) all 6 economy nodes were called strictly before
-        lesson_planner, and (b) each economy node was invoked once per section
-        (3 sections -> 3 calls each), not once for the whole chapter.
+        """Behavioral test, rewritten for issue #236 (this is the exact
+        assertion issue #236 changes — see its Context: narration_generator
+        used to be dispatched alongside the other 5 economy nodes, before
+        lesson_planner, with no lesson outline available to it; it now runs
+        in a SEPARATE fan-out after lesson_planner AND slide_generator, so it
+        can see the outline). Instrument every node function to record call
+        order, run the graph end-to-end from a post-embed state, and assert:
+
+        (a) the 5 Phase-1 economy nodes run strictly before lesson_planner,
+            once per section;
+        (b) lesson_planner and slide_generator each run exactly once;
+        (c) narration_generator runs strictly AFTER both lesson_planner and
+            slide_generator, once per section (via the new post-planner
+            fan-out, not Phase 1's);
+        (d) narration_stitch runs exactly once, after every narration_generator
+            call and before tts_node.
         """
         from app.modules.content.pipeline import graph as graph_module
 
@@ -161,7 +188,7 @@ class TestAC0GraphOrdering:
 
         def _make_economy_stub(name: str):
             # Economy-node stubs must NOT spread **state / return progress_pct:
-            # up to len(sections) * 6 parallel Send() dispatches write concurrently
+            # up to len(sections) * 5 parallel Send() dispatches write concurrently
             # in the same superstep, and progress_pct has no reducer — a second
             # concurrent writer to a non-reducer key raises LangGraph's
             # InvalidUpdateError. Only contribute this node's own reduced key.
@@ -180,23 +207,65 @@ class TestAC0GraphOrdering:
 
             return _stub
 
-        patches = [
-            patch.object(graph_module, f"{name}_node", _make_economy_stub(name))
-            for name in ECONOMY_NODE_NAMES
-        ] + [
-            patch.object(graph_module, name, _make_barrier_stub(name))
-            for name in [
-                "extract_node",
-                "structure_node",
-                "chunk_node",
-                "embed_node",
-                "lesson_planner_node",
-                "slide_generator_node",
-                "tts_node",
-                "image_generator_node",
-                "package_builder_node",
+        async def _lesson_planner_stub(state: dict[str, Any]) -> dict[str, Any]:
+            # Issue #236: the new post-planner fan-out reads
+            # state["lesson_plan"]["segments"] to know what to dispatch — a
+            # barrier stub that only spreads **state (never setting lesson_plan)
+            # would make _fan_out_narration_after_planning raise "zero
+            # segments". This stub produces a real-shaped lesson_plan whose
+            # segment_ids match state["sections"] via the real
+            # _derive_section_id, exactly as lesson_planner_node itself would.
+            call_log.append("lesson_planner_node")
+            sections = state.get("sections", [])
+            segments = [
+                {
+                    "segment_id": graph_module._derive_section_id(s, i),
+                    "title": s.get("title", ""),
+                    "summary": "stub summary",
+                    "duration_min": 5.0,
+                    "slide_budget": {"min": 1, "max": 3},
+                    "continuity_notes": "",
+                }
+                for i, s in enumerate(sections)
             ]
-        ]
+            return {
+                "lesson_plan": {
+                    "title": "Stub Plan",
+                    "subject": "Stub Subject",
+                    "objectives": ["stub objective"],
+                    "complexity_level": "medium",
+                    "total_segments": len(segments),
+                    "total_duration_min": 15.0,
+                    "segments": segments,
+                },
+                "progress_pct": state.get("progress_pct", 0.0) + 1.0,
+            }
+
+        patches = (
+            [
+                patch.object(graph_module, f"{name}_node", _make_economy_stub(name))
+                for name in ECONOMY_NODE_NAMES
+            ]
+            + [
+                patch.object(graph_module, f"{name}_node", _make_economy_stub(name))
+                for name in POST_PLANNER_FAN_OUT_NODE_NAMES
+            ]
+            + [
+                patch.object(graph_module, name, _make_barrier_stub(name))
+                for name in [
+                    "extract_node",
+                    "structure_node",
+                    "chunk_node",
+                    "embed_node",
+                    "slide_generator_node",
+                    "narration_stitch_node",
+                    "tts_node",
+                    "image_generator_node",
+                    "package_builder_node",
+                ]
+            ]
+            + [patch.object(graph_module, "lesson_planner_node", _lesson_planner_stub)]
+        )
         for p in patches:
             p.start()
         try:
@@ -216,8 +285,8 @@ class TestAC0GraphOrdering:
         planner_index = call_log.index("lesson_planner_node")
         assert call_log.count("lesson_planner_node") == 1, (
             f"lesson_planner_node ran {call_log.count('lesson_planner_node')} times — "
-            f"expected exactly 1 (a bug causing it to run once per fanned-out dispatch, "
-            f"e.g. 18x, would silently multiply Phase 2's premium-model cost)"
+            f"expected exactly 1 (a bug causing it to run once per fanned-out dispatch "
+            f"would silently multiply Phase 2's premium-model cost)"
         )
         for economy_node in ECONOMY_NODE_NAMES:
             occurrences = [i for i, n in enumerate(call_log) if n == economy_node]
@@ -231,6 +300,38 @@ class TestAC0GraphOrdering:
                 f"{len(THREE_SECTIONS)} sections — expected one call per section (Send() fan-out), "
                 f"not once for the whole chapter"
             )
+
+        assert "slide_generator_node" in call_log, "slide_generator was never invoked"
+        slide_gen_index = call_log.index("slide_generator_node")
+        assert call_log.count("slide_generator_node") == 1
+        assert slide_gen_index > planner_index, "slide_generator must run after lesson_planner"
+
+        narration_occurrences = [i for i, n in enumerate(call_log) if n == "narration_generator"]
+        assert narration_occurrences, "narration_generator was never invoked"
+        assert len(narration_occurrences) == len(THREE_SECTIONS), (
+            f"narration_generator was invoked {len(narration_occurrences)} time(s) for "
+            f"{len(THREE_SECTIONS)} sections — expected one call per section"
+        )
+        assert all(i > planner_index for i in narration_occurrences), (
+            "issue #236: narration_generator must run AFTER lesson_planner, not alongside "
+            "the other 5 economy nodes — it now needs the finished lesson_plan"
+        )
+        assert all(i > slide_gen_index for i in narration_occurrences), (
+            "narration_generator must run after slide_generator (decided: sequential-after, "
+            "smallest diff to the existing linear wiring)"
+        )
+
+        assert "narration_stitch_node" in call_log, "narration_stitch was never invoked"
+        stitch_index = call_log.index("narration_stitch_node")
+        assert call_log.count("narration_stitch_node") == 1
+        assert stitch_index > max(narration_occurrences), (
+            "narration_stitch must run after every narration_generator dispatch has joined"
+        )
+
+        assert "tts_node" in call_log
+        assert call_log.index("tts_node") > stitch_index, (
+            "tts_node must run after narration_stitch, not before"
+        )
 
     @pytest.mark.asyncio
     async def test_empty_sections_raises_clear_error(self) -> None:
@@ -1027,6 +1128,68 @@ class TestAC6NarrationGenerator:
             "AC-6 requires the prompt itself to include the matching section's "
             "narration_style, not just the final result dict"
         )
+
+    @pytest.mark.asyncio
+    async def test_continuity_notes_from_plan_segment_reach_the_prompt(self) -> None:
+        """Issue #236: state["_plan_segment"]["continuity_notes"], set by the
+        new post-planner fan-out, must be spliced into the same user-role
+        message as narration_style/section body."""
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "conversational", "script": "Let's continue."},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(
+                _section=THREE_SECTIONS[1],
+                _section_index=1,
+                _plan_segment={
+                    "segment_id": "section_1_Active-Recall",
+                    "title": "Active Recall",
+                    "continuity_notes": "briefly recall spaced repetition from the intro",
+                },
+            )
+            await narration_generator_node(state)
+
+        sent_messages = mock_provider.complete_structured.call_args.args[0]
+        full_prompt = "\n".join(m["content"] for m in sent_messages)
+        assert "briefly recall spaced repetition from the intro" in full_prompt, (
+            "AC-6 (issue #236) requires continuity_notes to reach the prompt when present"
+        )
+        # Never in the system-role message — same untrusted-content trust
+        # level as narration_style/section body.
+        system_messages = [m["content"] for m in sent_messages if m["role"] == "system"]
+        assert not any("briefly recall spaced repetition" in c for c in system_messages), (
+            "continuity_notes must not be interpolated into the system-role message"
+        )
+
+    @pytest.mark.asyncio
+    async def test_absent_plan_segment_does_not_crash_narration_generator(self) -> None:
+        """Defensive: a state with no `_plan_segment` key at all (e.g. an
+        older checkpoint replay, or a direct unit-test call like every other
+        test in this class) must not KeyError — continuity_instruction is
+        simply empty."""
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_output = type(
+            "Narration",
+            (),
+            {"narration_style": "conversational", "script": "Fine without a plan segment."},
+        )()
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = mock_output
+
+        with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            assert "_plan_segment" not in state
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"][0]["script"] == "Fine without a plan segment."
 
     @pytest.mark.asyncio
     async def test_single_invocation_produces_script_and_narration_style(self) -> None:

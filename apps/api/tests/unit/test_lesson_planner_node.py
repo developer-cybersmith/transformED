@@ -79,10 +79,33 @@ def _plan_llm_response(
 ) -> MagicMock:
     """Build a mock parsed `_LessonPlanLLM`-shaped response."""
     if segments is None:
+        # continuity_notes (issue #236) set explicitly on every default
+        # segment — a MagicMock(**seg) with the key omitted would leave
+        # response.segments[i].continuity_notes as a bare MagicMock
+        # auto-attribute, and lesson_planner_node's real
+        # `.continuity_notes.strip()` call would silently store that MagicMock
+        # (not a string) into the returned plan — real `_LessonPlanLLM`
+        # responses can't do this (continuity_notes is a real pydantic
+        # `str` field), so this default must not paper over that gap either.
         segments = [
-            {"segment_id": "sec_0", "title": "Getting Started", "duration_min": 4.0},
-            {"segment_id": "sec_1", "title": "How It Works", "duration_min": 6.0},
-            {"segment_id": "sec_2", "title": "Examples", "duration_min": 5.0},
+            {
+                "segment_id": "sec_0",
+                "title": "Getting Started",
+                "duration_min": 4.0,
+                "continuity_notes": "",
+            },
+            {
+                "segment_id": "sec_1",
+                "title": "How It Works",
+                "duration_min": 6.0,
+                "continuity_notes": "recall the getting-started overview",
+            },
+            {
+                "segment_id": "sec_2",
+                "title": "Examples",
+                "duration_min": 5.0,
+                "continuity_notes": "",
+            },
         ]
     if objectives is None:
         objectives = ["Understand the core concept", "Apply it to a worked example"]
@@ -125,6 +148,8 @@ async def test_happy_path_produces_lesson_plan_matching_input_count() -> None:
     assert plan["segments"][0]["duration_min"] == 4.0
     # Original summary text is preserved verbatim, not re-derived from the LLM.
     assert plan["segments"][0]["summary"] == "Introduction to the topic."
+    # Issue #236: continuity_notes present on every segment.
+    assert plan["segments"][1]["continuity_notes"] == "recall the getting-started overview"
 
 
 @pytest.mark.unit
@@ -602,6 +627,55 @@ async def test_segment_order_follows_input_not_llm_response_order() -> None:
     assert ordered_ids == ["sec_0", "sec_1", "sec_2"], (
         f"segment order must follow segment_summaries input order, got {ordered_ids}"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_continuity_notes_forced_empty_for_first_segment_regardless_of_llm() -> None:
+    """Issue #236: the first segment in LESSON ORDER (segment_summaries'
+    order, per the test above — not necessarily the LLM's response order) has
+    nothing earlier to reiterate. An LLM-invented callback for it must be
+    discarded, not trusted — same "reject LLM fabrication" discipline this
+    node applies everywhere else (title/objectives/duration_min guards)."""
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    mock_provider = AsyncMock()
+    # The LLM (wrongly) invents a callback for sec_0, the first segment.
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[
+            {
+                "segment_id": "sec_0",
+                "title": "Getting Started",
+                "duration_min": 4.0,
+                "continuity_notes": "a fabricated callback to nothing",
+            },
+            {
+                "segment_id": "sec_1",
+                "title": "How It Works",
+                "duration_min": 6.0,
+                "continuity_notes": "recall the getting-started overview",
+            },
+            {
+                "segment_id": "sec_2",
+                "title": "Examples",
+                "duration_min": 5.0,
+                "continuity_notes": "",
+            },
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state())
+
+    by_id = {seg["segment_id"]: seg for seg in result["lesson_plan"]["segments"]}
+    assert by_id["sec_0"]["continuity_notes"] == "", (
+        "first segment's continuity_notes must be forced empty, never trust the LLM here"
+    )
+    assert by_id["sec_1"]["continuity_notes"] == "recall the getting-started overview"
 
 
 # ── Story S2-LM3/LM4/LM5: tier-aware slide budget + prompt framing ─────────

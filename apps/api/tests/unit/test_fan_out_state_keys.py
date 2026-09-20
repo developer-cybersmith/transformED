@@ -293,3 +293,88 @@ async def test_in_band_cache_is_still_reused_no_respend() -> None:
 
     provider.complete_structured.assert_not_awaited()
     assert len(result["quiz_questions"]) == 4
+
+
+# ── Issue #236: the post-planner narration fan-out needs the same guard ─────
+
+
+def _state_with_plan(tier: str) -> dict[str, Any]:
+    sections = [
+        {"title": "Intro", "body": "Body one."},
+        {"title": "Next", "body": "Body two."},
+    ]
+    from app.modules.content.pipeline import graph as g
+
+    plan_segments = [
+        {
+            "segment_id": g._derive_section_id(s, i),
+            "title": s["title"],
+            "summary": "s",
+            "duration_min": 5.0,
+            "slide_budget": {"min": 1, "max": 3},
+            "continuity_notes": "" if i == 0 else "reiterate the intro",
+        }
+        for i, s in enumerate(sections)
+    ]
+    return {
+        "lesson_id": "11111111-1111-1111-1111-111111111111",
+        "user_id": "u1",
+        "book_id": "b1",
+        "tier": tier,
+        "sections": sections,
+        "lesson_plan": {"segments": plan_segments},
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+async def test_narration_fan_out_payload_carries_tier(tier: str) -> None:
+    """Same D2-class trap the issue names by number: a new Send() payload
+    must not silently drop a load-bearing key."""
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_narration_after_planning(_state_with_plan(tier))  # type: ignore[arg-type]
+
+    assert sends, "post-planner fan-out produced no dispatches — test would be vacuous"
+    for send in sends:
+        assert send.arg["tier"] == tier
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_payload_carries_every_declared_key_plus_plan_segment() -> None:
+    """Guards _FAN_OUT_STATE_KEYS plus the new per-dispatch keys
+    (_section/_section_index/_plan_segment) this router adds."""
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_narration_after_planning(_state_with_plan("T1"))  # type: ignore[arg-type]
+
+    for send in sends:
+        assert send.node == "narration_generator"
+        missing = [k for k in g._FAN_OUT_STATE_KEYS if k not in send.arg]
+        assert not missing, f"{send.node} payload missing declared keys: {missing}"
+        for k in ("_section", "_section_index", "_total_sections", "_plan_segment"):
+            assert k in send.arg, f"{send.node} payload missing {k}"
+        plan_segment = send.arg["_plan_segment"]
+        assert set(plan_segment) == {"segment_id", "title", "continuity_notes"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_reconstructs_correct_section_per_segment() -> None:
+    """Each dispatch's _section/_section_index must match the segment_id it
+    was built for, reconstructed via _derive_section_id — not assumed to line
+    up positionally (see _fan_out_narration_after_planning's own docstring on
+    why state["sections"] can't just be zipped against lesson_plan.segments)."""
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T2")
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]
+
+    for send in sends:
+        expected_id = g._derive_section_id(send.arg["_section"], send.arg["_section_index"])
+        assert expected_id == send.arg["_plan_segment"]["segment_id"]
