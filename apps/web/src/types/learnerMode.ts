@@ -20,25 +20,25 @@ export const LEARNER_TIER_TO_BACKEND: Record<LearnerTier, 'T1' | 'T2' | 'T3'> = 
   refresher: 'T3',
 };
 
+// S5-2: labels and descriptions updated to reflect HIE lecture-format names.
+// durationMinutes, LEARNER_TIER_TO_BACKEND mapping, and LearnerTier type are unchanged.
 export const LEARNER_TIER_OPTIONS: LearnerTierOption[] = [
   {
     id: 'deep',
-    label: 'Deep',
-    description: 'Full-depth lesson with no time constraint — covers everything.',
+    label: '45 min',
+    description: 'HIE Master Session — dual-topic, 10 slides with binding timings. Full depth.',
     durationMinutes: 45,
   },
   {
     id: 'balanced',
-    label: 'Balanced',
-    description: 'Time-boxed depth — covers the essentials within your available time.',
-    disclaimer: 'Content may be trimmed or condensed to fit your available time.',
+    label: '30 min',
+    description: 'HIE Dual-Topic Protocol — two topics, 10 slides. Covers the essentials.',
     durationMinutes: 30,
   },
   {
     id: 'refresher',
-    label: 'Refresher',
-    description: 'Condensed review — best if you already know this material.',
-    disclaimer: 'Assumes you already have prior mastery — not a full first-pass lesson.',
+    label: '15 min',
+    description: 'HIE First-Teach — single topic, 7 slides. Best for a first introduction.',
     durationMinutes: 15,
   },
 ];

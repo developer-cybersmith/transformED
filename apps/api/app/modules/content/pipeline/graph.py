@@ -1248,10 +1248,15 @@ class _LessonPlanLLM(BaseModel):
 # that scales with the lesson's REAL total duration (already computed before
 # this runs) fixes the root cause instead of needing re-derivation again the
 # next time segment counts or lesson lengths change.
+# S5-2: re-derived from HIE fixed slide counts — T1/T2 target 10 slides,
+# T3 targets 7 slides. Old values (T1: 0.8-1.2, T2: 1.2-1.8) produced
+# 37-56 and 17-25 slides respectively for a 45/30-min lesson — 4-5× the
+# HIE target. New values derived: T1=45min/10slides=4.5 min/slide,
+# T2=30min/10slides=3.0 min/slide, T3=15min/7slides=2.14 min/slide.
 _TIER_MINUTES_PER_SLIDE_BAND: dict[str, tuple[float, float]] = {
-    "T1": (0.8, 1.2),
-    "T2": (1.2, 1.8),
-    "T3": (2.0, 3.0),
+    "T1": (4.0, 5.0),
+    "T2": (2.8, 3.5),
+    "T3": (2.0, 2.5),
 }
 # Story 3-28 (AC-4): per-tier MCQ count band for quiz_generator_node.
 # T1 = full-depth comprehension (3-5 Qs), T2 = standard (2-3 Qs),
@@ -1334,23 +1339,51 @@ def _tier_slide_budget_per_segment(
     return budgets
 
 
-# S2-LM5 (scope confirmed 2026-07-17: outline-only — does NOT extend to
-# Phase 1 economy nodes' quiz/narration depth): tier-conditioned framing
-# appended to lesson_planner's system prompt. T3 asks the LLM to select only
-# critical/foundational sub-topics (a refresher outline); T1 asks for full
-# depth including nuance; T2 (default) gets no extra framing — matches the
-# existing untiered prompt exactly, so T2 behavior is provably unchanged.
+# S5-2: HIE (Human Inference Engine) lecture-format specifications per tier.
+# These replace the vague depth-framing from S2-LM5 with exact slide
+# structures mandated by the HIE curriculum design.  All three tiers now
+# have an entry — T2 was previously absent (empty framing).
+#
+# The format spec is the SINGLE source of truth for slide structure.
+# Never duplicate these strings in slide_generator or narration prompts.
 _TIER_PROMPT_FRAMING: dict[str, str] = {
     "T1": (
-        " This is a FULL-DEPTH lesson (Learner Mode tier T1): cover the "
-        "topic thoroughly, including secondary sub-topics and nuance a "
-        "standard-depth lesson would omit."
+        "\n\nHIE FORMAT — 45-MINUTE MASTER SESSION STRUCTURE"
+        "\nBuild EXACTLY 10 slides with BINDING per-slide timings:"
+        "\n  Slide 1 — Opening Hook (3:00): Why this lesson matters. Compelling real-world context."
+        "\n  Slide 2 — Topic A Framing (2:30): Set up Topic A. Why it exists, what problem it solves."
+        "\n  Slide 3 — Topic A Core Teach (7:00): Full depth on Topic A. Theory and worked example."
+        "\n  Slide 4 — Topic A Split-Screen Practice (5:00): Left panel: concept/theory. Right panel: worked application. 40/60 visual-to-text ratio. Never merge into one panel."
+        "\n  Slide 5 — Topic B Framing (2:30): Set up Topic B. Its relationship to Topic A."
+        "\n  Slide 6 — Topic B Core Teach (7:00): Full depth on Topic B. Theory and worked example."
+        "\n  Slide 7 — Topic B Split-Screen Practice (5:00): Left panel: concept/theory. Right panel: worked application. 40/60 ratio."
+        "\n  Slide 8 — Broader Picture (2:30): Both topics in their larger domain context."
+        "\n  Slide 9 — Combined Mind-Map (5:00): Full visual summary: both topics, their links, key terms."
+        "\n  Slide 10 — Close & Bridge (5:30): Key takeaway from each topic. What to study next."
+        "\nRULES: two topics; exactly 10 slides; timings binding (total 45:00); Hinglish narration."
+    ),
+    "T2": (
+        "\n\nHIE FORMAT — 30-MINUTE COMPRESSED DUAL-TOPIC PROTOCOL"
+        "\nBuild EXACTLY 10 slides in this order:"
+        "\n  Slides 1–2 — Topic A Core Teach (6:00 total): Full first-pass on Topic A in two slides."
+        "\n  Slide 3 — Topic A Split-Screen (3:00): Left panel: concept. Right panel: application. 40/60 ratio."
+        "\n  Slide 4 — Topic A Q&A (2:00): The 2 questions a learner always asks about Topic A."
+        "\n  Slides 5–6 — Topic B Core Teach (6:00 total): Same structure for Topic B."
+        "\n  Slide 7 — Topic B Split-Screen (3:00): Left panel: concept. Right panel: application. 40/60 ratio."
+        "\n  Slide 8 — Topic B Q&A (2:00): The 2 questions a learner always asks about Topic B."
+        "\n  Slide 9 — Broader Picture (4:00): Both topics in their larger context and how they connect."
+        "\n  Slide 10 — Combined Mind-Map (4:00): Visual summary covering both topics."
+        "\nRULES: exactly two topics; exactly 10 slides; Hinglish narration."
     ),
     "T3": (
-        " This is a CRITICAL-TOPICS-ONLY REFRESHER lesson (Learner Mode "
-        "tier T3): select only the most essential, foundational sub-topics "
-        "for each segment and omit secondary/supplementary material a "
-        "full-depth lesson would include."
+        "\n\nHIE FORMAT — 15-MINUTE COMPRESSED FIRST-TEACH PROTOCOL"
+        "\nBuild EXACTLY 7 slides in this order:"
+        "\n  Slide 1 — Conceptual Framing (2:00): Why this topic matters. Real-world hook."
+        "\n  Slides 2–3 — Core Teach (5:00 total): First-time teaching split into two natural sub-parts. One concrete example per slide."
+        "\n  Slides 4–5 — Split-Screen Demonstration (4:00 total): Left panel: concept/theory. Right panel: worked application. 40/60 visual-to-text ratio. Never merge into one panel."
+        "\n  Slide 6 — Anticipated Q&A (2:00): Answer the 2–3 questions a first-time learner asks at this point."
+        "\n  Slide 7 — Wrap & Bridge (2:00): One-sentence takeaway. Connect to what comes next."
+        "\nRULES: exactly 7 slides; single topic; Hinglish narration; Split-Screen is mandatory."
     ),
 }
 
