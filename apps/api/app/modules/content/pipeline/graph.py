@@ -1693,8 +1693,31 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # order was trusted directly, even though the guards above only prove the
     # *set* of segment_ids matches 1:1 — a validly-shuffled response would
     # silently reorder the plan away from the chapter's actual section order.
-    # Assemble by iterating segment_summaries (the authoritative input order),
-    # looking up each LLM segment by segment_id, not the reverse.
+    #
+    # D168 (review finding, 2026-09-21, PR #237): the comment below used to
+    # call segment_summaries "the authoritative input order" without actually
+    # making that true. segment_summaries is Annotated[list, operator.add] —
+    # the SAME kind of Send()-fan-in-with-no-cross-call-ordering-guarantee
+    # channel as narration_scripts (which _apply_narration_char_cap already
+    # has to re-sort via _segment_order_key for exactly this reason). Nothing
+    # here ever re-sorted it — a real, pre-existing gap on `main`, not
+    # introduced by issue #236, but issue #236's own continuity_notes forced-
+    # empty-for-segment-0 logic is the first thing to actually DEPEND on this
+    # order being correct (an out-of-order arrival would blank the wrong
+    # segment's continuity_notes, non-deterministically across runs). Fixed
+    # here since the fix is small, safe, and already-proven (reuses
+    # _segment_order_key verbatim) — see D168 in docs/DEFECT-REGISTER.md for
+    # the full analysis of what else this affected (segments_out's overall
+    # order, and therefore slide_generator's slide order too).
+    segment_summaries = [
+        s
+        for _, s in sorted(
+            enumerate(segment_summaries), key=lambda pair: _segment_order_key(pair[1], pair[0])
+        )
+    ]
+    # Assemble by iterating segment_summaries (NOW genuinely the authoritative
+    # input order, re-sorted above), looking up each LLM segment by
+    # segment_id, not the reverse.
     llm_segment_by_id = {seg.segment_id: seg for seg in response.segments}
     summary_by_id = {s["segment_id"]: s["summary"] for s in segment_summaries}
     # S2-LM4/D85: per-segment slide_budget derived from tier + each segment's
@@ -2409,8 +2432,10 @@ async def _write_phase1_checkpoint(lesson_id: str, key: str, value: dict[str, An
 
     A client-side read-modify-write (the pattern Phase A nodes use, safe only
     because they run strictly sequentially) would lose concurrent sibling
-    dispatches' writes here — up to 6xN Send()-dispatched calls can be
-    writing to the same `lesson_jobs` row at once.
+    dispatches' writes here — up to 5xN Phase-1 Send()-dispatched calls, or
+    (issue #236) up to N post-planner narration_generator calls, can be
+    writing to the same `lesson_jobs` row at once, depending on which fan-out
+    called this function.
 
     The RPC raises if `lesson_id` matches no `lesson_jobs` row (Story 2-1b
     review finding — the prior version silently no-op'd, losing the
@@ -2506,7 +2531,11 @@ async def _read_section_truncation_checkpoint(
 
 
 async def _increment_phase1_progress(
-    lesson_id: str, checkpoint_key: str, total_expected: int | None
+    lesson_id: str,
+    checkpoint_key: str,
+    total_expected: int | None,
+    *,
+    phase: str = "phase1",
 ) -> None:
     """Story 2-1b AC-4: Phase 1 progress visibility via a Redis set.
 
@@ -2526,24 +2555,39 @@ async def _increment_phase1_progress(
     Wrapped in try/except — mirrors `_update_job_progress`'s established
     convention (a non-critical progress write must never crash an
     already-billed, already-checkpointed dispatch).
+
+    Review finding (2026-09-21, PR #237, CONFIRMED): `phase` keyword added —
+    issue #236's post-planner narration fan-out kept calling this function
+    with the SAME shared set key every one of the 5 Phase-1 economy nodes
+    also writes into. Since the set is keyed only by `lesson_id`, by the time
+    narration_generator's post-planner dispatch fires (strictly after Phase 1
+    has already completed and populated the set with 5xN keys), its own
+    `SCARD` counted BOTH phases' keys together while compared against a
+    `total_expected` that only ever reflected the narration-only count —
+    producing nonsensical log lines like "56/15 sections complete". Each
+    phase now gets its own set, so its `total_expected` denominator is always
+    comparing like with like. (Verified: nothing outside this function reads
+    the `phase1_completed_keys` Redis key — this bug was log-output-only, not
+    a functional/correctness defect, but a confusing one worth fixing.)
     """
     from app.core.redis import get_redis
 
     try:
         redis = get_redis()
-        set_key = f"job:{lesson_id}:phase1_completed_keys"
+        set_key = f"job:{lesson_id}:{phase}_completed_keys"
         await cast("Awaitable[int]", redis.sadd(set_key, checkpoint_key))
         await redis.expire(set_key, 86_400)
         completed = await cast("Awaitable[int]", redis.scard(set_key))
         logger.info(
-            "[%s] Phase 1 progress: %s/%s sections complete",
+            "[%s] %s progress: %s/%s sections complete",
             lesson_id,
+            phase,
             completed,
             total_expected if total_expected is not None else "?",
         )
     except Exception:  # noqa: BLE001
         logger.warning(
-            "[%s] Failed to update Phase 1 progress counter for %s", lesson_id, checkpoint_key
+            "[%s] Failed to update %s progress counter for %s", lesson_id, phase, checkpoint_key
         )
 
 
@@ -3640,7 +3684,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             lesson_id,
             section_id,
         )
-        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
+        await _increment_phase1_progress(
+            lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
+        )
         cached_truncations = await _read_section_truncation_checkpoint(
             lesson_id, node="narration_generator", section_id=section_id
         )
@@ -3674,6 +3720,36 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     section_truncations = _section_truncation_entries(
         node="narration_generator", section_id=section_id, result=section_body
     )
+
+    # Review finding (2026-09-21, PR #237): moved here from the post-planner
+    # fan-out router — same established per-item pre-check pattern as
+    # tts_node/image_generator_node (Story 2-13/S2-13 AC-3), degrading just
+    # this ONE section instead of full-aborting the whole (already
+    # premium-spend-paid-for) lesson. Unlike tts_node, there is no cheaper
+    # fallback tier to downshift to (this already runs at settings.llm_mini,
+    # the cheapest tier) — the degrade is "skip this section's narration,"
+    # the same shape as this node's own blank-script/pacing-guard rejections
+    # below. Deliberately NOT checkpointed (mirrors intervention_messages_node's
+    # "degraded output is not checkpointed" convention) so an ARQ retry gets a
+    # fresh attempt if budget has freed up by then. package_builder_node's
+    # existing "N of M packaged segments shipped DEGRADED" admin-visible
+    # warning already surfaces a missing narration output — no separate
+    # record needed here.
+    from app.core.cost_tracker import check_ceiling
+
+    if await check_ceiling(lesson_id):
+        logger.warning(
+            "[%s] narration_generator_node: %s — cost ceiling reached, skipping "
+            "this section's narration (already-cheapest llm_mini tier, no "
+            "cheaper fallback to downshift to)",
+            lesson_id,
+            section_id,
+        )
+        await _increment_phase1_progress(
+            lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
+        )
+        return {"narration_scripts": [], "section_truncations": section_truncations}
+
     if known_narration_style:
         style_instruction = (
             f"This section's narration_style has already been determined as "
@@ -3729,7 +3805,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
             lesson_id,
             section_id,
         )
-        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
+        await _increment_phase1_progress(
+            lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
+        )
         return {"narration_scripts": [], "section_truncations": section_truncations}
 
     script = response.script.strip()
@@ -3741,7 +3819,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         logger.warning(
             "[%s] narration_generator_node: %s — blank script, rejecting", lesson_id, section_id
         )
-        await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
+        await _increment_phase1_progress(
+            lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
+        )
         return {"narration_scripts": [], "section_truncations": section_truncations}
     word_count = len(script.split())
     # Known complexity's narration_style wins over the LLM's own guess when
@@ -3818,7 +3898,9 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     await _persist_section_truncation_checkpoint(
         lesson_id, node="narration_generator", section_id=section_id, result=section_body
     )
-    await _increment_phase1_progress(lesson_id, checkpoint_key, state.get("_total_sections"))
+    await _increment_phase1_progress(
+        lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
+    )
 
     return {"narration_scripts": [result], "section_truncations": section_truncations}
 
@@ -4167,9 +4249,29 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
 
     if "narration_stitch" in node_outputs:
         cached = node_outputs["narration_stitch"]
-        logger.info("[%s] narration_stitch_node: cache hit, skipping LLM call", lesson_id)
-        await _update_job_progress(lesson_id, 60.0, "narration_stitch")
-        return {"narration_scripts_final": cached, "progress_pct": 60.0}
+        # Review finding (2026-09-21, PR #237, CONFIRMED): unlike the compute
+        # path below (which always filters non-dict entries before
+        # _apply_narration_char_cap ever sees them), this cache-hit path
+        # returned `cached` completely unvalidated — a schema-drifted or
+        # hand-edited checkpoint row could hand tts_node a non-dict entry,
+        # which crashes there (`entry.get(...)` at the top of its per-segment
+        # loop, OUTSIDE that loop's own try/except) instead of degrading, the
+        # exact class of defense `_index_by_segment_id`/`_apply_narration_char_cap`
+        # already apply elsewhere in this file. Whatever THIS node itself
+        # writes is always well-shaped (see the write below), so this is a
+        # narrow, defense-in-depth guard against external corruption, not a
+        # normally-reachable path — same philosophy as those two functions.
+        if not isinstance(cached, list) or not all(isinstance(e, dict) for e in cached):
+            logger.warning(
+                "[%s] narration_stitch_node: cached node_outputs['narration_stitch'] "
+                "is not a well-shaped list of dicts — treating as a cache miss and "
+                "recomputing rather than handing a malformed value downstream",
+                lesson_id,
+            )
+        else:
+            logger.info("[%s] narration_stitch_node: cache hit, skipping LLM call", lesson_id)
+            await _update_job_progress(lesson_id, 60.0, "narration_stitch")
+            return {"narration_scripts_final": cached, "progress_pct": 60.0}
 
     # Same non-dict-entry defense _apply_narration_char_cap already needs —
     # applied here too since this node now runs first and feeds that function.
@@ -4181,6 +4283,12 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
 
     settings = get_settings()
     stitched_scripts = ordered_scripts
+    # Review finding (2026-09-21, PR #237): admin-visible record of whether
+    # the polish pass actually applied — False covers every fallback path
+    # (empty input, LLM refusal/exception, any guard failure), True only when
+    # the accepted-response branch below genuinely runs. CLAUDE.md: an
+    # explicit, surfaced degradation, not just a logger.warning nobody reads.
+    stitch_applied = False
     if ordered_scripts:
         provider = get_llm_provider(settings.llm_mini, lesson_id)
         messages = [
@@ -4193,7 +4301,12 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
                     "'Now let's move on to...') and trim any duplicate phrasing that "
                     "appears across sections. Do NOT rewrite, summarise, or shorten "
                     "the core content of any section — only touch transitions and "
-                    "duplicate phrasing. Return EXACTLY one entry per section "
+                    "duplicate phrasing. EXCEPTION: a section may deliberately open "
+                    "with a brief callback/reiteration of an earlier concept (e.g. "
+                    "'as we saw with X...', 'remember how Y worked...') — this is "
+                    "INTENTIONAL continuity, not accidental duplication; never trim "
+                    "or remove a deliberate callback like this, only genuinely "
+                    "redundant repeated phrasing. Return EXACTLY one entry per section "
                     "provided, echoing back each section's segment_id UNCHANGED — do "
                     "not invent, merge, split, omit, or reorder segment_ids."
                     + _UNTRUSTED_CONTENT_GUARD
@@ -4277,6 +4390,7 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
                     }
                     for entry in ordered_scripts
                 ]
+                stitch_applied = True
 
     capped_scripts, narration_cap_record = _apply_narration_char_cap(
         lesson_id, stitched_scripts, settings.max_narration_chars_per_lesson
@@ -4289,6 +4403,11 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
                 **node_outputs,
                 "narration_stitch": capped_scripts,
                 "narration_cap_applied": narration_cap_record,
+                # Review finding (2026-09-21, PR #237): always present, like
+                # narration_cap_applied — False means the unmodified-but-
+                # ordered scripts shipped (empty input, LLM refusal/exception,
+                # or a degrade-not-fabricate guard failure), not "unknown".
+                "narration_stitch_applied": stitch_applied,
             },
         }
     ).eq("lesson_id", lesson_id).execute()
@@ -5910,7 +6029,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # Only these keys are forwarded into each Send() dispatch (plus _section /
 # _section_index below) — NOT the full accumulated state. Review finding:
 # spreading **state would copy raw_text/chunks/embeddings into every one of
-# the 6xN dispatched payloads, which is real memory pressure for a large book.
+# the dispatched payloads (5xN for Phase 1's own fan-out; N for issue #236's
+# post-planner narration fan-out, which reuses this same tuple), which is
+# real memory pressure for a large book.
 # Story 2-28 AC-3: "tier" is load-bearing, not optional. The Send() payload
 # REPLACES state for each dispatched node, so any key absent here resolves to
 # its .get() default inside the node. Without "tier", every Phase-1 node saw
@@ -5942,7 +6063,7 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     section per call).
 
     Story 2-1 AC-7: checked once here, before the whole Phase 1 batch, rather
-    than duplicated inside each of the 6xN dispatched node calls — a lesson
+    than duplicated inside each of the 5xN dispatched node calls — a lesson
     already over budget must not start a new fan-out at all. Raises
     RuntimeError with "cost ceiling" in the message, which
     `content_pipeline_job`'s existing `except RuntimeError` handler already
@@ -6076,29 +6197,23 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
             "lesson_id, cannot proceed to post-planner narration dispatch"
         )
 
-    from app.core.cost_tracker import check_ceiling
-
-    try:
-        over_ceiling = await check_ceiling(lesson_id)
-    except Exception:  # noqa: BLE001
-        # Same fail-open rationale as _fan_out_phase1_economy_nodes: narration
-        # runs at settings.llm_mini (cheapest tier), so there is nothing to
-        # downshift to, and aborting a lesson that has already paid for Phase
-        # 1 + lesson_planner + slide_generator over a transient Redis blip is
-        # a worse outcome than proceeding.
-        logger.warning(
-            "[%s] check_ceiling() failed — failing open (assuming not over ceiling) "
-            "before post-planner narration dispatch",
-            lesson_id,
-            exc_info=True,
-        )
-        over_ceiling = False
-
-    if over_ceiling:
-        raise RuntimeError(
-            f"cost ceiling exceeded before post-planner narration dispatch "
-            f"for lesson_id={lesson_id}"
-        )
+    # Review finding (2026-09-21, PR #237): this router used to raise
+    # RuntimeError on a cost-ceiling breach, full-aborting the ENTIRE lesson
+    # — but by this point in the graph, lesson_planner and slide_generator
+    # (both premium GPT-4o) have already spent real money. Discarding that
+    # already-paid-for work violates CLAUDE.md's own cost-ceiling policy
+    # ("downshift to cheapest providers on breach, complete lesson, flag in
+    # admin"), which is exactly why _fan_out_phase1_economy_nodes' own
+    # pre-spend abort (safe — runs before ANY Phase 1/2 spend) is not the
+    # right model to copy here. Fixed: no ceiling check here at all — mirrors
+    # tts_node/image_generator_node, which have no router-level gate either.
+    # narration_generator_node now does its own per-dispatch check_ceiling
+    # (same established pattern as those two nodes), degrading just that one
+    # section rather than the whole lesson. Dispatch count is already bounded
+    # by lesson_plan.segments (itself <= _MAX_PHASE1_SECTIONS), so there is no
+    # DoS-prevention rationale for a pre-dispatch gate here the way there is
+    # for Phase 1's own (there, an adversarial section count could otherwise
+    # dispatch thousands of concurrent calls).
 
     sections = state.get("sections", [])
     sections_by_id = {
@@ -6240,10 +6355,13 @@ def _warn_if_duplicated(
 ) -> None:
     """Story 2-28 AC-8: pre-spend canary for reducer-channel duplication.
 
-    Placed at the top of the two nodes that spend real money on their input
-    (`lesson_planner_node` — GPT-4o; `tts_node` — the TTS vendor), so a
-    duplicated channel is detected BEFORE the spend rather than discovered in
-    the final package.
+    Placed at the top of the nodes that spend real money on their input —
+    `lesson_planner_node` (GPT-4o), `narration_stitch_node` (llm_mini, issue
+    #236 — the first reader of the narration_scripts fan-in), and `tts_node`
+    (the TTS vendor, kept as defense in depth even though its own input,
+    narration_scripts_final, is a plain non-reducer field) — so a duplicated
+    channel is detected BEFORE the spend rather than discovered in the final
+    package.
 
     Keyed on `segment_id` because every Phase-1 channel entry carries one. Logs
     at ERROR (Sentry-visible via LoggingIntegration) but never raises: a

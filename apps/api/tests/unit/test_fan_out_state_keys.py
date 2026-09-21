@@ -409,29 +409,27 @@ async def test_narration_fan_out_missing_lesson_id_raises() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_narration_fan_out_ceiling_breach_raises() -> None:
+async def test_narration_fan_out_does_not_check_ceiling_at_all() -> None:
+    """Review finding (2026-09-21, PR #237, CONFIRMED HIGH): this router used
+    to full-abort the WHOLE lesson (RuntimeError) on a cost-ceiling breach —
+    but by this point lesson_planner + slide_generator (both premium GPT-4o)
+    have already spent real money, so aborting here discarded already-paid-
+    for work, violating CLAUDE.md's "downshift... complete lesson" cost-
+    ceiling policy. Fixed by removing the router-level gate entirely (mirrors
+    tts_node/image_generator_node, neither of which has one either) — the
+    per-dispatch check moved into narration_generator_node itself (see
+    TestAC6NarrationGenerator's cost-ceiling test in test_phase1_economy_nodes.py).
+    This test proves the router dispatches unconditionally regardless of
+    check_ceiling's mocked return value — including when check_ceiling itself
+    raises, which must not propagate either, since it's never even called."""
     from app.modules.content.pipeline import graph as g
 
-    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)):
-        with pytest.raises(RuntimeError, match="cost ceiling exceeded"):
-            await g._fan_out_narration_after_planning(_state_with_plan("T1"))  # type: ignore[arg-type]
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_narration_fan_out_check_ceiling_exception_fails_open() -> None:
-    """Same fail-open rationale as _fan_out_phase1_economy_nodes: narration
-    runs at llm_mini (cheapest tier), so a transient check_ceiling() failure
-    should not abort a lesson that already paid for Phase 1 + lesson_planner
-    + slide_generator."""
-    from app.modules.content.pipeline import graph as g
-
-    with patch(
-        "app.core.cost_tracker.check_ceiling", new=AsyncMock(side_effect=ConnectionError("redis"))
-    ):
+    check_ceiling_mock = AsyncMock(side_effect=AssertionError("router must not call check_ceiling"))
+    with patch("app.core.cost_tracker.check_ceiling", new=check_ceiling_mock):
         sends = await g._fan_out_narration_after_planning(_state_with_plan("T1"))  # type: ignore[arg-type]
 
-    assert sends, "should still dispatch despite the check_ceiling() failure"
+    assert sends, "must dispatch unconditionally — no router-level cost-ceiling gate"
+    check_ceiling_mock.assert_not_called()
 
 
 @pytest.mark.unit

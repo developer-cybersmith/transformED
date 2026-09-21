@@ -64,9 +64,23 @@ def _no_checkpoint_infra():
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None
 
+    # Review finding (2026-09-21, PR #237): `patch("app.core.redis.get_redis", ...)`
+    # never actually reached `cost_tracker.check_ceiling()` — cost_tracker.py
+    # does `from app.core.redis import get_redis` at module load, binding its
+    # OWN name before this patch ever runs (the classic "patch where it's
+    # used, not where it's defined" gotcha), so this fixture's Redis mock was
+    # silently ineffective for that path the whole time. Never surfaced
+    # before because no test outside TestAC7CostCeiling (which patches
+    # check_ceiling directly, correctly) reached a check_ceiling()-calling
+    # code path — until narration_generator_node gained its own per-dispatch
+    # check_ceiling call (issue #236 review fix). Patch check_ceiling
+    # directly here too, matching TestAC7CostCeiling's own already-correct
+    # pattern — its per-test override still wins during its own `with`
+    # block, patches nest correctly.
     with (
         patch("app.core.db.get_supabase", return_value=mock_supabase),
         patch("app.core.redis.get_redis", return_value=mock_redis),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
     ):
         yield
 
@@ -1190,6 +1204,28 @@ class TestAC6NarrationGenerator:
             result = await narration_generator_node(state)
 
         assert result["narration_scripts"][0]["script"] == "Fine without a plan segment."
+
+    @pytest.mark.asyncio
+    async def test_cost_ceiling_skips_this_section_without_calling_the_llm(self) -> None:
+        """Review finding (2026-09-21, PR #237): moved from the post-planner
+        fan-out router (which used to full-abort the whole lesson on a
+        breach) into a per-dispatch check here, mirroring tts_node's/
+        image_generator_node's established Story 2-13/S2-13 pattern — degrade
+        just THIS section (no cheaper tier exists to downshift to; llm_mini
+        is already the cheapest), never the whole lesson."""
+        from app.modules.content.pipeline.graph import narration_generator_node
+
+        mock_provider = AsyncMock()
+
+        with (
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+            patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
+        ):
+            state = _base_state(_section=THREE_SECTIONS[0], _section_index=0)
+            result = await narration_generator_node(state)
+
+        assert result["narration_scripts"] == []
+        mock_provider.complete_structured.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_single_invocation_produces_script_and_narration_style(self) -> None:

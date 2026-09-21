@@ -631,6 +631,71 @@ async def test_segment_order_follows_input_not_llm_response_order() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_segment_summaries_out_of_order_fan_in_is_resorted_by_true_section_index() -> None:
+    """D168 (review finding, PR #237): segment_summaries is Annotated[list,
+    operator.add] — a Send()-fan-in channel with NO cross-call ordering
+    guarantee, the same class of channel narration_scripts already needs
+    _segment_order_key to re-sort (see test_narration_cap_reorders_out_of_
+    order_fan_in_by_true_section_index in test_narration_stitch_node.py).
+    lesson_planner_node never re-sorted it before this fix — this test
+    hand-constructs segment_summaries arriving OUT of true section order
+    (segment_id encodes the true index via the same "section_N_..." shape
+    _derive_section_id produces) and asserts the assembled lesson_plan.segments
+    still lands in true section order, not scrambled arrival order.
+    """
+    from app.modules.content.pipeline.graph import lesson_planner_node
+
+    # Arrival order: 2, 0, 1 — deliberately not section-index order.
+    scrambled_summaries = [
+        {"segment_id": "section_2_examples", "summary": "Examples and pitfalls."},
+        {"segment_id": "section_0_intro", "summary": "Introduction to the topic."},
+        {"segment_id": "section_1_mechanics", "summary": "Core mechanics explained."},
+    ]
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _plan_llm_response(
+        segments=[
+            {
+                "segment_id": "section_2_examples",
+                "title": "Examples",
+                "duration_min": 5.0,
+                "continuity_notes": "",
+            },
+            {
+                "segment_id": "section_0_intro",
+                "title": "Getting Started",
+                "duration_min": 4.0,
+                "continuity_notes": "",
+            },
+            {
+                "segment_id": "section_1_mechanics",
+                "title": "How It Works",
+                "duration_min": 6.0,
+                "continuity_notes": "",
+            },
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await lesson_planner_node(_base_state(segment_summaries=scrambled_summaries))
+
+    ordered_ids = [seg["segment_id"] for seg in result["lesson_plan"]["segments"]]
+    assert ordered_ids == ["section_0_intro", "section_1_mechanics", "section_2_examples"], (
+        f"segments_out must follow TRUE section order (parsed from segment_id), "
+        f"not the scrambled Send()-fan-in arrival order, got {ordered_ids}"
+    )
+    # The true first segment (section_0_intro) — not whichever entry happened
+    # to arrive first in the scrambled list — must have continuity_notes forced
+    # empty.
+    assert result["lesson_plan"]["segments"][0]["segment_id"] == "section_0_intro"
+    assert result["lesson_plan"]["segments"][0]["continuity_notes"] == ""
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_continuity_notes_forced_empty_for_first_segment_regardless_of_llm() -> None:
     """Issue #236: the first segment in LESSON ORDER (segment_summaries'
     order, per the test above — not necessarily the LLM's response order) has
