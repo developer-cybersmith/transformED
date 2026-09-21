@@ -82,7 +82,8 @@ async def get_book_context_prompt_context(book_id: str, user_id: str) -> str:
     # Build the text block: only include fields with a non-empty value.
     lines: list[str] = ["[Book Context]"]
     for db_col, label in _FIELD_LABELS:
-        value = (row.get(db_col) or "").strip()
+        raw_val = row.get(db_col) or ""
+        value = " ".join(raw_val.splitlines()).strip()
         if value:
             lines.append(f"{label}: {value}")
 
@@ -138,7 +139,7 @@ async def upsert_book_context(
 
     saved_rows = db_rows(resp)
     if not saved_rows:
-        raise RuntimeError(f"book_context upsert returned no row for book_id={book_id}")
+        raise RuntimeError("book_context upsert returned no row (see Sentry for book_id)")
     return saved_rows[0]
 
 

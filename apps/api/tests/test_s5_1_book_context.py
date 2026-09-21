@@ -211,6 +211,47 @@ class TestBookContextRequestSchema:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def test_book_context_truncated_defaults_false_in_lesson_metadata():
+    """Story S5-1 AC13: LessonMetadata.book_context_truncated defaults to False for old lessons."""
+    from app.schemas.lesson import LessonMetadata
+
+    meta = LessonMetadata(
+        title="Test",
+        subject="Math",
+        total_segments=1,
+        estimated_duration_mins=5.0,
+        complexity_level="medium",
+        tier="T2",
+    )
+    assert meta.book_context_truncated is False
+
+
+@pytest.mark.asyncio
+async def test_get_book_context_prompt_context_sanitizes_newlines(mocker):
+    """F3: internal newlines in field values must be collapsed (prevent prompt injection)."""
+    row = {
+        "book_id": "b1",
+        "user_id": "u1",
+        "why_uploaded": "Line1\nFake-label: injected",
+        "what_to_achieve": None,
+        "complete_or_selected": None,
+        "important_sections": None,
+        "deadline_and_depth": None,
+        "follow_or_reorganize": None,
+        "updated_at": "2026-09-21T00:00:00Z",
+    }
+    mocker.patch("app.modules.content.context.get_supabase", return_value=mocker.MagicMock())
+    mocker.patch("app.modules.content.context.single_row", return_value=row)
+    mocker.patch("asyncio.to_thread", side_effect=lambda f: f())
+
+    from app.modules.content.context import get_book_context_prompt_context
+
+    result = await get_book_context_prompt_context("b1", "u1")
+    # The newline must be collapsed — "Fake-label:" must not appear on its own prompt line.
+    lines = result.splitlines()
+    assert not any(line.strip().startswith("Fake-label:") for line in lines)
+
+
 def test_fan_out_state_keys_includes_book_context():
     """AC10 guard: narration_generator receives book_context via Send() dispatch."""
     from app.modules.content.pipeline.graph import _FAN_OUT_STATE_KEYS
@@ -244,3 +285,197 @@ def test_lesson_planner_node_return_keys_are_valid():
         "lesson_planner_node must not spread **state — this causes reducer-channel duplication. "
         "Return only the keys this node owns."
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F. Endpoint Handler Tests — upsert_book_context / get_book_context
+# ─────────────────────────────────────────────────────────────────────────────
+# Covers F5 (review finding): previously only unit/schema tests existed; these
+# test the actual endpoint handler functions, status codes, and response shapes.
+# We call the async handler functions directly (bypassing the router import
+# which triggers a pre-existing UploadFile FastAPI annotation issue unrelated
+# to S5-1) and verify their behaviour under mocked dependencies.
+# ─────────────────────────────────────────────────────────────────────────────
+
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from fastapi import HTTPException
+
+_FAKE_USER_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+_FAKE_BOOK_ID = str(uuid.UUID("11111111-1111-1111-1111-111111111111"))
+
+_fake_book_row = {"book_id": _FAKE_BOOK_ID, "user_id": _FAKE_USER_ID}
+
+_saved_context_row = {
+    "book_id": _FAKE_BOOK_ID,
+    "user_id": _FAKE_USER_ID,
+    "why_uploaded": "Pass my exam",
+    "what_to_achieve": "Deep understanding",
+    "complete_or_selected": "complete",
+    "important_sections": None,
+    "deadline_and_depth": None,
+    "follow_or_reorganize": "follow",
+    "updated_at": "2026-09-21T00:00:00+00:00",
+}
+
+
+def _supabase_mock_with_book() -> MagicMock:
+    mock = MagicMock()
+    execute_result = MagicMock()
+    execute_result.data = _fake_book_row
+    (
+        mock.table.return_value
+        .select.return_value
+        .eq.return_value
+        .eq.return_value
+        .maybe_single.return_value
+        .execute.return_value
+    ) = execute_result
+    return mock
+
+
+def _supabase_mock_no_book() -> MagicMock:
+    mock = MagicMock()
+    execute_result = MagicMock()
+    execute_result.data = None
+    (
+        mock.table.return_value
+        .select.return_value
+        .eq.return_value
+        .eq.return_value
+        .maybe_single.return_value
+        .execute.return_value
+    ) = execute_result
+    return mock
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_upsert_handler_returns_200_response():
+    """PUT handler: returns BookContextResponse on success."""
+    from app.modules.content.schemas import BookContextRequest, BookContextResponse
+    from app.modules.content.router import upsert_book_context
+
+    body = BookContextRequest(why_uploaded="Pass my exam", follow_or_reorganize="follow")
+    current_user = {"sub": _FAKE_USER_ID}
+
+    with (
+        patch("app.modules.content.router.get_supabase", return_value=_supabase_mock_with_book()),
+        patch("app.modules.content.router.single_row", return_value=_fake_book_row),
+        patch(
+            "app.modules.content.context.upsert_book_context",
+            new=AsyncMock(return_value=_saved_context_row),
+        ),
+    ):
+        result = await upsert_book_context(_FAKE_BOOK_ID, body, current_user)
+
+    assert isinstance(result, BookContextResponse)
+    assert result.book_id == _FAKE_BOOK_ID
+    assert result.why_uploaded == "Pass my exam"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_upsert_handler_raises_404_when_book_not_owned():
+    """PUT handler: raises 404 when book belongs to another user."""
+    from app.modules.content.schemas import BookContextRequest
+    from app.modules.content.router import upsert_book_context
+
+    body = BookContextRequest(why_uploaded="Studying")
+    current_user = {"sub": _FAKE_USER_ID}
+
+    with (
+        patch("app.modules.content.router.get_supabase", return_value=_supabase_mock_no_book()),
+        patch("app.modules.content.router.single_row", return_value=None),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await upsert_book_context(_FAKE_BOOK_ID, body, current_user)
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.unit
+def test_put_handler_schema_rejects_invalid_radio_value():
+    """PUT body: Pydantic raises ValidationError for disallowed radio values (F11)."""
+    from pydantic import ValidationError
+    from app.modules.content.schemas import BookContextRequest
+
+    with pytest.raises(ValidationError):
+        BookContextRequest(follow_or_reorganize="invalid_value")
+
+    with pytest.raises(ValidationError):
+        BookContextRequest(complete_or_selected="partial")  # not a valid Literal
+
+
+@pytest.mark.unit
+def test_put_handler_schema_rejects_field_too_long():
+    """PUT body: Pydantic raises ValidationError when a text field exceeds 500 chars."""
+    from pydantic import ValidationError
+    from app.modules.content.schemas import BookContextRequest
+
+    with pytest.raises(ValidationError):
+        BookContextRequest(why_uploaded="x" * 501)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_handler_returns_response_when_context_exists():
+    """GET handler: returns BookContextResponse when a context row is saved."""
+    from app.modules.content.schemas import BookContextResponse
+    from app.modules.content.router import get_book_context
+
+    current_user = {"sub": _FAKE_USER_ID}
+
+    with (
+        patch("app.modules.content.router.get_supabase", return_value=_supabase_mock_with_book()),
+        patch("app.modules.content.router.single_row", return_value=_fake_book_row),
+        patch(
+            "app.modules.content.context.get_book_context_row",
+            new=AsyncMock(return_value=_saved_context_row),
+        ),
+    ):
+        result = await get_book_context(_FAKE_BOOK_ID, current_user)
+
+    assert isinstance(result, BookContextResponse)
+    assert result.book_id == _FAKE_BOOK_ID
+    assert result.why_uploaded == "Pass my exam"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_handler_returns_204_response_when_no_context():
+    """GET handler: returns Response(status_code=204) when no context saved (F8)."""
+    from fastapi import Response
+    from app.modules.content.router import get_book_context
+
+    current_user = {"sub": _FAKE_USER_ID}
+
+    with (
+        patch("app.modules.content.router.get_supabase", return_value=_supabase_mock_with_book()),
+        patch("app.modules.content.router.single_row", return_value=_fake_book_row),
+        patch(
+            "app.modules.content.context.get_book_context_row",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        result = await get_book_context(_FAKE_BOOK_ID, current_user)
+
+    assert isinstance(result, Response)
+    assert result.status_code == 204
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_handler_raises_404_when_book_not_owned():
+    """GET handler: raises 404 when book belongs to another user."""
+    from app.modules.content.router import get_book_context
+
+    current_user = {"sub": _FAKE_USER_ID}
+
+    with (
+        patch("app.modules.content.router.get_supabase", return_value=_supabase_mock_no_book()),
+        patch("app.modules.content.router.single_row", return_value=None),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_book_context(_FAKE_BOOK_ID, current_user)
+    assert exc_info.value.status_code == 404
