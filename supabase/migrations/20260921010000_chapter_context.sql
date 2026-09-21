@@ -4,7 +4,7 @@
 
 CREATE TABLE IF NOT EXISTS chapter_context (
     id                 UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    chapter_id         UUID         NOT NULL REFERENCES chapters(id) ON DELETE CASCADE,
+    chapter_id         UUID         NOT NULL REFERENCES chapters(chapter_id) ON DELETE CASCADE,
     user_id            UUID         NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     -- Q41 MCQ: how deep + how long for this specific chapter
     -- values: quick_15_20m | standard_30_45m | deep_60_90m | mastery_multi | ai_decide

@@ -70,7 +70,7 @@ from pydantic import BaseModel
 # Single source of truth for the Learner Mode tier default (also used by
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
 from app.core.db import rows, single_row
-from app.core.langfuse import traced_node
+from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace, traced_node
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
@@ -1613,6 +1613,11 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             chapter_id_for_ctx, user_id_for_ctx
         )
     has_chapter_context = bool(chapter_ctx_block)
+    # AC7/AC14: record whether chapter context was injected so it is visible in
+    # Langfuse at the trace level (span is not accessible from inside a @traced_node).
+    _lf = get_langfuse()
+    _ctx = deterministic_trace_context(_lf, lesson_id)
+    safe_trace(lambda: _lf.trace(id=_ctx.trace_id, metadata={"has_chapter_context": has_chapter_context}))
 
     # Story 2-16 (RC-3): a single completion asked to echo back many segment_ids
     # collapses the list (44-in/10-out crashed the whole job). At or below
