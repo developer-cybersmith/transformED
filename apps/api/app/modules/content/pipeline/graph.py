@@ -1616,14 +1616,22 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     has_chapter_context = bool(chapter_ctx_block)
     # AC7/AC14: record whether chapter context was injected so it is visible in
     # Langfuse at the trace level (span is not accessible from inside a @traced_node).
+    # Uses start_observation(as_type="event") — Langfuse.trace() does not exist
+    # on the pinned SDK version; event observation is the correct alternative.
     _lf = get_langfuse()
     _ctx = deterministic_trace_context(_lf, lesson_id)
-    safe_trace(
-        lambda: _lf.trace(
-            id=_ctx.trace_id,
-            metadata={"has_chapter_context": has_chapter_context},
+    if _ctx is not None:
+        # Bind to a non-Optional local so the lambda captures TraceContext,
+        # not TraceContext | None — mypy cannot narrow closed-over variables.
+        _bound_ctx = _ctx
+        safe_trace(
+            lambda: _lf.start_observation(
+                name="chapter_context_check",
+                as_type="span",
+                trace_context=_bound_ctx,
+                metadata={"has_chapter_context": has_chapter_context},
+            )
         )
-    )
 
     # Story 2-16 (RC-3): a single completion asked to echo back many segment_ids
     # collapses the list (44-in/10-out crashed the whole job). At or below
