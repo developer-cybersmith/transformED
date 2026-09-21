@@ -196,7 +196,11 @@ def _base_state(**overrides: Any) -> dict[str, Any]:
         "slides": SLIDES,
         "slide_images": SLIDE_IMAGES,
         "audio_assets": AUDIO_ASSETS,
-        "narration_scripts": NARRATION_SCRIPTS,
+        # Issue #236: package_builder_node now reads narration_scripts_final
+        # (narration_stitch_node's output), not the raw narration_scripts
+        # fan-in channel. Fixture variable name kept as NARRATION_SCRIPTS —
+        # it's just the sample data, unrelated to the state key it's under.
+        "narration_scripts_final": NARRATION_SCRIPTS,
         "quiz_questions": QUIZ_QUESTIONS,
         "glossary": GLOSSARY,
         "intervention_prompts": INTERVENTION_PROMPTS,
@@ -1194,7 +1198,7 @@ async def test_missing_audio_and_missing_script_degrades_to_empty() -> None:
 
     state = _base_state(
         audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
-        narration_scripts=[n for n in NARRATION_SCRIPTS if n["segment_id"] != "sec_0"],
+        narration_scripts_final=[n for n in NARRATION_SCRIPTS if n["segment_id"] != "sec_0"],
     )
     sb, _, _ = _mock_supabase()
     with patch("app.core.db.get_supabase", return_value=sb):
@@ -1212,7 +1216,7 @@ async def test_whitespace_only_recovered_script_is_treated_as_absent() -> None:
 
     state = _base_state(
         audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
-        narration_scripts=[{"segment_id": "sec_0", "script": "   \n  "}],
+        narration_scripts_final=[{"segment_id": "sec_0", "script": "   \n  "}],
     )
     sb, _, _ = _mock_supabase()
     with patch("app.core.db.get_supabase", return_value=sb):
@@ -1276,7 +1280,7 @@ async def test_non_dict_entry_in_a_list_does_not_crash_the_node() -> None:
 
     state = _base_state(
         audio_assets=["not-a-dict", None, 42, *AUDIO_ASSETS],
-        narration_scripts=["junk", *NARRATION_SCRIPTS],
+        narration_scripts_final=["junk", *NARRATION_SCRIPTS],
         complexity_scores=[None, *COMPLEXITY_SCORES],
         intervention_prompts=[["nested", "list"], *INTERVENTION_PROMPTS],
     )
@@ -1328,7 +1332,7 @@ async def test_non_string_recovered_script_is_treated_as_absent() -> None:
     for bad_script in (None, 123, {"text": "nope"}, ["a", "b"]):
         state = _base_state(
             audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
-            narration_scripts=[
+            narration_scripts_final=[
                 {"segment_id": "sec_0", "script": bad_script},
                 *[n for n in NARRATION_SCRIPTS if n["segment_id"] != "sec_0"],
             ],
@@ -1352,7 +1356,7 @@ async def test_duplicate_segment_id_in_narration_scripts_keeps_last() -> None:
 
     state = _base_state(
         audio_assets=[a for a in AUDIO_ASSETS if a["segment_id"] != "sec_0"],
-        narration_scripts=[
+        narration_scripts_final=[
             {"segment_id": "sec_0", "script": "FIRST — should be overwritten"},
             {"segment_id": "sec_0", "script": "LAST — this one wins"},
             *[n for n in NARRATION_SCRIPTS if n["segment_id"] != "sec_0"],

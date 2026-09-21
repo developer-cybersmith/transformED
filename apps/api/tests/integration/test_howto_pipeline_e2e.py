@@ -202,6 +202,8 @@ def _make_dispatch(slides_per_segment: int = 1, quiz_batch_size: int = 3) -> Any
         _SegmentSummaryLLM,
         _SlideDeckLLM,
         _SlideLLM,
+        _StitchedNarrationLLM,
+        _StitchedNarrationSegmentLLM,
     )
     from app.schemas import DocumentStructure, SectionBoundary
 
@@ -313,6 +315,28 @@ def _make_dispatch(slides_per_segment: int = 1, quiz_batch_size: int = 3) -> Any
                         ],
                     )
                     for i in ids
+                ]
+            )
+        if name == "_StitchedNarrationLLM":
+            # Issue #236: narration_stitch_node's polish pass. Echoes back
+            # each segment's script UNCHANGED (parsed straight out of the
+            # "- segment_id=X: <script>" prompt line, same convention as
+            # _LessonPlanLLM/_SlideDeckLLM above) — a real transformation here
+            # would make every downstream narration-content assertion in this
+            # file (and test_tier_differentiation_and_cost.py) depend on this
+            # fake's made-up wording instead of the real per-section scripts.
+            user = messages[1]["content"] if len(messages) > 1 else ""
+            pairs: list[tuple[str, str]] = []
+            for line in user.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("- segment_id="):
+                    rest = stripped[len("- segment_id=") :]
+                    seg_id, _, script = rest.partition(": ")
+                    pairs.append((seg_id, script))
+            return _StitchedNarrationLLM(
+                segments=[
+                    _StitchedNarrationSegmentLLM(segment_id=seg_id, script=script)
+                    for seg_id, script in pairs
                 ]
             )
         raise AssertionError(f"unmocked response_format {name}")

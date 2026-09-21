@@ -293,3 +293,155 @@ async def test_in_band_cache_is_still_reused_no_respend() -> None:
 
     provider.complete_structured.assert_not_awaited()
     assert len(result["quiz_questions"]) == 4
+
+
+# ── Issue #236: the post-planner narration fan-out needs the same guard ─────
+
+
+def _state_with_plan(tier: str) -> dict[str, Any]:
+    sections = [
+        {"title": "Intro", "body": "Body one."},
+        {"title": "Next", "body": "Body two."},
+    ]
+    from app.modules.content.pipeline import graph as g
+
+    plan_segments = [
+        {
+            "segment_id": g._derive_section_id(s, i),
+            "title": s["title"],
+            "summary": "s",
+            "duration_min": 5.0,
+            "slide_budget": {"min": 1, "max": 3},
+            "continuity_notes": "" if i == 0 else "reiterate the intro",
+        }
+        for i, s in enumerate(sections)
+    ]
+    return {
+        "lesson_id": "11111111-1111-1111-1111-111111111111",
+        "user_id": "u1",
+        "book_id": "b1",
+        "tier": tier,
+        "sections": sections,
+        "lesson_plan": {"segments": plan_segments},
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+async def test_narration_fan_out_payload_carries_tier(tier: str) -> None:
+    """Same D2-class trap the issue names by number: a new Send() payload
+    must not silently drop a load-bearing key."""
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_narration_after_planning(_state_with_plan(tier))  # type: ignore[arg-type]
+
+    assert sends, "post-planner fan-out produced no dispatches — test would be vacuous"
+    for send in sends:
+        assert send.arg["tier"] == tier
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_payload_carries_every_declared_key_plus_plan_segment() -> None:
+    """Guards _FAN_OUT_STATE_KEYS plus the new per-dispatch keys
+    (_section/_section_index/_plan_segment) this router adds."""
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_narration_after_planning(_state_with_plan("T1"))  # type: ignore[arg-type]
+
+    for send in sends:
+        assert send.node == "narration_generator"
+        missing = [k for k in g._FAN_OUT_STATE_KEYS if k not in send.arg]
+        assert not missing, f"{send.node} payload missing declared keys: {missing}"
+        for k in ("_section", "_section_index", "_total_sections", "_plan_segment"):
+            assert k in send.arg, f"{send.node} payload missing {k}"
+        plan_segment = send.arg["_plan_segment"]
+        assert set(plan_segment) == {"segment_id", "title", "continuity_notes"}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_reconstructs_correct_section_per_segment() -> None:
+    """Each dispatch's _section/_section_index must match the segment_id it
+    was built for, reconstructed via _derive_section_id — not assumed to line
+    up positionally (see _fan_out_narration_after_planning's own docstring on
+    why state["sections"] can't just be zipped against lesson_plan.segments)."""
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T2")
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)):
+        sends = await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]
+
+    for send in sends:
+        expected_id = g._derive_section_id(send.arg["_section"], send.arg["_section_index"])
+        assert expected_id == send.arg["_plan_segment"]["segment_id"]
+
+
+# ── Test Coverage review finding (2026-09-21): _fan_out_narration_after_planning
+# had zero coverage of its guard paths, unlike TestAC7CostCeiling's thorough
+# coverage of the same guard shapes on _fan_out_phase1_economy_nodes. ─────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_empty_plan_segments_raises() -> None:
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T1")
+    state["lesson_plan"] = {"segments": []}
+    with pytest.raises(RuntimeError, match="zero segments"):
+        await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_missing_lesson_id_raises() -> None:
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T1")
+    del state["lesson_id"]
+    with pytest.raises(RuntimeError, match="missing lesson_id"):
+        await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_does_not_check_ceiling_at_all() -> None:
+    """Review finding (2026-09-21, PR #237, CONFIRMED HIGH): this router used
+    to full-abort the WHOLE lesson (RuntimeError) on a cost-ceiling breach —
+    but by this point lesson_planner + slide_generator (both premium GPT-4o)
+    have already spent real money, so aborting here discarded already-paid-
+    for work, violating CLAUDE.md's "downshift... complete lesson" cost-
+    ceiling policy. Fixed by removing the router-level gate entirely (mirrors
+    tts_node/image_generator_node, neither of which has one either) — the
+    per-dispatch check moved into narration_generator_node itself (see
+    TestAC6NarrationGenerator's cost-ceiling test in test_phase1_economy_nodes.py).
+    This test proves the router dispatches unconditionally regardless of
+    check_ceiling's mocked return value — including when check_ceiling itself
+    raises, which must not propagate either, since it's never even called."""
+    from app.modules.content.pipeline import graph as g
+
+    check_ceiling_mock = AsyncMock(side_effect=AssertionError("router must not call check_ceiling"))
+    with patch("app.core.cost_tracker.check_ceiling", new=check_ceiling_mock):
+        sends = await g._fan_out_narration_after_planning(_state_with_plan("T1"))  # type: ignore[arg-type]
+
+    assert sends, "must dispatch unconditionally — no router-level cost-ceiling gate"
+    check_ceiling_mock.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_unmatched_segment_id_raises() -> None:
+    """Defensive/unreachable-in-practice branch (lesson_planner_node's own
+    AC-6 guard already rejects an unknown segment_id before lesson_plan is
+    ever written) — still must fail loudly, not dispatch narration with no
+    section body to work from, if ever reached."""
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T1")
+    state["lesson_plan"]["segments"][0]["segment_id"] = "does_not_exist_in_sections"
+    with pytest.raises(RuntimeError, match="has no matching entry"):
+        await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]

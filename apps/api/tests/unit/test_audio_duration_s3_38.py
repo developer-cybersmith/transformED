@@ -144,7 +144,7 @@ def _mock_tts_supabase(node_outputs: dict[str, Any] | None = None) -> MagicMock:
 def _tts_state(**overrides: Any) -> dict[str, Any]:
     state: dict[str, Any] = {
         "lesson_id": FAKE_LESSON_ID,
-        "narration_scripts": [
+        "narration_scripts_final": [
             {
                 "segment_id": "sec_0",
                 "script": "Entropy measures disorder in a system.",
@@ -273,7 +273,7 @@ async def test_whole_segment_exception_path_has_duration_none() -> None:
     malformed = {"segment_id": "sec_bad"}  # missing "script" -> KeyError inside try
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        result = await tts_node(_tts_state(narration_scripts=[malformed]))
+        result = await tts_node(_tts_state(narration_scripts_final=[malformed]))
 
     assets = result["audio_assets"]
     assert assets[0]["data"]["audio_provider"] == "browser"
@@ -448,7 +448,7 @@ def _pb_state(**overrides: Any) -> dict[str, Any]:
         "slides": PB_SLIDES,
         "slide_images": PB_SLIDE_IMAGES,
         "audio_assets": _pb_audio_assets(_real_mp3_duration_ms()),
-        "narration_scripts": PB_NARRATION_SCRIPTS,
+        "narration_scripts_final": PB_NARRATION_SCRIPTS,
         "quiz_questions": PB_QUIZ_QUESTIONS,
         "glossary": PB_GLOSSARY,
         "intervention_prompts": PB_INTERVENTION_PROMPTS,
@@ -676,7 +676,7 @@ async def test_two_segments_with_different_duration_outcomes_do_not_leak() -> No
                 complexity_scores=complexity_scores,
                 slides=slides,
                 slide_images=slide_images,
-                narration_scripts=narration_scripts,
+                narration_scripts_final=narration_scripts,
                 quiz_questions=quiz_questions,
                 intervention_prompts=intervention_prompts,
                 audio_assets=audio_assets,
