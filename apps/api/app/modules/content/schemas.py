@@ -22,8 +22,11 @@ _DepthDurationValue = Literal[
     "quick_15_20m", "standard_30_45m", "deep_60_90m", "mastery_multi", "ai_decide"
 ]
 _LearningNeedValue = Literal[
-    "examples_analogies", "formulas_derivations", "diagrams_visuals",
-    "practice_questions", "adaptive_mix",
+    "examples_analogies",
+    "formulas_derivations",
+    "diagrams_visuals",
+    "practice_questions",
+    "adaptive_mix",
 ]
 
 
