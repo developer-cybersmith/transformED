@@ -21,22 +21,70 @@ from app.core.db import single_row
 logger = logging.getLogger(__name__)
 
 # Column list — verified against supabase/migrations/20260921000000_book_context.sql.
-# user_id is included so the post-fetch ownership double-check is possible
-# (mirrors _fetch_owned_book's belt-and-braces pattern).
 _BOOK_CONTEXT_COLUMNS = (
-    "book_id,user_id,why_uploaded,what_to_achieve,complete_or_selected,"
-    "important_sections,deadline_and_depth,follow_or_reorganize,updated_at"
+    "book_id,user_id,purpose,coverage_scope,expected_difficulty,deadline_depth,"
+    "structure_preference,motivation,end_goal,feared_section,prior_attempt,outcome_clarity,updated_at"
 )
 
-# Human-readable labels matching the §4.2 field questions (abbreviated for
-# the prompt block — the full question wording is used in the UI, not here).
-_FIELD_LABELS: list[tuple[str, str]] = [
-    ("why_uploaded", "Why uploaded"),
-    ("what_to_achieve", "Goal"),
-    ("complete_or_selected", "Scope"),
-    ("important_sections", "Focus areas"),
-    ("deadline_and_depth", "Deadline / depth"),
-    ("follow_or_reorganize", "Teaching approach"),
+# MCQ field → prompt label, and value → human-readable display text.
+# Stored values are the compact enum strings; the prompt receives readable labels.
+_MCQ_LABELS: list[tuple[str, str]] = [
+    ("purpose", "Upload purpose"),
+    ("coverage_scope", "Coverage scope"),
+    ("expected_difficulty", "Expected difficult areas"),
+    ("deadline_depth", "Deadline and depth"),
+    ("structure_preference", "Teaching structure"),
+]
+
+_MCQ_DISPLAY: dict[str, dict[str, str]] = {
+    "purpose": {
+        "exam_prep": "Exam preparation",
+        "project_job": "Project or job requirement",
+        "deep_mastery": "Deep mastery",
+        "quick_reference": "Quick reference",
+        "recommended_reading": "Recommended reading",
+    },
+    "coverage_scope": {
+        "complete_book": "Complete book",
+        "selected_chapters": "Selected chapters",
+        "difficult_sections": "Difficult sections only",
+        "exam_relevant": "Exam-relevant parts",
+        "ai_decide": "Let AI decide",
+    },
+    "expected_difficulty": {
+        "theory_heavy": "Theory-heavy sections",
+        "numerical_formula": "Numerical / formula sections",
+        "case_studies": "Case studies",
+        "dense_language": "Dense language / writing",
+        "dont_know": "Unknown — AI will identify them",
+    },
+    "deadline_depth": {
+        "urgent_2wk": "Urgent — under 2 weeks",
+        "one_month": "1 month",
+        "two_three_months": "2–3 months",
+        "no_deadline": "No deadline",
+        "key_insights_only": "Just key insights",
+    },
+    "structure_preference": {
+        "follow_exactly": "Follow the book exactly",
+        "reorganise_by_difficulty": "Reorganise by concept difficulty",
+        "reorganise_by_goal": "Reorganise by learning goal",
+        "hybrid": "Hybrid approach",
+        "ai_choose": "Let AI choose",
+    },
+}
+
+# One-liner text fields: prompt label → DB column name.
+_TEXT_FIELD_LABELS: list[tuple[str, str]] = [
+    ("motivation", "Motivation"),
+    ("end_goal", "End goal"),
+    ("feared_section", "Most worried about"),
+]
+
+# Boolean fields: DB column → prompt label.
+_BOOL_LABELS: list[tuple[str, str]] = [
+    ("prior_attempt", "Tried this book before and stopped"),
+    ("outcome_clarity", "Can picture real-life application"),
 ]
 
 
@@ -47,8 +95,8 @@ async def get_book_context_prompt_context(book_id: str, user_id: str) -> str:
     context fetch failure does NOT abort lesson generation (Scale & Load Q2:
     context injection is best-effort, not a hard requirement).
 
-    The returned block is ready for `merge_book_context` in
-    `apps/api/app/modules/content/pipeline/prompt_context.py`.
+    Newlines inside user-supplied text fields are collapsed to spaces (F3:
+    prevents prompt-injection via embedded newline + fake label sequences).
     """
     if not book_id or not user_id:
         return ""
@@ -79,16 +127,28 @@ async def get_book_context_prompt_context(book_id: str, user_id: str) -> str:
     if row is None:
         return ""
 
-    # Build the text block: only include fields with a non-empty value.
     lines: list[str] = ["[Book Context]"]
-    for db_col, label in _FIELD_LABELS:
-        raw_val = row.get(db_col) or ""
-        value = " ".join(raw_val.splitlines()).strip()
-        if value:
-            lines.append(f"{label}: {value}")
 
-    # If the student filled nothing in, the block would be just "[Book Context]"
-    # with no real content — return empty string instead.
+    # MCQ fields: map stored enum value to human-readable display label.
+    for col, label in _MCQ_LABELS:
+        raw = row.get(col)
+        if raw:
+            display = _MCQ_DISPLAY.get(col, {}).get(raw, raw)
+            lines.append(f"{label}: {display}")
+
+    # One-liner text fields: collapse internal newlines to prevent injection.
+    for col, label in _TEXT_FIELD_LABELS:
+        value = (row.get(col) or "").strip()
+        if value:
+            sanitised = " ".join(value.splitlines())
+            lines.append(f"{label}: {sanitised}")
+
+    # Boolean fields: only emit when not None.
+    for col, label in _BOOL_LABELS:
+        val = row.get(col)
+        if val is not None:
+            lines.append(f"{label}: {'Yes' if val else 'No'}")
+
     if len(lines) == 1:
         return ""
 
@@ -99,12 +159,16 @@ async def upsert_book_context(
     book_id: str,
     user_id: str,
     *,
-    why_uploaded: str | None,
-    what_to_achieve: str | None,
-    complete_or_selected: str | None,
-    important_sections: str | None,
-    deadline_and_depth: str | None,
-    follow_or_reorganize: str | None,
+    purpose: str | None,
+    coverage_scope: str | None,
+    expected_difficulty: str | None,
+    deadline_depth: str | None,
+    structure_preference: str | None,
+    motivation: str | None,
+    end_goal: str | None,
+    feared_section: str | None,
+    prior_attempt: bool | None,
+    outcome_clarity: bool | None,
 ) -> dict:
     """Upsert one book_context row and return the saved row dict.
 
@@ -118,12 +182,16 @@ async def upsert_book_context(
     payload: dict = {
         "book_id": book_id,
         "user_id": user_id,
-        "why_uploaded": why_uploaded,
-        "what_to_achieve": what_to_achieve,
-        "complete_or_selected": complete_or_selected,
-        "important_sections": important_sections,
-        "deadline_and_depth": deadline_and_depth,
-        "follow_or_reorganize": follow_or_reorganize,
+        "purpose": purpose,
+        "coverage_scope": coverage_scope,
+        "expected_difficulty": expected_difficulty,
+        "deadline_depth": deadline_depth,
+        "structure_preference": structure_preference,
+        "motivation": motivation,
+        "end_goal": end_goal,
+        "feared_section": feared_section,
+        "prior_attempt": prior_attempt,
+        "outcome_clarity": outcome_clarity,
         "updated_at": datetime.now(UTC).isoformat(),
     }
 
@@ -139,7 +207,7 @@ async def upsert_book_context(
 
     saved_rows = db_rows(resp)
     if not saved_rows:
-        raise RuntimeError("book_context upsert returned no row (see Sentry for book_id)")
+        raise RuntimeError("book_context upsert returned no row")
     return saved_rows[0]
 
 

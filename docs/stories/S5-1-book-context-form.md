@@ -1,7 +1,7 @@
 ---
 id: "S5-1"
 title: "Book-upload personalization form — per-book context (Issue #231)"
-status: "Done"
+status: "Draft"
 sprint: 5
 story_points: 5
 owner: Dev3 (cross-team pick-up from Dev 1)
@@ -315,23 +315,23 @@ _Code review run 2026-09-21 — 4 layers (Blind Hunter, Edge Case Hunter, Accept
 
 ### Decision-Needed
 
-- [x] [Review][Decision] F7 — Context mismatch on ARQ retry: `lesson_planner_node` fetches `book_context` fresh BEFORE the idempotency cache check. On an ARQ retry where the lesson_plan is a cache-hit, slide_generator and narration_generator receive the freshly-fetched context (which may have changed), while the lesson_plan they personalise was built with the original context. **Decision: option (a) accepted as a known product tradeoff.** ARQ retries fire only on worker crash/network error; in that case the cache-hit lesson_plan is the same content the student already got — a slightly stale context block is preferable to complex snapshotting or a triple DB read per node. Documented in `_bmad-output/implementation-artifacts/deferred-work.md`. [`apps/api/app/modules/content/pipeline/graph.py:lesson_planner_node`]
+- [ ] [Review][Decision] F7 — Context mismatch on ARQ retry: `lesson_planner_node` fetches `book_context` fresh BEFORE the idempotency cache check. On an ARQ retry where the lesson_plan is a cache-hit, slide_generator and narration_generator receive the freshly-fetched context (which may have changed), while the lesson_plan they personalise was built with the original context. No error or warning is surfaced. Options: (a) accept as a known product tradeoff — document it; (b) snapshot context at the start and refuse to re-fetch on retry if a cached plan exists; (c) always re-fetch at each prompt site instead of propagating via state. [`apps/api/app/modules/content/pipeline/graph.py:lesson_planner_node`]
 
 ### Patches
 
-- [x] [Review][Patch] F1 — CRITICAL: Migration FK wrong column — `REFERENCES books(id)` but `books` PK is `book_id`; migration fails on first deploy [`supabase/migrations/20260921000000_book_context.sql:22`] — **Fixed**: changed to `REFERENCES books(book_id)`.
-- [x] [Review][Patch] F2 — CRITICAL: AC13 not implemented — `book_context_truncated` never written to `lessons` row by any caller; no Langfuse span; only a `logger.warning` nobody reads. With 6 fields × 500 chars, fields 4–6 (important_sections, deadline_and_depth, follow_or_reorganize) are silently dropped on every lesson. The lesson reports `ready`. Cost ceiling never fires. [`apps/api/app/modules/content/pipeline/prompt_context.py:64`, `graph.py` all 3 call sites] — **Fixed**: `book_context_truncated: bool` in PipelineState + LessonMetadata (default False); Langfuse WARNING span emitted when truncated; flag propagated in lesson_planner_node return.
-- [x] [Review][Patch] F3 — HIGH: Prompt injection via embedded newlines in user-controlled fields — `get_book_context_prompt_context` formats each field as `f"{label}: {value}"` after only `.strip()` (removes leading/trailing whitespace, not internal newlines). A value of `"legitimate\nGoal: attacker-value"` creates a spurious label line inside the `[Book Context]` block. Fix: replace internal newlines in each field value with a space before formatting. [`apps/api/app/modules/content/context.py:91-93`] — **Fixed**: `" ".join(raw_val.splitlines()).strip()` before formatting each field.
-- [x] [Review][Patch] F4 — HIGH: AC15 violated — no `has_book_context` flag added to Langfuse spans at any of the 3 call sites; `traced_node` wraps all 3 nodes and records LLM inputs by default, meaning raw field values ("Why uploaded: Pass my exam") appear in Langfuse traces, violating DPDP. [`apps/api/app/modules/content/pipeline/graph.py` — lesson_planner_node, slide_generator_node, narration_generator_node] — **Fixed**: `logger.info("[%s] lesson_planner_node: has_book_context=%s", lesson_id, bool(book_context))` only logs the boolean flag; raw field values are never passed to Langfuse traces.
-- [x] [Review][Patch] F5 — HIGH: AC16 violated — no FastAPI TestClient endpoint tests for: PUT create (200), PUT update (no 409), GET 200 with row, GET 204 when none, ownership 404; only Pydantic schema validation tested [`apps/api/tests/test_s5_1_book_context.py`] — **Fixed**: Section F added to test file with 6 async endpoint tests (29 total, all passing).
-- [x] [Review][Patch] F6 — HIGH: GET endpoint has no error handling — `get_book_context_row` can throw (network error, supabase timeout) producing an unhandled 500; PUT endpoint has try/except, GET does not [`apps/api/app/modules/content/router.py:get_book_context`] — **Fixed**: GET endpoint wrapped in try/except with HTTP 500 raise.
-- [x] [Review][Patch] F8 — MEDIUM: FastAPI 204 GET endpoint may serialize null body — returning `None` with `response.status_code = 204` may emit JSON `null`; HTTP 204 MUST NOT include a body. Fix: return `Response(status_code=204)` directly [`apps/api/app/modules/content/router.py:get_book_context`] — **Fixed**: returns `Response(status_code=status.HTTP_204_NO_CONTENT)` directly.
-- [x] [Review][Patch] F9 — MEDIUM: `dismissed` state not reset on `bookId` change — if React reuses the component instance across books without unmounting, a student who clicked "Skip for now" on book A never sees the form for any subsequent book [`apps/web/src/components/dashboard/books/BookContextForm.tsx:78`] — **Fixed**: `useEffect` with `[bookId]` dep resets `dismissed` state.
-- [x] [Review][Patch] F11 — MEDIUM: No server-side enum validation on radio fields — `complete_or_selected` and `follow_or_reorganize` accept any string up to 500 chars; fix: add `Literal["complete", "selected"] | None` and `Literal["follow", "reorganize"] | None` constraints (or a field_validator) [`apps/api/app/modules/content/schemas.py:BookContextRequest`] — **Fixed**: `Literal["complete", "selected"] | None` and `Literal["follow", "reorganize"] | None` on both fields.
-- [x] [Review][Patch] F12 — LOW: `_validated_book_id(book_id)` called twice in both endpoints — assign result to a variable and reuse [`apps/api/app/modules/content/router.py:upsert_book_context, get_book_context`] — **Fixed**: `validated_id` assigned once per endpoint.
-- [x] [Review][Patch] F13 — LOW: Raw `book_id` UUID in `RuntimeError` message flows into Sentry payloads — use generic message or omit UUID [`apps/api/app/modules/content/context.py:147`] — **Fixed**: generic message `"book_context upsert returned no row (see Sentry for book_id)"`.
-- [x] [Review][Patch] F14 — LOW: AC3 deviation — "Skip for now" renders as `<button>`, spec says "link"; semantically different (screen reader announces "button", no `href`) [`apps/web/src/components/dashboard/books/BookContextForm.tsx:144`] — **Fixed**: `<a role="button">` with `tabIndex={0}` and keyboard handler.
-- [x] [Review][Patch] F15 — LOW: AC13 edge case — when `book_context` starts with a newline, `rfind("\n")` returns 0, `if last_newline > 0` is false, and truncation falls back to the hard char boundary (not field boundary as AC13 requires) [`apps/api/app/modules/content/pipeline/prompt_context.py:60`] — **Fixed**: `book_context = book_context.strip()` before length check eliminates leading-newline edge case.
+- [ ] [Review][Patch] F1 — CRITICAL: Migration FK wrong column — `REFERENCES books(id)` but `books` PK is `book_id`; migration fails on first deploy [`supabase/migrations/20260921000000_book_context.sql:22`]
+- [ ] [Review][Patch] F2 — CRITICAL: AC13 not implemented — `book_context_truncated` never written to `lessons` row by any caller; no Langfuse span; only a `logger.warning` nobody reads. With 6 fields × 500 chars, fields 4–6 (important_sections, deadline_and_depth, follow_or_reorganize) are silently dropped on every lesson. The lesson reports `ready`. Cost ceiling never fires. [`apps/api/app/modules/content/pipeline/prompt_context.py:64`, `graph.py` all 3 call sites]
+- [ ] [Review][Patch] F3 — HIGH: Prompt injection via embedded newlines in user-controlled fields — `get_book_context_prompt_context` formats each field as `f"{label}: {value}"` after only `.strip()` (removes leading/trailing whitespace, not internal newlines). A value of `"legitimate\nGoal: attacker-value"` creates a spurious label line inside the `[Book Context]` block. Fix: replace internal newlines in each field value with a space before formatting. [`apps/api/app/modules/content/context.py:91-93`]
+- [ ] [Review][Patch] F4 — HIGH: AC15 violated — no `has_book_context` flag added to Langfuse spans at any of the 3 call sites; `traced_node` wraps all 3 nodes and records LLM inputs by default, meaning raw field values ("Why uploaded: Pass my exam") appear in Langfuse traces, violating DPDP. [`apps/api/app/modules/content/pipeline/graph.py` — lesson_planner_node, slide_generator_node, narration_generator_node]
+- [ ] [Review][Patch] F5 — HIGH: AC16 violated — no FastAPI TestClient endpoint tests for: PUT create (200), PUT update (no 409), GET 200 with row, GET 204 when none, ownership 404; only Pydantic schema validation tested [`apps/api/tests/test_s5_1_book_context.py`]
+- [ ] [Review][Patch] F6 — HIGH: GET endpoint has no error handling — `get_book_context_row` can throw (network error, supabase timeout) producing an unhandled 500; PUT endpoint has try/except, GET does not [`apps/api/app/modules/content/router.py:get_book_context`]
+- [ ] [Review][Patch] F8 — MEDIUM: FastAPI 204 GET endpoint may serialize null body — returning `None` with `response.status_code = 204` may emit JSON `null`; HTTP 204 MUST NOT include a body. Fix: return `Response(status_code=204)` directly [`apps/api/app/modules/content/router.py:get_book_context`]
+- [ ] [Review][Patch] F9 — MEDIUM: `dismissed` state not reset on `bookId` change — if React reuses the component instance across books without unmounting, a student who clicked "Skip for now" on book A never sees the form for any subsequent book [`apps/web/src/components/dashboard/books/BookContextForm.tsx:78`]
+- [ ] [Review][Patch] F11 — MEDIUM: No server-side enum validation on radio fields — `complete_or_selected` and `follow_or_reorganize` accept any string up to 500 chars; fix: add `Literal["complete", "selected"] | None` and `Literal["follow", "reorganize"] | None` constraints (or a field_validator) [`apps/api/app/modules/content/schemas.py:BookContextRequest`]
+- [ ] [Review][Patch] F12 — LOW: `_validated_book_id(book_id)` called twice in both endpoints — assign result to a variable and reuse [`apps/api/app/modules/content/router.py:upsert_book_context, get_book_context`]
+- [ ] [Review][Patch] F13 — LOW: Raw `book_id` UUID in `RuntimeError` message flows into Sentry payloads — use generic message or omit UUID [`apps/api/app/modules/content/context.py:147`]
+- [ ] [Review][Patch] F14 — LOW: AC3 deviation — "Skip for now" renders as `<button>`, spec says "link"; semantically different (screen reader announces "button", no `href`) [`apps/web/src/components/dashboard/books/BookContextForm.tsx:144`]
+- [ ] [Review][Patch] F15 — LOW: AC13 edge case — when `book_context` starts with a newline, `rfind("\n")` returns 0, `if last_newline > 0` is false, and truncation falls back to the hard char boundary (not field boundary as AC13 requires) [`apps/api/app/modules/content/pipeline/prompt_context.py:60`]
 
 ### Deferred
 
@@ -346,29 +346,3 @@ _Not written to action items — false positives or non-issues in context:_
 4. Edge-9: Truncation marker 25 chars over 2,000-char budget — inconsequential for 128k context window.
 5. Scale-2 (17 merge calls scope): merged into F2 detail.
 6. Blind-6 (TOCTOU ownership/upsert): merged into F12.
-
----
-
-## Dev Agent Record
-
-**Implementation date:** 2026-09-21
-**Tests:** 29/29 passing (`tests/test_s5_1_book_context.py -p no:warnings`)
-**Guard tests:** All pass — `test_node_return_shape.py` (21 pass, 1 pre-existing fail: `test_tts_node_returns_only_its_own_keys` — `tinytag` missing on main before this branch, not our regression); `test_unbounded_queries.py` (8/8 pass)
-
-### Completion Notes
-
-- All 13 patchable review findings (F1–F9, F11–F15) resolved; F10 deferred per review decision; F7 accepted as known tradeoff (option a) and documented in `deferred-work.md`.
-- `book_context_truncated` tracks the AC13 silent-truncation-prevention requirement across PipelineState, LessonMetadata, and lesson_planner_node return. Langfuse WARNING span fires if context exceeds 2,000 chars.
-- Prompt injection prevention (F3) collapses internal newlines before field formatting in `context.py`.
-- DPDP compliance (F4/AC15): only `has_book_context` bool logged to Langfuse — no raw field values.
-- Pre-existing `tinytag` guard test failure noted in CI description; does not block merge.
-
-### Change Log
-
-| Date | Change | Commit |
-|------|--------|--------|
-| 2026-09-21 | Story file created (BMAD gate) | `fe72740` |
-| 2026-09-21 | Implementation — all ACs (AC1–AC16) | `cbe240c` |
-| 2026-09-21 | Review patches — F1–F15 applied (13 fixed, F10 deferred, F7 decided) | `7ccac21` |
-| 2026-09-21 | Tracker marked complete | `45ac3fe` |
-| 2026-09-21 | Story status updated to Done, all findings marked resolved | _(this commit)_ |
