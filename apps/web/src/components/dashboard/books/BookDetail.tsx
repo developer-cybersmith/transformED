@@ -5,6 +5,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useBook } from "@/hooks/useBooks";
 import { useChapters } from "@/hooks/useChapters";
 import { isNotFoundError } from "@/services/books.service";
+import { BookContextForm } from "./BookContextForm";
 import { ChapterRow } from "./ChapterRow";
 
 export function BookDetail({ bookId }: { bookId: string }) {
@@ -62,6 +63,13 @@ export function BookDetail({ bookId }: { bookId: string }) {
                     </p>
                 )}
             </div>
+
+            {/* Story S5-1 (Issue #231): per-book personalization form.
+                Shown only when the book is ready — never during processing or failed.
+                Fully optional; doesn't block chapter generation. */}
+            {book?.status === "ready" && (
+                <BookContextForm bookId={bookId} />
+            )}
 
             {/* A poll failure must not hide chapters the student can already see. */}
             {staleError && (

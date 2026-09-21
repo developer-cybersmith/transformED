@@ -1,4 +1,27 @@
 import { api } from '@/lib/api';
+// Story S5-1 (Issue #231): per-book personalization context types.
+// Field labels are from AI_Learning_Product_Final_Strategy.pdf §4.2 — see
+// docs/proposals/2026-09-19-platform-changes-scope.md for the extracted wording.
+
+export interface BookContextRequest {
+    why_uploaded?: string | null;
+    what_to_achieve?: string | null;
+    complete_or_selected?: string | null;
+    important_sections?: string | null;
+    deadline_and_depth?: string | null;
+    follow_or_reorganize?: string | null;
+}
+
+export interface BookContextResponse {
+    book_id: string;
+    why_uploaded?: string | null;
+    what_to_achieve?: string | null;
+    complete_or_selected?: string | null;
+    important_sections?: string | null;
+    deadline_and_depth?: string | null;
+    follow_or_reorganize?: string | null;
+    updated_at?: string | null;
+}
 // W0 taught this the object-shaped `chapter_too_large` detail. There is exactly
 // ONE parser for API error bodies in this app -- importing it is deliberate, and
 // `upload.service.ts` is not otherwise touched by W3 (Story W3 dev note).
@@ -294,6 +317,38 @@ export const booksService = {
     listChapters: async (bookId: string): Promise<ChapterResponse[]> => {
         const { data } = await api.get<ChapterResponse[]>(`content/books/${bookId}/chapters`);
         return data;
+    },
+
+    /**
+     * Upsert per-book context (Story S5-1, Issue #231).
+     * Always returns 200 — never 409. The server uses ON CONFLICT DO UPDATE.
+     */
+    upsertBookContext: async (
+        bookId: string,
+        ctx: BookContextRequest
+    ): Promise<BookContextResponse> => {
+        const { data } = await api.put<BookContextResponse>(
+            `content/books/${bookId}/context`,
+            ctx
+        );
+        return data;
+    },
+
+    /**
+     * Fetch saved per-book context, or null if none saved yet (204 No Content).
+     */
+    getBookContext: async (bookId: string): Promise<BookContextResponse | null> => {
+        try {
+            const response = await api.get<BookContextResponse>(
+                `content/books/${bookId}/context`
+            );
+            // 204 No Content: data is empty
+            return response.status === 204 ? null : response.data;
+        } catch (error: unknown) {
+            const status = (error as { response?: { status?: number } })?.response?.status;
+            if (status === 204 || status === 404) return null;
+            throw error;
+        }
     },
 
     /**

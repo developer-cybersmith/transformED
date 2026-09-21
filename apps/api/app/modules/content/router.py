@@ -41,6 +41,8 @@ from app.dependencies import ApprovedUser, ArqRedis, CurrentUser
 # Story 1-11: book/chapter read models live in this module, NOT packages/shared
 # (frozen contract, 4-dev review — CLAUDE.md §16).
 from app.modules.content.schemas import (
+    BookContextRequest,
+    BookContextResponse,
     BookResponse,
     ChapterResponse,
     GenerateLessonRequest,
@@ -1505,4 +1507,110 @@ async def generate_chapter_lesson(
         status="queued",
         job_id=job_id,
         truncation_expected=truncation_expected,
+    )
+
+
+# ── Book context endpoints (Story S5-1, Issue #231) ───────────────────────────
+
+
+@router.put(
+    "/books/{book_id}/context",
+    response_model=BookContextResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Save (upsert) per-book learning context",
+)
+async def upsert_book_context(
+    book_id: str,
+    body: BookContextRequest,
+    current_user: CurrentUser,
+) -> BookContextResponse:
+    """Save or update the learner's context for one book.
+
+    All six fields are optional — the student may fill any subset or submit
+    an entirely empty body to clear previously saved answers.
+
+    Returns 200 on both first save and subsequent saves. Never returns 409.
+    The upsert is ON CONFLICT (book_id, user_id) DO UPDATE at the Postgres
+    level — no check-then-act race possible (Scale & Load Q6, Story S5-1).
+
+    Ownership: 404 (not 403) when the book does not exist or belongs to
+    another user, matching all other book endpoints.
+    """
+    from app.modules.content.context import upsert_book_context as _upsert
+
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+    # Ownership check — 404 if not found or another user's book.
+    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
+
+    try:
+        row = await _upsert(
+            book_id=_validated_book_id(book_id),
+            user_id=user_id,
+            why_uploaded=body.why_uploaded,
+            what_to_achieve=body.what_to_achieve,
+            complete_or_selected=body.complete_or_selected,
+            important_sections=body.important_sections,
+            deadline_and_depth=body.deadline_and_depth,
+            follow_or_reorganize=body.follow_or_reorganize,
+        )
+    except Exception as exc:
+        logger.exception("upsert_book_context: failed for book_id=%s", book_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save book context — please retry",
+        ) from exc
+
+    return BookContextResponse(
+        book_id=str(row["book_id"]),
+        why_uploaded=row.get("why_uploaded"),
+        what_to_achieve=row.get("what_to_achieve"),
+        complete_or_selected=row.get("complete_or_selected"),
+        important_sections=row.get("important_sections"),
+        deadline_and_depth=row.get("deadline_and_depth"),
+        follow_or_reorganize=row.get("follow_or_reorganize"),
+        updated_at=str(row["updated_at"]) if row.get("updated_at") else None,
+    )
+
+
+@router.get(
+    "/books/{book_id}/context",
+    summary="Get saved per-book learning context",
+)
+async def get_book_context(
+    book_id: str,
+    current_user: CurrentUser,
+    response: Response,
+) -> BookContextResponse | None:
+    """Return the learner's saved context for one book.
+
+    Returns 200 + the saved row if context exists, or 204 No Content if the
+    student has never submitted context for this book.
+
+    Ownership: 404 (not 403) when the book does not exist or belongs to
+    another user.
+    """
+    from app.modules.content.context import get_book_context_row
+
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
+
+    row = await get_book_context_row(
+        book_id=_validated_book_id(book_id),
+        user_id=user_id,
+    )
+    if row is None:
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return None
+
+    return BookContextResponse(
+        book_id=str(row["book_id"]),
+        why_uploaded=row.get("why_uploaded"),
+        what_to_achieve=row.get("what_to_achieve"),
+        complete_or_selected=row.get("complete_or_selected"),
+        important_sections=row.get("important_sections"),
+        deadline_and_depth=row.get("deadline_and_depth"),
+        follow_or_reorganize=row.get("follow_or_reorganize"),
+        updated_at=str(row["updated_at"]) if row.get("updated_at") else None,
     )

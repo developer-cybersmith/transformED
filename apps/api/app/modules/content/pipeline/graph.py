@@ -133,6 +133,11 @@ class PipelineState(TypedDict, total=False):
 
     # Node 5: lesson_planner
     lesson_plan: dict[str, Any]  # {title, objectives: [], segments: [], total_duration_min}
+    # Story S5-1 (Issue #231): book-level personalization context, fetched once
+    # in lesson_planner_node and propagated to slide_generator and
+    # narration_generator via _FAN_OUT_STATE_KEYS. Empty string when the
+    # student submitted no context.
+    book_context: str
 
     # Node 6: slide_generator
     slides: list[
@@ -1355,10 +1360,19 @@ _TIER_PROMPT_FRAMING: dict[str, str] = {
 }
 
 
-def _planner_system_prompt(tier_framing: str) -> str:
+def _planner_system_prompt(tier_framing: str, book_context: str = "") -> str:
     """The lesson_planner system prompt, shared by the single-call and batched
-    paths (Story 2-16 RC-3) so both issue an identical instruction."""
-    return (
+    paths (Story 2-16 RC-3) so both issue an identical instruction.
+
+    Story S5-1 (Issue #231): `book_context` is the formatted book-level
+    personalization block. When non-empty it is appended after tier_framing
+    at the "book context" precedence slot (§5 of strategy doc). The merge
+    goes through `merge_book_context` so the 2,000-char budget is enforced
+    consistently with the other two prompt sites.
+    """
+    from app.modules.content.pipeline.prompt_context import merge_book_context
+
+    base = (
         "Produce a lesson plan outline from the section summaries below. "
         "Return an overall title, subject, 2-5 learning objectives, an "
         "overall complexity_level (low/medium/high), and return EXACTLY "
@@ -1376,6 +1390,7 @@ def _planner_system_prompt(tier_framing: str) -> str:
         + tier_framing
         + _UNTRUSTED_CONTENT_GUARD
     )
+    return merge_book_context(base, book_context)
 
 
 _PLANNER_BATCH_MAX_ATTEMPTS = 3
@@ -1387,6 +1402,8 @@ async def _run_planner_batch(
     batch: list[dict[str, Any]],
     tier_framing: str,
     lesson_id: str,
+    *,
+    book_context: str = "",
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
@@ -1418,7 +1435,7 @@ async def _run_planner_batch(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
     messages = [
-        {"role": "system", "content": _planner_system_prompt(tier_framing)},
+        {"role": "system", "content": _planner_system_prompt(tier_framing, book_context)},
         {"role": "user", "content": summaries_text},
     ]
 
@@ -1483,9 +1500,21 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     """
     from app.config import get_settings
     from app.core.db import get_supabase
+    from app.modules.content.context import get_book_context_prompt_context
     from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
+
+    # Story S5-1 (Issue #231): fetch book context BEFORE the idempotency cache
+    # check so the context is always returned in state — even on a cache hit,
+    # slide_generator and narration_generator (dispatched after this node)
+    # need it from state["book_context"] via _FAN_OUT_STATE_KEYS. Graceful
+    # on DB error: get_book_context_prompt_context never raises, returns "".
+    book_context = await get_book_context_prompt_context(
+        book_id=state.get("book_id", ""),
+        user_id=state.get("user_id", ""),
+    )
+
     segment_summaries = state.get("segment_summaries", [])
     logger.info(
         "[%s] lesson_planner_node: generating lesson plan from %d segment summaries",
@@ -1550,7 +1579,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-        return {"lesson_plan": cached, "progress_pct": 38.0}
+        return {"lesson_plan": cached, "progress_pct": 38.0, "book_context": book_context}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1619,7 +1648,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     batch_size = settings.lesson_planner_batch_size
     if len(segment_summaries) <= batch_size:
         response = await _run_planner_batch(
-            provider, model, segment_summaries, tier_framing, lesson_id
+            provider, model, segment_summaries, tier_framing, lesson_id,
+            book_context=book_context,
         )
     else:
         batches = [
@@ -1637,7 +1667,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         plan_head: _LessonPlanLLM | None = None
         for batch in batches:
             batch_response = await _run_planner_batch(
-                provider, model, batch, tier_framing, lesson_id
+                provider, model, batch, tier_framing, lesson_id,
+                book_context=book_context,
             )
             if plan_head is None:
                 plan_head = batch_response
@@ -1780,7 +1811,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    return {"lesson_plan": lesson_plan, "progress_pct": 38.0}
+    return {"lesson_plan": lesson_plan, "progress_pct": 38.0, "book_context": book_context}
 
 
 class _SlideLLM(BaseModel):
@@ -1967,21 +1998,27 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         f"{budget_by_id[s['segment_id']][1]} slides for this segment)"
         for s in plan_segments
     )
+    # Story S5-1 (Issue #231): inject book context at the "book context"
+    # precedence slot via the shared merge helper.
+    from app.modules.content.pipeline.prompt_context import merge_book_context
+
+    _slide_book_context = state.get("book_context") or ""
+    _slide_base_prompt = (
+        "Produce a slide deck from the lesson plan segments below. "
+        "Each segment specifies its own slide-count range — respect "
+        "it exactly. Each slide has a short title and a list of "
+        "bullet points. Each bullet must be a single concise point "
+        f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
+        "a full sentence or paragraph; split a longer idea into "
+        "multiple bullets instead. Return EXACTLY one slide-set per "
+        "segment provided, echoing back each segment's segment_id "
+        "UNCHANGED — do not invent, merge, split, omit, or reorder "
+        "segment_ids." + _UNTRUSTED_CONTENT_GUARD
+    )
     messages = [
         {
             "role": "system",
-            "content": (
-                "Produce a slide deck from the lesson plan segments below. "
-                "Each segment specifies its own slide-count range — respect "
-                "it exactly. Each slide has a short title and a list of "
-                "bullet points. Each bullet must be a single concise point "
-                f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
-                "a full sentence or paragraph; split a longer idea into "
-                "multiple bullets instead. Return EXACTLY one slide-set per "
-                "segment provided, echoing back each segment's segment_id "
-                "UNCHANGED — do not invent, merge, split, omit, or reorder "
-                "segment_ids." + _UNTRUSTED_CONTENT_GUARD
-            ),
+            "content": merge_book_context(_slide_base_prompt, _slide_book_context),
         },
         {"role": "user", "content": segments_text},
     ]
@@ -3828,15 +3865,23 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # move the interpolation into the user-role message alongside the section
     # body — same trust level as every other untrusted value, covered by the
     # same guard.
+    # Story S5-1 (Issue #231): inject book context at the "book context"
+    # precedence slot via the shared merge helper. book_context arrives via
+    # _FAN_OUT_STATE_KEYS — added in this story so Send()-dispatched nodes
+    # receive it without re-querying the DB on every section dispatch.
+    from app.modules.content.pipeline.prompt_context import merge_book_context as _merge_bc
+
+    _narration_book_context = state.get("book_context") or ""
+    _narration_base_prompt = (
+        "Write a conversational narration script for this section, as "
+        "if a tutor is speaking it aloud to a learner. Keep it natural "
+        "and paced for spoken delivery."
+        f"{_UNTRUSTED_CONTENT_GUARD}"
+    )
     messages = [
         {
             "role": "system",
-            "content": (
-                "Write a conversational narration script for this section, as "
-                "if a tutor is speaking it aloud to a learner. Keep it natural "
-                "and paced for spoken delivery."
-                f"{_UNTRUSTED_CONTENT_GUARD}"
-            ),
+            "content": _merge_bc(_narration_base_prompt, _narration_book_context),
         },
         {
             "role": "user",
@@ -6120,7 +6165,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # _DEFAULT_TIER ("T2") regardless of the lesson's real tier — silently
 # disabling the S2-LM3/LM4/LM5 tier bands (e.g. quiz_generator_node's
 # _TIER_QUIZ_COUNT_BAND) for every T1 and T3 lesson.
-_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier")
+# Story S5-1 (Issue #231): "book_context" is a str key (last-write-wins, NOT
+# an Annotated[list, operator.add] reducer), so adding it does NOT risk the
+# reducer-channel duplication defect documented in CLAUDE.md. It is added here
+# so narration_generator_node (which is Send()-dispatched by
+# _fan_out_narration_after_planning) receives the context fetched once in
+# lesson_planner_node, without each narration dispatch re-querying the DB.
+_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier", "book_context")
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
 # once, before dispatch, while accumulated cost is still whatever it was
