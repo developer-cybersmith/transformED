@@ -170,6 +170,41 @@ class BookResponse(BaseModel):
     created_at: str | None = None
 
 
+class BookContextRequest(BaseModel):
+    """Body of PUT /books/{book_id}/context (Story S5-1, Issue #231).
+
+    Exactly six fields from AI_Learning_Product_Final_Strategy.pdf §4.2.
+    Every field is optional — a student may fill any subset and skip the rest.
+    Each field is capped at 500 characters (Scale & Load Q2: derived from the
+    2,000-char combined prompt budget, ~6 fields × ~333 chars typical, with a
+    factor-of-1.5 headroom for longer answers).
+
+    `complete_or_selected` is free text rather than a constrained enum because
+    the question is a two-option radio in the UI but we store the raw value for
+    forward-compatibility with future re-framings.
+    """
+
+    why_uploaded: str | None = Field(None, max_length=500)
+    what_to_achieve: str | None = Field(None, max_length=500)
+    complete_or_selected: str | None = Field(None, max_length=500)
+    important_sections: str | None = Field(None, max_length=500)
+    deadline_and_depth: str | None = Field(None, max_length=500)
+    follow_or_reorganize: str | None = Field(None, max_length=500)
+
+
+class BookContextResponse(BaseModel):
+    """Row returned by PUT /books/{book_id}/context and GET /books/{book_id}/context."""
+
+    book_id: str
+    why_uploaded: str | None = None
+    what_to_achieve: str | None = None
+    complete_or_selected: str | None = None
+    important_sections: str | None = None
+    deadline_and_depth: str | None = None
+    follow_or_reorganize: str | None = None
+    updated_at: str | None = None
+
+
 class ChapterResponse(BaseModel):
     """One detected chapter, as returned by GET /books/{book_id}/chapters.
 
