@@ -3,23 +3,41 @@ import { api } from '@/lib/api';
 // Field labels are from AI_Learning_Product_Final_Strategy.pdf §4.2 — see
 // docs/proposals/2026-09-19-platform-changes-scope.md for the extracted wording.
 
+// §4.2 MCQ option types (Q31–Q35)
+export type PurposeValue = 'exam_prep' | 'project_job' | 'deep_mastery' | 'quick_reference' | 'recommended_reading';
+export type CoverageValue = 'complete_book' | 'selected_chapters' | 'difficult_sections' | 'exam_relevant' | 'ai_decide';
+export type DifficultyValue = 'theory_heavy' | 'numerical_formula' | 'case_studies' | 'dense_language' | 'dont_know';
+export type DeadlineValue = 'urgent_2wk' | 'one_month' | 'two_three_months' | 'no_deadline' | 'key_insights_only';
+export type StructureValue = 'follow_exactly' | 'reorganise_by_difficulty' | 'reorganise_by_goal' | 'hybrid' | 'ai_choose';
+
 export interface BookContextRequest {
-    why_uploaded?: string | null;
-    what_to_achieve?: string | null;
-    complete_or_selected?: string | null;
-    important_sections?: string | null;
-    deadline_and_depth?: string | null;
-    follow_or_reorganize?: string | null;
+    // Q31–Q35: MCQ
+    purpose?: PurposeValue | null;
+    coverage_scope?: CoverageValue | null;
+    expected_difficulty?: DifficultyValue | null;
+    deadline_depth?: DeadlineValue | null;
+    structure_preference?: StructureValue | null;
+    // Q36–Q38: one-liners
+    motivation?: string | null;
+    end_goal?: string | null;
+    feared_section?: string | null;
+    // Q39–Q40: true/false
+    prior_attempt?: boolean | null;
+    outcome_clarity?: boolean | null;
 }
 
 export interface BookContextResponse {
     book_id: string;
-    why_uploaded?: string | null;
-    what_to_achieve?: string | null;
-    complete_or_selected?: string | null;
-    important_sections?: string | null;
-    deadline_and_depth?: string | null;
-    follow_or_reorganize?: string | null;
+    purpose?: string | null;
+    coverage_scope?: string | null;
+    expected_difficulty?: string | null;
+    deadline_depth?: string | null;
+    structure_preference?: string | null;
+    motivation?: string | null;
+    end_goal?: string | null;
+    feared_section?: string | null;
+    prior_attempt?: boolean | null;
+    outcome_clarity?: boolean | null;
     updated_at?: string | null;
 }
 // W0 taught this the object-shaped `chapter_too_large` detail. There is exactly

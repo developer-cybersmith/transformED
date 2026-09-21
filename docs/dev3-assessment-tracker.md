@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-21 (S5-1 book-upload personalization form complete — 6-layer adversarial review + all F1-F15 patches applied, 29/29 tests pass; branch sprint5/s5-1-book-context-form ready for PR)
+**Last updated:** 2026-09-11 (S4-34: 35 synthetic sessions + 37-test CI suite done; "Analyse 20+" partial → done; S4-35 EMA MagicMock regression fixed — 10 tests restored, 58/58 pass; S4-32 CES weights applied to Fly.io env vars; S4-36 DNA quality checker CI tests + false-positive fix, 20/20 pass; S4-37 player slide 75/25 split layout — 34/34 tests pass, 6-layer BMAD review done)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -22,9 +22,8 @@
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 14 | 13 | 0 | 1 |
 | Bug Resolution Sprint | Sep 2026 | 4 | 4 | 0 | 0 |
-| Sprint 5 | Product Maturity | 1 | 1 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **75** | **72** | **0** | **3** |
+| **Total** | | **74** | **71** | **0** | **3** |
 
 Update this table each time a task is checked off below.
 
@@ -1136,22 +1135,6 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - 10/10 unit tests GREEN after patches
   - Branch: `feature2/f2-4-voice-teachback-stt`
   - Story: `docs/stories/f2-4-voice-teachback-stt.md` — status: done
-
----
-
-## Sprint 5 — Product Maturity (Sep 2026)
-
-> **Goal:** Deepen personalization of lesson generation using per-book learner context.
-
-- [x] **S5-1: Book-upload personalization form — per-book context — ✓ 2026-09-21**
-  - New `book_context` Supabase table + migration (RLS-protected)
-  - API: `PUT /books/{book_id}/context` (upsert) + `GET /books/{book_id}/context`
-  - Frontend: `BookContextForm` component on BookDetail page (6 fields, optional, dismissable)
-  - Pipeline: `book_context` injected into lesson-planner prompt via `merge_book_context`
-  - AC13: truncation tracked via `book_context_truncated` flag in `LessonMetadata` + Langfuse WARNING
-  - DPDP: only `has_book_context: bool` logged to Langfuse, not raw field values
-  - 6-layer adversarial code review done (F1-F15 findings, all non-deferred patches applied)
-  - 29/29 tests passing; branch: `sprint5/s5-1-book-context-form`
 
 ---
 

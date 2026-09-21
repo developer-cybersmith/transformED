@@ -19,20 +19,33 @@
 
 CREATE TABLE IF NOT EXISTS book_context (
     id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    book_id              UUID         NOT NULL REFERENCES books(book_id) ON DELETE CASCADE,
+    book_id              UUID         NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     user_id              UUID         NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    -- §4.2 field 1: "Why did you upload this book/PDF?"
-    why_uploaded         TEXT,
-    -- §4.2 field 2: "What do you want to achieve from it?"
-    what_to_achieve      TEXT,
-    -- §4.2 field 3: "Complete book or selected chapters?" — "complete" | "selected" | free text
-    complete_or_selected TEXT,
-    -- §4.2 field 4: "Which sections or topics are most important or difficult for you?"
-    important_sections   TEXT,
-    -- §4.2 field 5: "What is your deadline, and how much depth do you want?"
-    deadline_and_depth   TEXT,
-    -- §4.2 field 6: "Should we follow the document exactly, or reorganize it for optimal learning?"
-    follow_or_reorganize TEXT,
+    -- §4.2 Q31 MCQ: "Why have you uploaded this book/PDF?"
+    -- values: exam_prep | project_job | deep_mastery | quick_reference | recommended_reading
+    purpose              TEXT,
+    -- §4.2 Q32 MCQ: "What do you want covered?"
+    -- values: complete_book | selected_chapters | difficult_sections | exam_relevant | ai_decide
+    coverage_scope       TEXT,
+    -- §4.2 Q33 MCQ: "Which parts of this book do you expect to be hardest for you?"
+    -- values: theory_heavy | numerical_formula | case_studies | dense_language | dont_know
+    expected_difficulty  TEXT,
+    -- §4.2 Q34 MCQ: "Your deadline and depth requirement:"
+    -- values: urgent_2wk | one_month | two_three_months | no_deadline | key_insights_only
+    deadline_depth       TEXT,
+    -- §4.2 Q35 MCQ: "Should the tutor follow the book exactly, or reorganise it for learning?"
+    -- values: follow_exactly | reorganise_by_difficulty | reorganise_by_goal | hybrid | ai_choose
+    structure_preference TEXT,
+    -- §4.2 Q36 one-liner: "Why do you want to learn from this specific book — in one honest line?"
+    motivation           TEXT,
+    -- §4.2 Q37 one-liner: "What is the end goal once you finish learning this book?"
+    end_goal             TEXT,
+    -- §4.2 Q38 one-liner: "Which section or topic in this book are you most worried about, and why?"
+    feared_section       TEXT,
+    -- §4.2 Q39 T/F: "I have tried to read this book before and stopped midway."
+    prior_attempt        BOOLEAN,
+    -- §4.2 Q40 T/F: "I can clearly picture how I will use this knowledge in real life."
+    outcome_clarity      BOOLEAN,
     updated_at           TIMESTAMPTZ  NOT NULL DEFAULT now(),
     UNIQUE (book_id, user_id)
 );

@@ -13,7 +13,6 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
-from typing import Literal
 
 from app.schemas.lesson import DEFAULT_TIER, VALID_TIERS
 
@@ -171,38 +170,66 @@ class BookResponse(BaseModel):
     created_at: str | None = None
 
 
+from typing import Literal
+
+# §4.2 MCQ enum types — validated server-side so invalid option strings are
+# rejected at the API boundary (422) before reaching the DB.
+_PurposeValue = Literal[
+    "exam_prep", "project_job", "deep_mastery", "quick_reference", "recommended_reading"
+]
+_CoverageValue = Literal[
+    "complete_book", "selected_chapters", "difficult_sections", "exam_relevant", "ai_decide"
+]
+_DifficultyValue = Literal[
+    "theory_heavy", "numerical_formula", "case_studies", "dense_language", "dont_know"
+]
+_DeadlineValue = Literal[
+    "urgent_2wk", "one_month", "two_three_months", "no_deadline", "key_insights_only"
+]
+_StructureValue = Literal[
+    "follow_exactly", "reorganise_by_difficulty", "reorganise_by_goal", "hybrid", "ai_choose"
+]
+
+
 class BookContextRequest(BaseModel):
     """Body of PUT /books/{book_id}/context (Story S5-1, Issue #231).
 
-    Exactly six fields from AI_Learning_Product_Final_Strategy.pdf §4.2.
-    Every field is optional — a student may fill any subset and skip the rest.
-    Each field is capped at 500 characters (Scale & Load Q2: derived from the
-    2,000-char combined prompt budget, ~6 fields × ~333 chars typical, with a
-    factor-of-1.5 headroom for longer answers).
-
-    `complete_or_selected` and `follow_or_reorganize` are the two radio-button
-    fields in the UI and are constrained to their allowed values at the API
-    layer. Both default to None when not submitted.
+    Ten fields from AI_Learning_Product_Final_Strategy.pdf §4.2
+    ("Book Understanding Form"). Every field is optional.
+    - Q31–Q35: MCQ — stored as enum strings, validated as Literal types.
+    - Q36–Q38: one-liners — free text, capped at 500 characters.
+    - Q39–Q40: true/false — stored as BOOLEAN.
     """
 
-    why_uploaded: str | None = Field(None, max_length=500)
-    what_to_achieve: str | None = Field(None, max_length=500)
-    complete_or_selected: Literal["complete", "selected"] | None = None
-    important_sections: str | None = Field(None, max_length=500)
-    deadline_and_depth: str | None = Field(None, max_length=500)
-    follow_or_reorganize: Literal["follow", "reorganize"] | None = None
+    # Q31–Q35: MCQ
+    purpose: _PurposeValue | None = None
+    coverage_scope: _CoverageValue | None = None
+    expected_difficulty: _DifficultyValue | None = None
+    deadline_depth: _DeadlineValue | None = None
+    structure_preference: _StructureValue | None = None
+    # Q36–Q38: one-liners (500-char cap; Scale & Load Q2)
+    motivation: str | None = Field(None, max_length=500)
+    end_goal: str | None = Field(None, max_length=500)
+    feared_section: str | None = Field(None, max_length=500)
+    # Q39–Q40: true/false
+    prior_attempt: bool | None = None
+    outcome_clarity: bool | None = None
 
 
 class BookContextResponse(BaseModel):
     """Row returned by PUT /books/{book_id}/context and GET /books/{book_id}/context."""
 
     book_id: str
-    why_uploaded: str | None = None
-    what_to_achieve: str | None = None
-    complete_or_selected: str | None = None
-    important_sections: str | None = None
-    deadline_and_depth: str | None = None
-    follow_or_reorganize: str | None = None
+    purpose: str | None = None
+    coverage_scope: str | None = None
+    expected_difficulty: str | None = None
+    deadline_depth: str | None = None
+    structure_preference: str | None = None
+    motivation: str | None = None
+    end_goal: str | None = None
+    feared_section: str | None = None
+    prior_attempt: bool | None = None
+    outcome_clarity: bool | None = None
     updated_at: str | None = None
 
 

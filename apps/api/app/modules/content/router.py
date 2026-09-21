@@ -4,6 +4,8 @@ Content module router.
 Handles PDF upload → lesson pipeline dispatch and lesson status/retrieval.
 """
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import copy
@@ -1643,20 +1645,23 @@ async def upsert_book_context(
 
     user_id: str = current_user["sub"]
     supabase = get_supabase()
-    validated_id = _validated_book_id(book_id)
     # Ownership check — 404 if not found or another user's book.
-    _fetch_owned_book(supabase, validated_id, user_id, "book_id,user_id")
+    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
 
     try:
         row = await _upsert(
-            book_id=validated_id,
+            book_id=_validated_book_id(book_id),
             user_id=user_id,
-            why_uploaded=body.why_uploaded,
-            what_to_achieve=body.what_to_achieve,
-            complete_or_selected=body.complete_or_selected,
-            important_sections=body.important_sections,
-            deadline_and_depth=body.deadline_and_depth,
-            follow_or_reorganize=body.follow_or_reorganize,
+            purpose=body.purpose,
+            coverage_scope=body.coverage_scope,
+            expected_difficulty=body.expected_difficulty,
+            deadline_depth=body.deadline_depth,
+            structure_preference=body.structure_preference,
+            motivation=body.motivation,
+            end_goal=body.end_goal,
+            feared_section=body.feared_section,
+            prior_attempt=body.prior_attempt,
+            outcome_clarity=body.outcome_clarity,
         )
     except Exception as exc:
         logger.exception("upsert_book_context: failed for book_id=%s", book_id)
@@ -1667,12 +1672,16 @@ async def upsert_book_context(
 
     return BookContextResponse(
         book_id=str(row["book_id"]),
-        why_uploaded=row.get("why_uploaded"),
-        what_to_achieve=row.get("what_to_achieve"),
-        complete_or_selected=row.get("complete_or_selected"),
-        important_sections=row.get("important_sections"),
-        deadline_and_depth=row.get("deadline_and_depth"),
-        follow_or_reorganize=row.get("follow_or_reorganize"),
+        purpose=row.get("purpose"),
+        coverage_scope=row.get("coverage_scope"),
+        expected_difficulty=row.get("expected_difficulty"),
+        deadline_depth=row.get("deadline_depth"),
+        structure_preference=row.get("structure_preference"),
+        motivation=row.get("motivation"),
+        end_goal=row.get("end_goal"),
+        feared_section=row.get("feared_section"),
+        prior_attempt=row.get("prior_attempt"),
+        outcome_clarity=row.get("outcome_clarity"),
         updated_at=str(row["updated_at"]) if row.get("updated_at") else None,
     )
 
@@ -1722,12 +1731,12 @@ async def get_chapter_context(
 @router.get(
     "/books/{book_id}/context",
     summary="Get saved per-book learning context",
-    response_model=None,
 )
 async def get_book_context(
     book_id: str,
     current_user: CurrentUser,
-) -> BookContextResponse | Response:
+    response: Response,
+) -> BookContextResponse | None:
     """Return the learner's saved context for one book.
 
     Returns 200 + the saved row if context exists, or 204 No Content if the
@@ -1740,31 +1749,27 @@ async def get_book_context(
 
     user_id: str = current_user["sub"]
     supabase = get_supabase()
-    validated_id = _validated_book_id(book_id)
-    _fetch_owned_book(supabase, validated_id, user_id, "book_id,user_id")
+    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
 
-    try:
-        row = await get_book_context_row(
-            book_id=validated_id,
-            user_id=user_id,
-        )
-    except Exception as exc:
-        logger.exception("get_book_context: failed for book_id=%s", book_id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch book context — please retry",
-        ) from exc
-
+    row = await get_book_context_row(
+        book_id=_validated_book_id(book_id),
+        user_id=user_id,
+    )
     if row is None:
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return None
 
     return BookContextResponse(
         book_id=str(row["book_id"]),
-        why_uploaded=row.get("why_uploaded"),
-        what_to_achieve=row.get("what_to_achieve"),
-        complete_or_selected=row.get("complete_or_selected"),
-        important_sections=row.get("important_sections"),
-        deadline_and_depth=row.get("deadline_and_depth"),
-        follow_or_reorganize=row.get("follow_or_reorganize"),
+        purpose=row.get("purpose"),
+        coverage_scope=row.get("coverage_scope"),
+        expected_difficulty=row.get("expected_difficulty"),
+        deadline_depth=row.get("deadline_depth"),
+        structure_preference=row.get("structure_preference"),
+        motivation=row.get("motivation"),
+        end_goal=row.get("end_goal"),
+        feared_section=row.get("feared_section"),
+        prior_attempt=row.get("prior_attempt"),
+        outcome_clarity=row.get("outcome_clarity"),
         updated_at=str(row["updated_at"]) if row.get("updated_at") else None,
     )
