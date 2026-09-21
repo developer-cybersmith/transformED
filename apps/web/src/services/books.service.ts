@@ -279,6 +279,33 @@ export function generateLessonErrorMessage(error: unknown): string {
     return extractErrorMessage(error, GENERATE_FALLBACK_MESSAGE);
 }
 
+// ── S5-3: Chapter context (§4.3) types and service methods ───────────────────
+
+export type DepthDurationValue =
+    | 'quick_15_20m' | 'standard_30_45m' | 'deep_60_90m' | 'mastery_multi' | 'ai_decide';
+
+export type LearningNeedValue =
+    | 'examples_analogies' | 'formulas_derivations' | 'diagrams_visuals'
+    | 'practice_questions' | 'adaptive_mix';
+
+export interface ChapterContextRequest {
+    depth_duration?: DepthDurationValue | null;
+    learning_need?: LearningNeedValue | null;
+    specific_doubt?: string | null;
+    goal_and_skip?: string | null;
+    prerequisites_done?: boolean | null;
+}
+
+export interface ChapterContextResponse {
+    chapter_id: string;
+    depth_duration: string | null;
+    learning_need: string | null;
+    specific_doubt: string | null;
+    goal_and_skip: string | null;
+    prerequisites_done: boolean | null;
+    updated_at: string | null;
+}
+
 // Relative paths, no leading slash: lib/api.ts's baseURL already ends in /api.
 export const booksService = {
     listBooks: async (limit = 50): Promise<BookResponse[]> => {
@@ -320,5 +347,30 @@ export const booksService = {
         // The ONLY place the 202/200 distinction is still visible. Read it here
         // or lose it: the two bodies are the same shape.
         return { created: response.status === 202, lesson: response.data };
+    },
+
+    /** S5-3: Upsert §4.3 chapter context answers. */
+    putChapterContext: async (
+        bookId: string,
+        chapterId: string,
+        body: ChapterContextRequest
+    ): Promise<ChapterContextResponse> => {
+        const { data } = await api.put<ChapterContextResponse>(
+            `content/books/${bookId}/chapters/${chapterId}/context`,
+            body
+        );
+        return data;
+    },
+
+    /** S5-3: Fetch existing §4.3 chapter context, or null when none exists (204). */
+    getChapterContext: async (
+        bookId: string,
+        chapterId: string
+    ): Promise<ChapterContextResponse | null> => {
+        const response = await api.get<ChapterContextResponse>(
+            `content/books/${bookId}/chapters/${chapterId}/context`
+        );
+        if (response.status === 204) return null;
+        return response.data;
     },
 };

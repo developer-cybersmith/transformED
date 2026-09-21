@@ -1355,9 +1355,13 @@ _TIER_PROMPT_FRAMING: dict[str, str] = {
 }
 
 
-def _planner_system_prompt(tier_framing: str) -> str:
+def _planner_system_prompt(tier_framing: str, chapter_context: str = "") -> str:
     """The lesson_planner system prompt, shared by the single-call and batched
-    paths (Story 2-16 RC-3) so both issue an identical instruction."""
+    paths (Story 2-16 RC-3) so both issue an identical instruction.
+
+    S5-3: `chapter_context` appended after tier_framing at the 'chapter
+    instructions' precedence slot (§5 strategy doc). Empty string is safe.
+    """
     return (
         "Produce a lesson plan outline from the section summaries below. "
         "Return an overall title, subject, 2-5 learning objectives, an "
@@ -1374,6 +1378,7 @@ def _planner_system_prompt(tier_framing: str) -> str:
         "segment and for any segment with nothing worth reiterating — "
         "do not invent a callback that isn't genuinely useful."
         + tier_framing
+        + chapter_context
         + _UNTRUSTED_CONTENT_GUARD
     )
 
@@ -1387,6 +1392,7 @@ async def _run_planner_batch(
     batch: list[dict[str, Any]],
     tier_framing: str,
     lesson_id: str,
+    chapter_context: str = "",
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
@@ -1418,7 +1424,7 @@ async def _run_planner_batch(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
     messages = [
-        {"role": "system", "content": _planner_system_prompt(tier_framing)},
+        {"role": "system", "content": _planner_system_prompt(tier_framing, chapter_context)},
         {"role": "user", "content": summaries_text},
     ]
 
@@ -1594,6 +1600,20 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         tier = _DEFAULT_TIER
     tier_framing = _TIER_PROMPT_FRAMING.get(tier, "")
 
+    # S5-3: fetch chapter context and append to planner prompt at the
+    # "chapter instructions" precedence slot (§5 of strategy doc).
+    # Graceful: if chapter_id/user_id are absent or the fetch fails, continue
+    # with empty string — lesson generation is never blocked by missing context.
+    chapter_id_for_ctx = state.get("chapter_id", "")
+    user_id_for_ctx = state.get("user_id", "")
+    chapter_ctx_block = ""
+    if chapter_id_for_ctx and user_id_for_ctx:
+        from app.modules.content.context_chapter import get_chapter_context_prompt_block
+        chapter_ctx_block = await get_chapter_context_prompt_block(
+            chapter_id_for_ctx, user_id_for_ctx
+        )
+    has_chapter_context = bool(chapter_ctx_block)
+
     # Story 2-16 (RC-3): a single completion asked to echo back many segment_ids
     # collapses the list (44-in/10-out crashed the whole job). At or below
     # settings.lesson_planner_batch_size this is a single call (unchanged
@@ -1619,7 +1639,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     batch_size = settings.lesson_planner_batch_size
     if len(segment_summaries) <= batch_size:
         response = await _run_planner_batch(
-            provider, model, segment_summaries, tier_framing, lesson_id
+            provider, model, segment_summaries, tier_framing, lesson_id,
+            chapter_context=chapter_ctx_block,
         )
     else:
         batches = [
@@ -1627,17 +1648,20 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             for i in range(0, len(segment_summaries), batch_size)
         ]
         logger.info(
-            "[%s] lesson_planner_node: %d summaries > batch_size %d — planning in %d batches",
+            "[%s] lesson_planner_node: %d summaries > batch_size %d — planning in %d batches"
+            " (has_chapter_context=%s)",
             lesson_id,
             len(segment_summaries),
             batch_size,
             len(batches),
+            has_chapter_context,
         )
         collected_segments: list[_LessonPlanSegmentLLM] = []
         plan_head: _LessonPlanLLM | None = None
         for batch in batches:
             batch_response = await _run_planner_batch(
-                provider, model, batch, tier_framing, lesson_id
+                provider, model, batch, tier_framing, lesson_id,
+                chapter_context=chapter_ctx_block,
             )
             if plan_head is None:
                 plan_head = batch_response
@@ -1779,6 +1803,11 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         }
     ).eq("lesson_id", lesson_id).execute()
 
+    logger.info(
+        "[%s] lesson_planner_node: complete — has_chapter_context=%s",
+        lesson_id,
+        has_chapter_context,
+    )
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
     return {"lesson_plan": lesson_plan, "progress_pct": 38.0}
 

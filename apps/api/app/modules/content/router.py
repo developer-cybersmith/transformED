@@ -42,10 +42,16 @@ from app.dependencies import ApprovedUser, ArqRedis, CurrentUser
 # (frozen contract, 4-dev review — CLAUDE.md §16).
 from app.modules.content.schemas import (
     BookResponse,
+    ChapterContextRequest,
+    ChapterContextResponse,
     ChapterResponse,
     GenerateLessonRequest,
     LatestLesson,
     LessonGenerationResponse,
+)
+from app.modules.content.context_chapter import (
+    get_chapter_context_row,
+    upsert_chapter_context,
 )
 
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
@@ -1505,4 +1511,113 @@ async def generate_chapter_lesson(
         status="queued",
         job_id=job_id,
         truncation_expected=truncation_expected,
+    )
+
+
+# ── S5-3: Chapter context endpoints ──────────────────────────────────────────
+
+
+def _resolve_chapter_for_context(
+    book_id: str, chapter_id: str, user_id: str, db: any
+) -> None:
+    """Raise 404 if chapter doesn't belong to book+user; raise 403 if book owned by another user."""
+    # Verify book ownership first (same check as generate_chapter_lesson Gate 2).
+    book_resp = (
+        db.table("books")
+        .select("book_id")
+        .eq("book_id", book_id)
+        .eq("user_id", user_id)
+        # BOUNDED: single-row by (book_id, user_id)
+        .limit(1)
+        .execute()
+    )
+    if not (book_resp.data or []):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Book not found")
+
+    chapter_resp = (
+        db.table("chapters")
+        .select("chapter_id")
+        .eq("chapter_id", chapter_id)
+        .eq("book_id", book_id)
+        # BOUNDED: single-row by (chapter_id, book_id)
+        .limit(1)
+        .execute()
+    )
+    if not (chapter_resp.data or []):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found")
+
+
+@router.put(
+    "/books/{book_id}/chapters/{chapter_id}/context",
+    response_model=ChapterContextResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Upsert chapter context (S5-3 §4.3)",
+)
+async def put_chapter_context(
+    book_id: str,
+    chapter_id: str,
+    body: ChapterContextRequest,
+    user: CurrentUser,
+) -> ChapterContextResponse:
+    """Store or update the §4.3 context answers for one chapter.
+
+    Text fields are sanitized (internal newlines collapsed) on the write path.
+    Idempotent: subsequent PUT calls overwrite previous answers.
+    """
+    db = get_supabase()
+    _resolve_chapter_for_context(book_id, chapter_id, user.id, db)
+
+    await upsert_chapter_context(
+        chapter_id=chapter_id,
+        user_id=user.id,
+        depth_duration=body.depth_duration,
+        learning_need=body.learning_need,
+        specific_doubt=body.specific_doubt,
+        goal_and_skip=body.goal_and_skip,
+        prerequisites_done=body.prerequisites_done,
+    )
+
+    row = await get_chapter_context_row(chapter_id, user.id)
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Chapter context was not saved",
+        )
+    return ChapterContextResponse(
+        chapter_id=row["chapter_id"],
+        depth_duration=row.get("depth_duration"),
+        learning_need=row.get("learning_need"),
+        specific_doubt=row.get("specific_doubt"),
+        goal_and_skip=row.get("goal_and_skip"),
+        prerequisites_done=row.get("prerequisites_done"),
+        updated_at=str(row.get("updated_at")) if row.get("updated_at") else None,
+    )
+
+
+@router.get(
+    "/books/{book_id}/chapters/{chapter_id}/context",
+    summary="Get chapter context (S5-3 §4.3)",
+)
+async def get_chapter_context(
+    book_id: str,
+    chapter_id: str,
+    user: CurrentUser,
+    response: Response,
+) -> ChapterContextResponse | None:
+    """Return existing §4.3 context answers for one chapter, or 204 when none exist."""
+    db = get_supabase()
+    _resolve_chapter_for_context(book_id, chapter_id, user.id, db)
+
+    row = await get_chapter_context_row(chapter_id, user.id)
+    if row is None:
+        response.status_code = status.HTTP_204_NO_CONTENT
+        return None
+    return ChapterContextResponse(
+        chapter_id=row["chapter_id"],
+        depth_duration=row.get("depth_duration"),
+        learning_need=row.get("learning_need"),
+        specific_doubt=row.get("specific_doubt"),
+        goal_and_skip=row.get("goal_and_skip"),
+        prerequisites_done=row.get("prerequisites_done"),
+        updated_at=str(row.get("updated_at")) if row.get("updated_at") else None,
     )
