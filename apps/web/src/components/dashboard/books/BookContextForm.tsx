@@ -83,6 +83,14 @@ export function BookContextForm({ bookId }: BookContextFormProps) {
     const [error, setError] = useState<string | null>(null);
 
     useEffect(() => {
+        setDismissed(false);
+        setValues(EMPTY);
+        setSavedAt(null);
+        setError(null);
+        setLoading(true);
+    }, [bookId]);
+
+    useEffect(() => {
         let cancelled = false;
         (async () => {
             try {
@@ -141,12 +149,15 @@ export function BookContextForm({ bookId }: BookContextFormProps) {
                         Optional — helps us personalise every lesson we generate from it.
                     </p>
                 </div>
-                <button
+                <a
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setDismissed(true)}
-                    className="shrink-0 text-sm text-neutral-400 hover:text-neutral-600 transition-colors"
+                    onKeyDown={(e) => e.key === "Enter" && setDismissed(true)}
+                    className="shrink-0 cursor-pointer text-sm text-neutral-400 hover:text-neutral-600 transition-colors"
                 >
                     Skip for now
-                </button>
+                </a>
             </div>
 
             <div className="space-y-4">

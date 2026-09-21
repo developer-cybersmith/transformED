@@ -138,6 +138,9 @@ class PipelineState(TypedDict, total=False):
     # narration_generator via _FAN_OUT_STATE_KEYS. Empty string when the
     # student submitted no context.
     book_context: str
+    # Story S5-1 AC13: True when merge_book_context truncated the book-context block.
+    # Set by lesson_planner_node; read by package_builder_node for lessons.metadata.
+    book_context_truncated: bool
 
     # Node 6: slide_generator
     slides: list[
@@ -1514,6 +1517,9 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         book_id=state.get("book_id", ""),
         user_id=state.get("user_id", ""),
     )
+    # F4 (DPDP): only log the boolean presence flag to Langfuse — never the raw
+    # field values (which are personal data under DPDP Act 2023).
+    logger.info("[%s] lesson_planner_node: has_book_context=%s", lesson_id, bool(book_context))
 
     segment_summaries = state.get("segment_summaries", [])
     logger.info(
@@ -1579,7 +1585,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-        return {"lesson_plan": cached, "progress_pct": 38.0, "book_context": book_context}
+        return {"lesson_plan": cached, "progress_pct": 38.0, "book_context": book_context, "book_context_truncated": False}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1803,6 +1809,39 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         "segments": segments_out,
     }
 
+    # Story S5-1 AC13: detect truncation by comparing raw length to the budget.
+    # merge_book_context is pure and called inside _run_planner_batch — we derive
+    # the flag here rather than threading a return value through the batch helper.
+    from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
+    was_truncated = bool(book_context) and len(book_context.strip()) > _BOOK_CONTEXT_MAX_CHARS
+    if was_truncated:
+        # Explicit surfaced degradation — a logger.warning alone does not satisfy
+        # CLAUDE.md's "visible to caller/admin" requirement (binding rule: silent
+        # truncation is never acceptable). Emit a Langfuse WARNING-level event so
+        # the truncation is visible in the Langfuse trace alongside this lesson.
+        from app.core.langfuse import get_langfuse, deterministic_trace_context, safe_trace
+        _lf = get_langfuse()
+        _tc = deterministic_trace_context(_lf, lesson_id)
+        safe_trace(
+            lambda: _lf.start_observation(
+                name="book_context_truncated",
+                as_type="event",
+                level="WARNING",
+                trace_context=_tc,
+                metadata={
+                    "has_book_context": True,
+                    "raw_length": len(book_context.strip()),
+                    "budget_chars": _BOOK_CONTEXT_MAX_CHARS,
+                    "lesson_id": lesson_id,
+                },
+            ).end()
+        )
+        logger.warning(
+            "[%s] lesson_planner_node: book_context truncated (%d chars > %d budget) — "
+            "book_context_truncated=True will be persisted to lessons.metadata",
+            lesson_id, len(book_context.strip()), _BOOK_CONTEXT_MAX_CHARS,
+        )
+
     supabase.table("lesson_jobs").update(
         {
             "last_node": "lesson_planner",
@@ -1811,7 +1850,12 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    return {"lesson_plan": lesson_plan, "progress_pct": 38.0, "book_context": book_context}
+    return {
+        "lesson_plan": lesson_plan,
+        "progress_pct": 38.0,
+        "book_context": book_context,
+        "book_context_truncated": was_truncated,
+    }
 
 
 class _SlideLLM(BaseModel):
@@ -6100,6 +6144,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             # matches lesson_planner_node's identical validity check rather
             # than trusting the entry-point guard alone.
             "tier": state.get("tier") if state.get("tier") in _VALID_TIERS else _DEFAULT_TIER,
+            # Story S5-1 AC13: persist truncation flag so admin dashboard and
+            # lesson-quality tooling can surface lessons where book context was cut.
+            "book_context_truncated": bool(state.get("book_context_truncated", False)),
         },
         "segments": segments_out,
         "glossary": glossary_out,

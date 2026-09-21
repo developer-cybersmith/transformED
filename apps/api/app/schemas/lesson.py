@@ -56,6 +56,9 @@ class LessonMetadata(BaseModel):
     estimated_duration_mins: Annotated[float, Field(ge=0)]
     complexity_level: str  # free string per schema; ComplexityLevel if constraining later
     tier: LessonTier = "T2"  # Story 2-2 — defaults T2 so existing callers/fixtures are unaffected
+    # Story S5-1 AC13: True when merge_book_context truncated the book-context block
+    # due to the 2,000-char budget. Default False so existing lessons validate without migration.
+    book_context_truncated: bool = False
 
 
 # ---------------------------------------------------------------------------

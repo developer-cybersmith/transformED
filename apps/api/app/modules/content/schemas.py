@@ -11,6 +11,7 @@ The router still declares its older lesson models inline; new models land here.
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator
+from typing import Literal
 
 from app.schemas.lesson import DEFAULT_TIER, VALID_TIERS
 
@@ -137,17 +138,17 @@ class BookContextRequest(BaseModel):
     2,000-char combined prompt budget, ~6 fields × ~333 chars typical, with a
     factor-of-1.5 headroom for longer answers).
 
-    `complete_or_selected` is free text rather than a constrained enum because
-    the question is a two-option radio in the UI but we store the raw value for
-    forward-compatibility with future re-framings.
+    `complete_or_selected` and `follow_or_reorganize` are the two radio-button
+    fields in the UI and are constrained to their allowed values at the API
+    layer. Both default to None when not submitted.
     """
 
     why_uploaded: str | None = Field(None, max_length=500)
     what_to_achieve: str | None = Field(None, max_length=500)
-    complete_or_selected: str | None = Field(None, max_length=500)
+    complete_or_selected: Literal["complete", "selected"] | None = None
     important_sections: str | None = Field(None, max_length=500)
     deadline_and_depth: str | None = Field(None, max_length=500)
-    follow_or_reorganize: str | None = Field(None, max_length=500)
+    follow_or_reorganize: Literal["follow", "reorganize"] | None = None
 
 
 class BookContextResponse(BaseModel):

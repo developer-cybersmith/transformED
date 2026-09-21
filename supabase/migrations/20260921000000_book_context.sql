@@ -19,7 +19,7 @@
 
 CREATE TABLE IF NOT EXISTS book_context (
     id                   UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    book_id              UUID         NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+    book_id              UUID         NOT NULL REFERENCES books(book_id) ON DELETE CASCADE,
     user_id              UUID         NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
     -- §4.2 field 1: "Why did you upload this book/PDF?"
     why_uploaded         TEXT,

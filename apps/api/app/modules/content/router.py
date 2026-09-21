@@ -4,8 +4,6 @@ Content module router.
 Handles PDF upload → lesson pipeline dispatch and lesson status/retrieval.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import copy
@@ -1540,12 +1538,13 @@ async def upsert_book_context(
 
     user_id: str = current_user["sub"]
     supabase = get_supabase()
+    validated_id = _validated_book_id(book_id)
     # Ownership check — 404 if not found or another user's book.
-    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
+    _fetch_owned_book(supabase, validated_id, user_id, "book_id,user_id")
 
     try:
         row = await _upsert(
-            book_id=_validated_book_id(book_id),
+            book_id=validated_id,
             user_id=user_id,
             why_uploaded=body.why_uploaded,
             what_to_achieve=body.what_to_achieve,
@@ -1576,12 +1575,12 @@ async def upsert_book_context(
 @router.get(
     "/books/{book_id}/context",
     summary="Get saved per-book learning context",
+    response_model=None,
 )
 async def get_book_context(
     book_id: str,
     current_user: CurrentUser,
-    response: Response,
-) -> BookContextResponse | None:
+) -> BookContextResponse | Response:
     """Return the learner's saved context for one book.
 
     Returns 200 + the saved row if context exists, or 204 No Content if the
@@ -1594,15 +1593,23 @@ async def get_book_context(
 
     user_id: str = current_user["sub"]
     supabase = get_supabase()
-    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
+    validated_id = _validated_book_id(book_id)
+    _fetch_owned_book(supabase, validated_id, user_id, "book_id,user_id")
 
-    row = await get_book_context_row(
-        book_id=_validated_book_id(book_id),
-        user_id=user_id,
-    )
+    try:
+        row = await get_book_context_row(
+            book_id=validated_id,
+            user_id=user_id,
+        )
+    except Exception as exc:
+        logger.exception("get_book_context: failed for book_id=%s", book_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch book context — please retry",
+        ) from exc
+
     if row is None:
-        response.status_code = status.HTTP_204_NO_CONTENT
-        return None
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return BookContextResponse(
         book_id=str(row["book_id"]),

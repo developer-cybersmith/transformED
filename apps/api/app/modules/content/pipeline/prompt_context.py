@@ -51,6 +51,12 @@ def merge_book_context(base_prompt: str, book_context: str) -> str:
     if not book_context:
         return base_prompt
 
+    # Normalize: strip leading/trailing whitespace so a leading "\n" does not
+    # cause rfind("\n") to return 0 and fall back to a char-boundary cut (F15).
+    book_context = book_context.strip()
+    if not book_context:
+        return base_prompt
+
     if len(book_context) <= _BOOK_CONTEXT_MAX_CHARS:
         return base_prompt + "\n\n" + book_context
 
