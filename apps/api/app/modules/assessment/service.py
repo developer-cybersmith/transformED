@@ -2327,6 +2327,49 @@ async def get_learner_context(
     )
 
 
+async def get_dna_prompt_context(*, user_id: str, supabase: Client) -> str:
+    """Return a student's historical Learner DNA as an LLM-ready prompt string.
+
+    Story F2-5. Called by the content-generation pipeline (`fetch_learner_context_node`,
+    `content/pipeline/graph.py`) — reuses this exact query/banding/formatting logic
+    from `get_learner_context` (Story F2-1), keyed by `user_id` alone since content
+    generation has no assessment session yet. Returns "" (never raises, never None)
+    when the student has no `learner_dna` row — graceful degradation for a new
+    student who hasn't completed onboarding.
+
+    Descriptive language only — no raw numeric dimension values (reused from
+    `_build_learner_prompt_text`, already covers this).
+    """
+    dna_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("learner_dna")
+            .select(
+                "badge_labels, profile_text, session_count, "
+                "pattern_recognition, logical_deduction, processing_speed, "
+                "frustration_tolerance, persistence, help_seeking, "
+                "goal_orientation, curiosity_index, study_independence"
+            )
+            .eq("user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+    )
+    dna_row = single_row(dna_resp)
+
+    if dna_row is None:
+        return ""
+
+    dim_labels = {dim: _dim_band(dna_row.get(dim)) for dim in ALL_NINE_DIMENSIONS}
+    learner_dna = LearnerContextDNA(
+        badge_labels=dna_row.get("badge_labels") or [],
+        profile_text=dna_row.get("profile_text"),
+        session_count=int(dna_row.get("session_count") or 0),
+        dimension_labels=dim_labels,
+    )
+
+    return _build_learner_prompt_text(learner_dna, LearnerContextSession())
+
+
 # ── Tutor Q&A (Story 4-28, Phase 2 P2-1, closes D149) ───────────────────────────
 #
 # Real backend behind the already-shipped, currently-100%-mocked "Ask Tutor"

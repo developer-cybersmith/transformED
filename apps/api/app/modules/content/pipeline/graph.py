@@ -114,6 +114,11 @@ class PipelineState(TypedDict, total=False):
     # Node 4: embed
     embeddings_stored: bool
 
+    # Node 4b: fetch_learner_context (Story F2-5)
+    # "" when the student has no learner_dna row yet (new/onboarding-incomplete)
+    # — never absent, never None; every consumer treats "" as a plain no-op.
+    dna_context: str
+
     # Node 5: lesson_planner
     lesson_plan: dict[str, Any]  # {title, objectives: [], segments: [], total_duration_min}
 
@@ -1155,6 +1160,66 @@ async def embed_node(state: PipelineState) -> PipelineState:
     return {"embeddings_stored": True}
 
 
+@traced_node("fetch_learner_context_node")
+async def fetch_learner_context_node(state: PipelineState) -> PipelineState:
+    """Node 4b (Story F2-5): fetch this student's Learner DNA once per lesson
+    generation, so lesson_planner/slide_generator/narration_generator can
+    personalize their prompts.
+
+    Sits between `embed` and the Phase-1 Send() fan-out — this is the last
+    point before narration_generator (Phase 1, dispatched once per section)
+    needs the value, and the first point after which lesson_planner/
+    slide_generator (Phase 2, sequential) can just read it from state.
+
+    Idempotent via the same checkpoint pattern every other node in this file
+    uses (see embed_node just above): a fresh run calls
+    get_dna_prompt_context() once and checkpoints the result; an ARQ retry
+    of the same job returns the already-checkpointed value without
+    re-querying, so dna_context can never silently change mid-generation
+    across nodes that consume it at different times.
+
+    Delegates the actual query/banding/formatting to
+    app.modules.assessment.service.get_dna_prompt_context — reuses Story
+    F2-1's already-reviewed logic rather than duplicating it here.
+    """
+    from app.core.db import get_supabase
+    from app.modules.assessment.service import get_dna_prompt_context
+
+    lesson_id = state["lesson_id"]
+    user_id = state["user_id"]
+    supabase = get_supabase()
+
+    # ── Idempotency: return cached output if this node already completed ──────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
+
+    if "fetch_learner_context" in node_outputs:
+        cached = node_outputs["fetch_learner_context"]
+        logger.info("[%s] fetch_learner_context_node: cache hit", lesson_id)
+        return {"dna_context": cached.get("dna_context", "")}
+
+    dna_context = await get_dna_prompt_context(user_id=user_id, supabase=supabase)
+
+    supabase.table("lesson_jobs").update(
+        {
+            "last_node": "fetch_learner_context",
+            "node_outputs": {
+                **node_outputs,
+                "fetch_learner_context": {"dna_context": dna_context},
+            },
+        }
+    ).eq("lesson_id", lesson_id).execute()
+
+    return {"dna_context": dna_context}
+
+
 class _LessonPlanSegmentLLM(BaseModel):
     """Internal structured-output shape for one outline entry in
     lesson_planner_node's response — deliberately has no `summary` field: the
@@ -1304,10 +1369,16 @@ _TIER_PROMPT_FRAMING: dict[str, str] = {
 }
 
 
-def _planner_system_prompt(tier_framing: str) -> str:
+def _planner_system_prompt(tier_framing: str, dna_context: str = "") -> str:
     """The lesson_planner system prompt, shared by the single-call and batched
-    paths (Story 2-16 RC-3) so both issue an identical instruction."""
-    return (
+    paths (Story 2-16 RC-3) so both issue an identical instruction.
+
+    Story F2-5: dna_context (from fetch_learner_context_node, "" for a new
+    student with no learner_dna row yet) is appended verbatim when non-empty
+    — an empty string leaves this function's output byte-identical to its
+    pre-F2-5 behaviour, the graceful-degradation guarantee AC5 requires.
+    """
+    base = (
         "Produce a lesson plan outline from the section summaries below. "
         "Return an overall title, subject, 2-5 learning objectives, an "
         "overall complexity_level (low/medium/high), and return EXACTLY "
@@ -1317,6 +1388,9 @@ def _planner_system_prompt(tier_framing: str) -> str:
         "title and an estimated duration_min (minutes of narration/slide "
         "time for that segment)." + tier_framing + _UNTRUSTED_CONTENT_GUARD
     )
+    if dna_context:
+        return base + "\n\n" + dna_context
+    return base
 
 
 _PLANNER_BATCH_MAX_ATTEMPTS = 3
@@ -1328,6 +1402,7 @@ async def _run_planner_batch(
     batch: list[dict[str, Any]],
     tier_framing: str,
     lesson_id: str,
+    dna_context: str = "",
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
@@ -1359,7 +1434,7 @@ async def _run_planner_batch(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
     messages = [
-        {"role": "system", "content": _planner_system_prompt(tier_framing)},
+        {"role": "system", "content": _planner_system_prompt(tier_framing, dna_context)},
         {"role": "user", "content": summaries_text},
     ]
 
@@ -1513,6 +1588,9 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     if tier not in _VALID_TIERS:
         tier = _DEFAULT_TIER
     tier_framing = _TIER_PROMPT_FRAMING.get(tier, "")
+    # Story F2-5: "" for a new student with no learner_dna row yet — every
+    # downstream call below treats "" as a no-op (see _planner_system_prompt).
+    dna_context = state.get("dna_context", "")
 
     # Story 2-16 (RC-3): a single completion asked to echo back many segment_ids
     # collapses the list (44-in/10-out crashed the whole job). At or below
@@ -1524,7 +1602,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     batch_size = settings.lesson_planner_batch_size
     if len(segment_summaries) <= batch_size:
         response = await _run_planner_batch(
-            provider, model, segment_summaries, tier_framing, lesson_id
+            provider, model, segment_summaries, tier_framing, lesson_id, dna_context
         )
     else:
         batches = [
@@ -1542,7 +1620,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         plan_head: _LessonPlanLLM | None = None
         for batch in batches:
             batch_response = await _run_planner_batch(
-                provider, model, batch, tier_framing, lesson_id
+                provider, model, batch, tier_framing, lesson_id, dna_context
             )
             if plan_head is None:
                 plan_head = batch_response
@@ -1860,22 +1938,26 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         f"{budget_by_id[s['segment_id']][1]} slides for this segment)"
         for s in plan_segments
     )
+    # Story F2-5: "" for a new student with no learner_dna row yet — appended
+    # only when non-empty, so the prompt is byte-identical to pre-F2-5
+    # behaviour in that case.
+    dna_context = state.get("dna_context", "")
+    slide_system_prompt = (
+        "Produce a slide deck from the lesson plan segments below. "
+        "Each segment specifies its own slide-count range — respect "
+        "it exactly. Each slide has a short title and a list of "
+        "bullet points. Each bullet must be a single concise point "
+        f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
+        "a full sentence or paragraph; split a longer idea into "
+        "multiple bullets instead. Return EXACTLY one slide-set per "
+        "segment provided, echoing back each segment's segment_id "
+        "UNCHANGED — do not invent, merge, split, omit, or reorder "
+        "segment_ids." + _UNTRUSTED_CONTENT_GUARD
+    )
+    if dna_context:
+        slide_system_prompt += "\n\n" + dna_context
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Produce a slide deck from the lesson plan segments below. "
-                "Each segment specifies its own slide-count range — respect "
-                "it exactly. Each slide has a short title and a list of "
-                "bullet points. Each bullet must be a single concise point "
-                f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
-                "a full sentence or paragraph; split a longer idea into "
-                "multiple bullets instead. Return EXACTLY one slide-set per "
-                "segment provided, echoing back each segment's segment_id "
-                "UNCHANGED — do not invent, merge, split, omit, or reorder "
-                "segment_ids." + _UNTRUSTED_CONTENT_GUARD
-            ),
-        },
+        {"role": "system", "content": slide_system_prompt},
         {"role": "user", "content": segments_text},
     ]
 
@@ -3616,16 +3698,21 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # move the interpolation into the user-role message alongside the section
     # body — same trust level as every other untrusted value, covered by the
     # same guard.
+    # Story F2-5: "" for a new student with no learner_dna row yet — appended
+    # only when non-empty, so the prompt is byte-identical to pre-F2-5
+    # behaviour in that case. Delivered via _FAN_OUT_STATE_KEYS since this
+    # node is Send()-dispatched (Phase 1) — see fetch_learner_context_node.
+    narration_dna_context = state.get("dna_context", "")
+    narration_system_prompt = (
+        "Write a conversational narration script for this section, as "
+        "if a tutor is speaking it aloud to a learner. Keep it natural "
+        "and paced for spoken delivery."
+        f"{_UNTRUSTED_CONTENT_GUARD}"
+    )
+    if narration_dna_context:
+        narration_system_prompt += "\n\n" + narration_dna_context
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "Write a conversational narration script for this section, as "
-                "if a tutor is speaking it aloud to a learner. Keep it natural "
-                "and paced for spoken delivery."
-                f"{_UNTRUSTED_CONTENT_GUARD}"
-            ),
-        },
+        {"role": "system", "content": narration_system_prompt},
         {"role": "user", "content": f"{style_instruction}\n\n{body}"},
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _NarrationScriptLLM)
@@ -5604,7 +5691,18 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # _DEFAULT_TIER ("T2") regardless of the lesson's real tier — silently
 # disabling the S2-LM3/LM4/LM5 tier bands (e.g. quiz_generator_node's
 # _TIER_QUIZ_COUNT_BAND) for every T1 and T3 lesson.
-_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier")
+_FAN_OUT_STATE_KEYS: tuple[str, ...] = (
+    "lesson_id",
+    "user_id",
+    "book_id",
+    "tier",
+    # Story F2-5: without this, narration_generator (the only Phase-1 node
+    # among the three DNA-context consumers) would silently see "" via its
+    # own .get() default regardless of what fetch_learner_context_node
+    # actually fetched — same failure shape "tier" above already had (see
+    # this tuple's own review-finding comment further down).
+    "dna_context",
+)
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
 # once, before dispatch, while accumulated cost is still whatever it was
@@ -5726,11 +5824,12 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
 
     graph: StateGraph[Any] = StateGraph(PipelineState)
 
-    # Register all 14 nodes
+    # Register all 15 nodes
     graph.add_node("extract", extract_node)
     graph.add_node("structure", structure_node)
     graph.add_node("chunk", chunk_node)
     graph.add_node("embed", embed_node)
+    graph.add_node("fetch_learner_context", fetch_learner_context_node)
     graph.add_node("lesson_planner", lesson_planner_node)
     graph.add_node("slide_generator", slide_generator_node)
     graph.add_node("summarise_segment", summarise_segment_node)
@@ -5749,6 +5848,13 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     graph.add_edge("structure", "chunk")
     graph.add_edge("chunk", "embed")
 
+    # Story F2-5: fetch_learner_context sits between embed and the Phase-1
+    # fan-out — the last point before narration_generator (Phase 1,
+    # dispatched once per section below) needs dna_context, and checkpointed
+    # like every other node so an ARQ retry never re-fetches (see the node's
+    # own docstring for why this can't live inside embed_node itself).
+    graph.add_edge("embed", "fetch_learner_context")
+
     # Story 2-1 AC-0: embed fans out to all 6 Phase 1 economy nodes, once per
     # section, via Send() — replacing the old direct embed -> lesson_planner
     # edge that let lesson_planner run with zero segment summaries available
@@ -5758,7 +5864,9 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     # NOT constrain what _fan_out_phase1_economy_nodes can actually dispatch at
     # runtime. The router always returns Send() objects, never one of these
     # literal strings, so this is not an enforced allow-list.
-    graph.add_conditional_edges("embed", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
+    graph.add_conditional_edges(
+        "fetch_learner_context", _fan_out_phase1_economy_nodes, _ECONOMY_NODES
+    )
 
     # Join: lesson_planner only runs once ALL fanned-out economy-node dispatches
     # (6 nodes x N sections) have completed for this superstep.

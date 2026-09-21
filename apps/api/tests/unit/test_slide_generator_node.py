@@ -193,6 +193,61 @@ async def test_prompt_never_includes_raw_summaries_or_sections() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_dna_context_appears_in_system_prompt_when_present() -> None:
+    """Story F2-5 AC4: non-empty dna_context must reach the system-role message."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response()
+    sb = _mock_supabase()
+
+    state = _base_state(dna_context="Student Learning Profile: strong in pattern recognition.")
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await slide_generator_node(state)
+
+    sent_messages = mock_provider.complete_structured.call_args.args[0]
+    system_message = next(m["content"] for m in sent_messages if m["role"] == "system")
+    assert "Student Learning Profile: strong in pattern recognition." in system_message
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dna_context_absent_leaves_system_prompt_unchanged() -> None:
+    """Story F2-5 AC5: no dna_context in state (new student / pre-F2-5 lesson_jobs
+    row) must produce the exact pre-F2-5 prompt — asserted against the real
+    literal ending, not just "two same-value calls agree" (which would pass
+    even if dna_context were unconditionally appended, since both calls
+    resolve to the same empty value either way)."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    prompts: list[str] = []
+    for state in (_base_state(), _base_state(dna_context="")):
+        mock_provider = AsyncMock()
+        mock_provider.complete_structured.return_value = _deck_response()
+        sb = _mock_supabase()
+        with (
+            patch("app.core.db.get_supabase", return_value=sb),
+            patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        ):
+            await slide_generator_node(state)
+        sent_messages = mock_provider.complete_structured.call_args.args[0]
+        prompts.append(next(m["content"] for m in sent_messages if m["role"] == "system"))
+
+    for prompt in prompts:
+        assert "\n\n" not in prompt, (
+            "system prompt has a blank-line artifact — dna_context is being "
+            "appended even though it's empty"
+        )
+
+    assert prompts[0] == prompts[1]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_model_used_is_settings_llm_slide_generator() -> None:
     """AC-6: the model passed to complete_structured is settings.llm_slide_generator."""
     from app.modules.content.pipeline.graph import slide_generator_node
