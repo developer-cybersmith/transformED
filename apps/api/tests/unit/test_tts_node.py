@@ -384,6 +384,51 @@ async def test_unsafe_segment_id_degrades_to_browser_fallback() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_provider_receives_exactly_the_narration_scripts_final_content() -> None:
+    """Round-2 review finding (2026-09-21, PR #237): the Story 3-37 cap
+    tests that used to live in this file asserted on the EXACT characters
+    actually sent to the Sarvam provider mock (`chars_sent = sum(len(call.
+    args[0]) for call in mock_sarvam.synthesize.call_args_list)`), not just
+    on an intermediate list's contents. Moving the cap logic into
+    narration_stitch_node (issue #236) relocated that assertion to
+    test_narration_stitch_node.py, but nothing there — or anywhere else —
+    verifies tts_node actually hands the FINAL, already-capped/stitched
+    content through to the provider without any further truncation or
+    mangling of its own. This test closes that specific trust-boundary gap:
+    build a narration_scripts_final entry already shaped exactly as
+    narration_stitch_node would hand it off (already ordered, already
+    capped) and assert the provider receives that exact string, verbatim."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    exact_stitched_script = "This is the exact, already-stitched-and-capped narration text."
+    already_final_entry = {
+        "segment_id": "sec_0",
+        "script": exact_stitched_script,
+        "narration_style": "conversational",
+        "word_count": len(exact_stitched_script.split()),
+    }
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts_final=[already_final_entry]))
+
+    assert mock_sarvam.synthesize.call_count == 1
+    text_sent = mock_sarvam.synthesize.call_args.args[0]
+    assert text_sent == exact_stitched_script, (
+        f"tts_node must pass narration_scripts_final's script through verbatim — "
+        f"expected {exact_stitched_script!r}, provider received {text_sent!r}"
+    )
+    assert result["audio_assets"][0]["data"]["script"] == exact_stitched_script
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_upload_uses_upsert_true() -> None:
     """Review finding (Edge Case Hunter): the storage upload must pass
     upsert=true so an ARQ retry re-uploading to the same path doesn't

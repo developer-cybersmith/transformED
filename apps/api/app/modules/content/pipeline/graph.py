@@ -1,7 +1,9 @@
 """
 Content pipeline LangGraph graph.
 
-Node order (15 nodes) — corrected 2026-07-13, Story 2-1 AC-0
+Node order (16 nodes) — corrected 2026-09-21, issue #236 (Round 2 review
+finding: this diagram still described the pre-#236 15-node/6-economy-node
+shape after _build_pipeline_graph had already moved to 16 nodes)
 --------------------------------------------------------------
  1. extract               PDF → raw text + images
  2. structure             Raw text → sections/chapters
@@ -16,16 +18,24 @@ Node order (15 nodes) — corrected 2026-07-13, Story 2-1 AC-0
  7. segment_complexity    Each section → complexity / readability score
  8. jargon_extractor      Each section → glossary of technical terms
  9. intervention_messages Complexity + jargon → proactive intervention prompts
-10. narration_generator   Each section → narration script
 
  Phase 2 (premium, sequential — starts only after ALL Phase 1 completes):
-11. lesson_planner        Segment summaries (NOT raw text) → lesson plan
-12. slide_generator       Lesson plan → slide deck JSON
+10. lesson_planner        Segment summaries (NOT raw text) → lesson plan
+11. slide_generator       Lesson plan → slide deck JSON
+
+ Phase 2b (issue #236) — narration moved OUT of Phase 1: Send()-dispatched
+ once per lesson_plan segment, from an edge AFTER slide_generator (not
+ embed), so it can see the finished outline — architecturally impossible
+ during Phase 1, when no outline exists yet:
+12. narration_generator   One lesson_plan segment → narration script
+13. narration_stitch      ALL sections' scripts, joined → cross-section
+                          transition/dedup polish + the lesson-wide char cap
+                          (moved here from tts_node, issue #236)
 
  Phase 3 (media, sequential):
-13. tts_node              Narration scripts → audio + word timestamps
-14. image_generator       Slide content → AI-generated illustration URLs
-15. package_builder       All outputs → final lesson JSON package
+14. tts_node              Narration scripts → audio + word timestamps
+15. image_generator       Slide content → AI-generated illustration URLs
+16. package_builder       All outputs → final lesson JSON package
 
 Architecture constraints
 ------------------------
@@ -34,7 +44,8 @@ Architecture constraints
 - After each Phase A node: update lesson_jobs.progress and write checkpoint to DB.
   Phase 1 economy nodes also have a per-section checkpoint (read/write/increment
   via _read_phase1_checkpoint / _write_phase1_checkpoint / _increment_phase1_progress,
-  called in all 6 economy nodes) — see docs/stories/2-1b-phase1-checkpoint-idempotency.md.
+  called in all 5 economy nodes, plus narration_generator's own post-planner
+  dispatch — issue #236) — see docs/stories/2-1b-phase1-checkpoint-idempotency.md.
 - Cost ceiling checked by providers — RuntimeError raised if exceeded
 """
 
@@ -1501,6 +1512,27 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 f"segment_id/summary: {s!r}"
             )
 
+    # D168 (review finding, 2026-09-21, PR #237, Round 2 correction):
+    # segment_summaries is Annotated[list, operator.add] — the SAME kind of
+    # Send()-fan-in-with-no-cross-call-ordering-guarantee channel as
+    # narration_scripts (which _apply_narration_char_cap already has to
+    # re-sort via _segment_order_key for exactly this reason). A real,
+    # pre-existing gap on `main`, not introduced by issue #236 — but this
+    # story's own continuity_notes forced-empty-for-segment-0 logic is the
+    # first thing to actually DEPEND on this order being correct.
+    #
+    # ROUND 1 of this fix sorted too late — right before segments_out's final
+    # assembly, AFTER the batch-size split below had already partitioned
+    # segment_summaries using the raw, unsorted arrival order. For any
+    # chapter over lesson_planner_batch_size (the common case per D75/D167),
+    # "batch 1" was whichever segments arrived first, not the chapter's true
+    # first N — so continuity_notes (already batch-scoped by D167) ended up
+    # scoped to an arbitrary, non-reproducible subset instead of a genuine
+    # chapter prefix, and could differ across an ARQ retry of the same
+    # lesson. Sorting HERE, before the batch split, fixes the actual batch
+    # composition, not just the final list's display order.
+    segment_summaries = _sort_by_segment_order(segment_summaries)
+
     supabase = get_supabase()
 
     # ── Idempotency: return cached output if this node already completed ──────
@@ -1693,29 +1725,10 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # order was trusted directly, even though the guards above only prove the
     # *set* of segment_ids matches 1:1 — a validly-shuffled response would
     # silently reorder the plan away from the chapter's actual section order.
-    #
-    # D168 (review finding, 2026-09-21, PR #237): the comment below used to
-    # call segment_summaries "the authoritative input order" without actually
-    # making that true. segment_summaries is Annotated[list, operator.add] —
-    # the SAME kind of Send()-fan-in-with-no-cross-call-ordering-guarantee
-    # channel as narration_scripts (which _apply_narration_char_cap already
-    # has to re-sort via _segment_order_key for exactly this reason). Nothing
-    # here ever re-sorted it — a real, pre-existing gap on `main`, not
-    # introduced by issue #236, but issue #236's own continuity_notes forced-
-    # empty-for-segment-0 logic is the first thing to actually DEPEND on this
-    # order being correct (an out-of-order arrival would blank the wrong
-    # segment's continuity_notes, non-deterministically across runs). Fixed
-    # here since the fix is small, safe, and already-proven (reuses
-    # _segment_order_key verbatim) — see D168 in docs/DEFECT-REGISTER.md for
-    # the full analysis of what else this affected (segments_out's overall
-    # order, and therefore slide_generator's slide order too).
-    segment_summaries = [
-        s
-        for _, s in sorted(
-            enumerate(segment_summaries), key=lambda pair: _segment_order_key(pair[1], pair[0])
-        )
-    ]
-    # Assemble by iterating segment_summaries (NOW genuinely the authoritative
+    # segment_summaries was already re-sorted into true section order near
+    # the top of this function (D168) — before the batch split, not after —
+    # so this dict lookup + the resulting segments_out order are both correct.
+    # Assemble by iterating segment_summaries (genuinely the authoritative
     # input order, re-sorted above), looking up each LLM segment by
     # segment_id, not the reverse.
     llm_segment_by_id = {seg.segment_id: seg for seg in response.segments}
@@ -3737,7 +3750,39 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # record needed here.
     from app.core.cost_tracker import check_ceiling
 
-    if await check_ceiling(lesson_id):
+    # Round-2 review finding (2026-09-21, PR #237, CONFIRMED): this call was
+    # unguarded. Unlike tts_node/image_generator_node's per-item checks
+    # (which sit inside a per-segment try/except in a SEQUENTIAL loop, so a
+    # raised exception there degrades just that one item), this node has no
+    # enclosing loop — a raised check_ceiling() (e.g. a transient Redis
+    # error) would propagate straight out of this Send()-dispatched task,
+    # crashing the whole lesson AFTER lesson_planner+slide_generator's
+    # premium spend — precisely the failure mode removing the router-level
+    # abort was meant to eliminate, just relocated. Fail OPEN on a check
+    # failure, mirroring `_fan_out_phase1_economy_nodes`' own established
+    # rationale for this exact tier: llm_mini is already the cheapest model,
+    # so there is nothing to downshift to, and aborting a single section over
+    # a transient blip is a worse outcome than proceeding.
+    #
+    # D169 (docs/DEFECT-REGISTER.md): this check is now also read
+    # CONCURRENTLY across up to N Send()-dispatched sections for the same
+    # lesson (no budget reservation) — a lesson just under the ceiling can
+    # overshoot by up to N x one narration call's cost. Registered, not
+    # fixed here — a real fix needs an atomic reserve-then-spend primitive in
+    # cost_tracker.py itself, not a narrow patch to this one call site.
+    try:
+        over_ceiling = await check_ceiling(lesson_id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] narration_generator_node: %s — check_ceiling() failed — "
+            "failing open (assuming not over ceiling)",
+            lesson_id,
+            section_id,
+            exc_info=True,
+        )
+        over_ceiling = False
+
+    if over_ceiling:
         logger.warning(
             "[%s] narration_generator_node: %s — cost ceiling reached, skipping "
             "this section's narration (already-cheapest llm_mini tier, no "
@@ -3795,7 +3840,21 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         },
         {
             "role": "user",
-            "content": f"{style_instruction}\n{continuity_instruction}\n\n{body}".strip(),
+            # Round-2 review finding (2026-09-21, PR #237): the old
+            # `f"{a}\n{b}\n\n{c}".strip()` left a stray "\n\n\n" between the
+            # instructions and body whenever continuity_instruction was empty
+            # (the documented majority case: the first segment, or any
+            # segment with nothing to reiterate) — `.strip()` only trims the
+            # string's own ends, not this internal gap. Join only the
+            # non-empty instruction lines with a single newline (same
+            # spacing as before when both were present), then the body with
+            # the original double-newline separator.
+            "content": "\n\n".join(
+                filter(
+                    None,
+                    ["\n".join(filter(None, [style_instruction, continuity_instruction])), body],
+                )
+            ),
         },
     ]
     response = await provider.complete_structured(messages, settings.llm_mini, _NarrationScriptLLM)
@@ -3873,8 +3932,16 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
                 "explicit" if explicit_target is not None else "estimated (page-count-based)",
                 target_duration_sec,
             )
+            # Round-2 review finding (2026-09-21, PR #237, CONFIRMED): this
+            # branch was the one call site in this node missed when the
+            # `phase` kwarg was added — it was silently falling back to the
+            # default "phase1", reproducing the exact cross-phase counter bug
+            # (D-class "56/15 sections complete") that kwarg exists to fix.
             await _increment_phase1_progress(
-                lesson_id, checkpoint_key, state.get("_total_sections")
+                lesson_id,
+                checkpoint_key,
+                state.get("_total_sections"),
+                phase="narration_post_planner",
             )
             return {"narration_scripts": [], "section_truncations": section_truncations}
     else:
@@ -4013,6 +4080,27 @@ def _segment_order_key(entry: dict[str, Any], fallback_index: int) -> int:
     return fallback_index
 
 
+def _sort_by_segment_order(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Re-sort a list of segment-keyed dicts into true lesson order via
+    `_segment_order_key`, falling back to arrival position when a
+    `segment_id` doesn't carry the `section_N_...` prefix.
+
+    Round-2 review finding (2026-09-21, PR #237): this exact
+    `sorted(enumerate(entries), key=lambda pair: _segment_order_key(pair[1],
+    pair[0]))` idiom was independently duplicated three times
+    (`lesson_planner_node`'s `segment_summaries` re-sort, D168;
+    `_apply_narration_char_cap`'s `narration_scripts` re-sort;
+    `narration_stitch_node`'s own `ordered_scripts` construction) — extracted
+    here so a future change to the ordering rule only needs to happen once.
+    """
+    return [
+        s
+        for _, s in sorted(
+            enumerate(entries), key=lambda pair: _segment_order_key(pair[1], pair[0])
+        )
+    ]
+
+
 def _safe_narration_script(entry: dict[str, Any]) -> str:
     """Return entry['script'] if it's actually a string, else ''.
 
@@ -4107,10 +4195,7 @@ def _apply_narration_char_cap(
             continue
         clean_entries.append(entry)
 
-    ordered_entries = sorted(
-        enumerate(clean_entries), key=lambda pair: _segment_order_key(pair[1], pair[0])
-    )
-    entries = [entry for _, entry in ordered_entries]
+    entries = _sort_by_segment_order(clean_entries)
 
     original_total = sum(len(_safe_narration_script(entry)) for entry in entries)
 
@@ -4276,10 +4361,7 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
     # Same non-dict-entry defense _apply_narration_char_cap already needs —
     # applied here too since this node now runs first and feeds that function.
     clean_entries = [entry for entry in narration_scripts if isinstance(entry, dict)]
-    ordered_entries = sorted(
-        enumerate(clean_entries), key=lambda pair: _segment_order_key(pair[1], pair[0])
-    )
-    ordered_scripts = [entry for _, entry in ordered_entries]
+    ordered_scripts = _sort_by_segment_order(clean_entries)
 
     settings = get_settings()
     stitched_scripts = ordered_scripts

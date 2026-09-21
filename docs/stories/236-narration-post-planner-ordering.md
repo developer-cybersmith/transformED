@@ -249,6 +249,13 @@ requirement and improving every lesson generated today.
    `lesson_planner_node`/`slide_generator_node`), so its own checkpoint write uses
    the plain read-modify-write pattern those two nodes use — safe for the same
    reason theirs is (no concurrent writer to the same key in the same run).
+   **Round 2 correction:** the checkpoint write is safe, but `narration_generator_node`'s
+   own per-dispatch `check_ceiling` (added in Round 2 to fix cost-ceiling
+   full-abort) is a plain read-and-compare with no reservation, now read
+   CONCURRENTLY across up to N sections of the same lesson — registered as
+   **D169** (`docs/DEFECT-REGISTER.md`), not fixed here (bounded overshoot,
+   real fix needs an atomic reserve-then-spend primitive in `cost_tracker.py`
+   itself, out of this PR's scope).
 
 **The one-line test, answered:** before this fix, a chapter's narration read as N
 independent, voiceless monologues stitched together only by audio-file
@@ -406,3 +413,37 @@ Every finding was independently re-verified against the actual checked-out code 
 - `pytest tests/unit/test_fan_out_state_keys.py tests/unit/test_phase1_economy_nodes.py tests/unit/test_narration_stitch_node.py tests/unit/test_lesson_planner_node.py -q` → **135 passed**
 - Full `tests/unit tests/integration -m "not postgres"` → **1528 passed, 6 skipped, 86 deselected** (up from 1527 — net +1: 2 obsolete tests replaced by 1 new one for the removed router-level gate, +1 new per-dispatch ceiling test, +1 new ordering-regression test)
 - `ruff check .` → clean; repo-wide `mypy app` → clean (same 4 pre-existing, untouched-file errors as Round 1)
+
+## Senior Developer Review (AI) — Round 3 (re-review after Round 2 fixes, same reviewer)
+
+**Review date:** 2026-09-21
+**Reviewer:** `Developer-2-max` (GitHub PR comment, 10 more findings after re-reviewing the Round 2 push)
+**Outcome:** APPROVE WITH CHANGES — 7 of 10 findings confirmed real and fixed (including 2 real bugs introduced BY the Round 2 fix itself); 2 registered (real, but requiring architectural work out of this PR's scope); 1 accepted as harmless-but-real inefficiency, not separately fixed.
+
+Two of Round 2's own fixes had real bugs — both caught here, both closed. Independently re-verified every finding against the branch source before fixing anything, same discipline as Rounds 1-2.
+
+### Findings — confirmed and fixed
+
+| # | Finding | Verification | Fix |
+|---|---|---|---|
+| 1 | **Round 2's new per-dispatch `check_ceiling()` call in `narration_generator_node` was itself unguarded** — a raised exception (transient Redis error) would propagate out of this `Send()`-dispatched task with no enclosing loop/try to catch it, crashing the whole lesson AFTER premium spend — the EXACT failure mode Round 2 was supposed to eliminate, just relocated one level down. CONFIRMED. | Read the call directly: no try/except, unlike `lesson_planner_node`'s own guarded `check_ceiling` call a few hundred lines above. | Wrapped in `try`/`except`, fail-OPEN (mirrors `_fan_out_phase1_economy_nodes`' own established rationale for this cheap tier — nothing to downshift to, aborting over a transient blip is worse). |
+| 2 | **D168's Round-1 fix sorted `segment_summaries` too late** — after the multi-batch split, which had already partitioned the RAW unsorted arrival order. For any chapter over `lesson_planner_batch_size`, "batch 1" was whichever segments arrived first, not the chapter's true first N — `continuity_notes` (already batch-scoped by D167) ended up scoped to an arbitrary, non-reproducible subset. CONFIRMED. | Traced the exact line ordering: batch split at the (then) line 1593, sort at line 1712 — 119 lines too late. | Moved the sort to immediately after the structural-validation guards, BEFORE the batch-size decision. New test proves batch composition, not just final order (see D168 update). |
+| 3 | **One `_increment_phase1_progress` call site (the pacing-guard rejection branch) was missed** when Round 2 added the `phase="narration_post_planner"` kwarg to the other 5 — silently fell back to `phase="phase1"`, reproducing the exact cross-phase counter bug (D-class "56/15 sections complete") that kwarg exists to prevent. CONFIRMED. | Grepped every `_increment_phase1_progress(` call inside `narration_generator_node`'s span — 5 of 6 had the kwarg, this one didn't. | Added the missing kwarg. |
+| 5 | **The deleted Story 3-37 tests used to assert on EXACTLY what reached the TTS provider mock** (`mock_sarvam.synthesize.call_args_list`), not just on an intermediate list's contents — after the cap moved into `narration_stitch_node`, nothing anywhere verified `tts_node` hands the final, already-capped content through to the provider without further mangling. | Grepped for `call_args_list`/`chars_sent` patterns across both test files — confirmed the trust-boundary between the two nodes was untested. | New test `test_provider_receives_exactly_the_narration_scripts_final_content` (`test_tts_node.py`) — asserts the provider receives the exact script string, verbatim. |
+| 6 | **The `sorted(enumerate(entries), key=lambda pair: _segment_order_key(...))` idiom was now independently duplicated three times** (`lesson_planner_node`, `_apply_narration_char_cap`, `narration_stitch_node`). | Grepped all three sites, confirmed byte-identical logic, different variable names. | Extracted `_sort_by_segment_order()`, all three sites now call it. |
+| 8 | **Triple newline in the prompt whenever `continuity_notes` is empty** (the documented majority case) — `f"{a}\n{b}\n\n{c}".strip()` only trims the string's ends, not the internal `\n\n\n` gap. | Traced the string interpolation by hand for the empty-continuity case. | Rebuilt as an explicit non-empty-parts join, preserving the original single-newline-between-instructions / double-newline-before-body spacing for the non-empty case. |
+| 9 | **Module docstring's node-order diagram still described the pre-#236 15-node/6-economy-node shape** — `narration_generator` still listed as Phase-1 node #10, `narration_stitch` omitted entirely, checkpoint-helper comment still said "all 6 economy nodes." | Read the docstring directly — confirmed stale exactly as described; `_build_pipeline_graph` registers 16 nodes. | Rewrote the diagram: 5 Phase-1 economy nodes, a new "Phase 2b (issue #236)" section for `narration_generator`/`narration_stitch`, corrected node count and checkpoint-helper comment. |
+
+### Findings — confirmed real, registered (not fixed — architectural work out of scope)
+
+- **#4, concurrent `check_ceiling()` reads can overshoot the $3.00 ceiling.** Verified: narration_generator's new per-dispatch check now runs across genuinely concurrent `Send()`-dispatched tasks (unlike `tts_node`/`image_generator_node`'s sequential per-item loops), so up to N sections can all read the same pre-spend total and pass before any of their own cost is recorded. Real, but bounded (worst case ≈ `_MAX_PHASE1_SECTIONS` × one cheap `llm_mini` call) and the reviewer's own framing is accurate — this is an existing TOCTOU shape spreading to a third site, not a wholly new bug class. Registered as **D169**. A real fix needs an atomic reserve-then-spend primitive in `cost_tracker.py` itself — genuine architectural work, not a narrow patch to this one call site.
+- **#10, `narration_stitch_node` duplicates `lesson_planner_node`'s degrade-not-fabricate guard block.** Same underlying finding as Round 1's #9 (that one compared all three: `lesson_planner_node`/`slide_generator_node`/`narration_stitch_node`), now independently re-raised. Two convergent findings across two rounds is enough to register formally rather than leave as a verbal note — **D170**. Extracting a shared guard now, under review-response time pressure, touching three already-tested node functions, is itself a risky change that deserves its own dedicated review — deferred, not silently dropped.
+
+### Findings — accepted, not fixed (real but negligible)
+
+- **#7, `narration_stitch_node` sorts `narration_scripts` into `ordered_scripts`, then `_apply_narration_char_cap` independently re-sorts the same (already-sorted) list from scratch.** Confirmed as wasted computation, not a correctness bug — re-sorting a sorted list produces the identical order. The pre-sort in `narration_stitch_node` is still required (it drives the stitch prompt's section ordering, a different consumer than the cap function). At ≤60 short items, the actual CPU cost is microseconds, once per lesson build — not worth changing `_apply_narration_char_cap`'s contract (trusting pre-sorted input) for a negligible win, especially since that function is also called from a test suite that constructs its own unsorted fixtures deliberately.
+
+### Re-verification after Round 3 fixes
+- `pytest tests/unit/test_lesson_planner_node.py tests/unit/test_narration_stitch_node.py tests/unit/test_phase1_economy_nodes.py tests/unit/test_fan_out_state_keys.py tests/unit/test_tts_node.py -q` → **151 passed**
+- Full `tests/unit tests/integration -m "not postgres"` → **1530 passed, 6 skipped, 86 deselected** (up from 1528 — +2: the batch-composition test and the tts_node content-verification test)
+- `ruff check .` → clean; repo-wide `mypy app` → clean (same 4 pre-existing, untouched-file errors as every prior round)

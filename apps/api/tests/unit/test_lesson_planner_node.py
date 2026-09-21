@@ -696,6 +696,89 @@ async def test_segment_summaries_out_of_order_fan_in_is_resorted_by_true_section
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_out_of_order_fan_in_is_resorted_before_the_batch_split_not_after() -> None:
+    """D168 Round 2 correction (review finding, PR #237, CONFIRMED): Round 1
+    of this fix sorted segment_summaries too late — right before segments_out's
+    final assembly, AFTER the batch-size split had already partitioned the
+    RAW, unsorted arrival order. For a chapter over lesson_planner_batch_size,
+    "batch 1" was whichever segments arrived first, not the chapter's true
+    first N, so continuity_notes (already batch-scoped by D167) ended up
+    scoped to an arbitrary subset instead of a genuine chapter prefix.
+
+    This test forces batching (batch_size=2, 4 segments) with segment_summaries
+    arriving in scrambled order and captures which segment_ids each individual
+    batch call actually received (parsed from that call's own prompt, mirroring
+    test_planner_batches_above_threshold_produces_full_plan's technique) —
+    proving batch 1 gets the TRUE first two sections (0, 1), not whichever two
+    happened to arrive first.
+    """
+    from app.modules.content.pipeline.graph import (
+        _LessonPlanLLM,
+        _LessonPlanSegmentLLM,
+        lesson_planner_node,
+    )
+
+    # Arrival order: 3, 1, 0, 2 — deliberately scrambled relative to true
+    # section index (parsed from the "section_N_..." segment_id prefix).
+    scrambled_summaries = [
+        {"segment_id": "section_3_d", "summary": "Summary D."},
+        {"segment_id": "section_1_b", "summary": "Summary B."},
+        {"segment_id": "section_0_a", "summary": "Summary A."},
+        {"segment_id": "section_2_c", "summary": "Summary C."},
+    ]
+
+    batch_ids_seen: list[list[str]] = []
+
+    def _batch_response(*args: Any, **kwargs: Any) -> _LessonPlanLLM:
+        messages = args[0]
+        user_text = messages[1]["content"]
+        ids = [
+            line.split("segment_id=")[1].split(":")[0]
+            for line in user_text.splitlines()
+            if "segment_id=" in line
+        ]
+        batch_ids_seen.append(ids)
+        segs = [
+            _LessonPlanSegmentLLM(segment_id=sid, title=f"Title {sid}", duration_min=3.0)
+            for sid in ids
+        ]
+        return _LessonPlanLLM(
+            title="Full Plan",
+            subject="Subject",
+            objectives=["Obj one", "Obj two"],
+            complexity_level="medium",
+            segments=segs,
+        )
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.side_effect = _batch_response
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        patch("app.config.get_settings") as mock_settings,
+    ):
+        mock_settings.return_value.llm_lesson_planner = "gpt-4o"
+        mock_settings.return_value.lesson_planner_batch_size = 2
+        result = await lesson_planner_node(_base_state(segment_summaries=scrambled_summaries))
+
+    assert mock_provider.complete_structured.call_count == 2, (
+        "4 summaries, batch_size 2 -> 2 batches"
+    )
+    assert batch_ids_seen[0] == ["section_0_a", "section_1_b"], (
+        f"batch 1 must be the TRUE first two sections by index, not arrival order, "
+        f"got {batch_ids_seen[0]}"
+    )
+    assert batch_ids_seen[1] == ["section_2_c", "section_3_d"], (
+        f"batch 2 must be the TRUE last two sections, got {batch_ids_seen[1]}"
+    )
+    ordered_ids = [seg["segment_id"] for seg in result["lesson_plan"]["segments"]]
+    assert ordered_ids == ["section_0_a", "section_1_b", "section_2_c", "section_3_d"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_continuity_notes_forced_empty_for_first_segment_regardless_of_llm() -> None:
     """Issue #236: the first segment in LESSON ORDER (segment_summaries'
     order, per the test above — not necessarily the LLM's response order) has
