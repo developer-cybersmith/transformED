@@ -1,7 +1,7 @@
 ---
 id: "236"
 title: "Narration continuity — move narration_generator after lesson_planner, add stitching node"
-status: "in-review"
+status: "done"
 sprint: null
 story_points: 8
 baseline_commit: "main@HEAD"
@@ -295,7 +295,7 @@ verifiable, rather than silently absent.
 ### Task 7 — Commit
 - [x] 7.1 Story-first commit (this file alone).
 - [x] 7.2 Implementation commit(s). — `073a977`, plus a review-fix commit.
-- [ ] 7.3 `docs/dev1-tracker.md` entry referencing #236.
+- [x] 7.3 `docs/dev1-tracker.md` entry referencing #236.
 
 ## Dev Agent Record
 
