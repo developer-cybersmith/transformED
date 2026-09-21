@@ -1570,12 +1570,20 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # block below runs on the assembled response exactly as before, so a batch
     # that drops/duplicates an id is still caught.
     #
-    # Accepted limitation (issue #236): continuity_notes is authored per-batch,
-    # not lesson-wide — a segment in batch 2 can only reference segments WITHIN
-    # batch 2, since batch 1's segments are never shown to it. Same latent-until-
-    # an-operator-raises-structure_max_sections shape as the existing
-    # objectives-reflect-first-batch-only limitation a few lines below; not
-    # fixed here for the same reason (default config never takes this path).
+    # Accepted limitation, D167 (issue #236, see docs/DEFECT-REGISTER.md):
+    # continuity_notes is authored per-batch, not lesson-wide — a segment in
+    # batch 2 can only reference segments WITHIN batch 2, since batch 1's
+    # segments are never shown to it. Scale & Load review finding (2026-09-21):
+    # this is NOT a rare operator-misconfiguration edge case — D75 deliberately
+    # set lesson_planner_batch_size (10) strictly BELOW structure_max_sections
+    # (15) so that ANY chapter coalescing to 11-15 sections already takes this
+    # path today, at default config, with zero operator action (the sibling
+    # "objectives reflect first batch only" comment below repeats the same
+    # now-stale "default config never takes this path" premise — that premise
+    # was disproven by D75 itself, which lowered the batch size for exactly
+    # this reason). Not fixed here (this story's scope is narration ordering,
+    # not lesson_planner's batching architecture) — registered instead of
+    # silently accepted, per CLAUDE.md binding rule 5.
     batch_size = settings.lesson_planner_batch_size
     if len(segment_summaries) <= batch_size:
         response = await _run_planner_batch(
@@ -4201,9 +4209,31 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
                 ),
             },
         ]
-        response = await provider.complete_structured(
-            messages, settings.llm_mini, _StitchedNarrationLLM
-        )
+        # Scale & Load review finding (2026-09-21): unlike lesson_planner_node's
+        # premium single-shot call (which is DESIGNED to hard-fail — its own
+        # docstring says so), this node's own docstring/AC-7 explicitly promise
+        # "a cosmetic pass, never worth failing an otherwise-complete lesson
+        # over" — but complete_structured() RAISES (not returns None) on a
+        # retry-exhausted rate limit, an open circuit breaker, or a truncated/
+        # oversized structured response (see with_retry's docstring). Every
+        # per-section narration_generator dispatch has already succeeded and
+        # been paid for by the time this node runs — an uncaught exception
+        # here would crash the whole lesson over a transient failure in a
+        # purely cosmetic step. Catch broadly and degrade exactly like a
+        # `None` response, never let this call's failure mode diverge from
+        # its own stated design intent.
+        try:
+            response = await provider.complete_structured(
+                messages, settings.llm_mini, _StitchedNarrationLLM
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "[%s] narration_stitch_node: stitching LLM call raised — "
+                "falling back to unstitched, ordered scripts",
+                lesson_id,
+                exc_info=True,
+            )
+            response = None
 
         # Degrade-not-fabricate guard block, same shape as lesson_planner_node's:
         # a wrong/incomplete response is rejected wholesale (fall back to the

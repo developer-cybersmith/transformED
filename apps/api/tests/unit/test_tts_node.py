@@ -282,6 +282,12 @@ async def test_successful_run_writes_checkpoint() -> None:
     assert len(checkpoint_calls) == 1
     assert checkpoint_calls[0]["last_node"] == "tts_node"
     assert "tts_node" in checkpoint_calls[0]["node_outputs"]
+    # AC-11 / issue #236: tts_node no longer owns the narration-cap
+    # degradation record — narration_stitch_node writes it earlier in the
+    # same lesson_jobs row, and tts_node's own **node_outputs spread must not
+    # re-write a stale/absent value over it. tts_node's own checkpoint update
+    # must not introduce this key itself.
+    assert "narration_cap_applied" not in checkpoint_calls[0]["node_outputs"]
 
 
 @pytest.mark.unit

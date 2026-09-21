@@ -378,3 +378,72 @@ async def test_narration_fan_out_reconstructs_correct_section_per_segment() -> N
     for send in sends:
         expected_id = g._derive_section_id(send.arg["_section"], send.arg["_section_index"])
         assert expected_id == send.arg["_plan_segment"]["segment_id"]
+
+
+# ── Test Coverage review finding (2026-09-21): _fan_out_narration_after_planning
+# had zero coverage of its guard paths, unlike TestAC7CostCeiling's thorough
+# coverage of the same guard shapes on _fan_out_phase1_economy_nodes. ─────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_empty_plan_segments_raises() -> None:
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T1")
+    state["lesson_plan"] = {"segments": []}
+    with pytest.raises(RuntimeError, match="zero segments"):
+        await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_missing_lesson_id_raises() -> None:
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T1")
+    del state["lesson_id"]
+    with pytest.raises(RuntimeError, match="missing lesson_id"):
+        await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_ceiling_breach_raises() -> None:
+    from app.modules.content.pipeline import graph as g
+
+    with patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)):
+        with pytest.raises(RuntimeError, match="cost ceiling exceeded"):
+            await g._fan_out_narration_after_planning(_state_with_plan("T1"))  # type: ignore[arg-type]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_check_ceiling_exception_fails_open() -> None:
+    """Same fail-open rationale as _fan_out_phase1_economy_nodes: narration
+    runs at llm_mini (cheapest tier), so a transient check_ceiling() failure
+    should not abort a lesson that already paid for Phase 1 + lesson_planner
+    + slide_generator."""
+    from app.modules.content.pipeline import graph as g
+
+    with patch(
+        "app.core.cost_tracker.check_ceiling", new=AsyncMock(side_effect=ConnectionError("redis"))
+    ):
+        sends = await g._fan_out_narration_after_planning(_state_with_plan("T1"))  # type: ignore[arg-type]
+
+    assert sends, "should still dispatch despite the check_ceiling() failure"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_fan_out_unmatched_segment_id_raises() -> None:
+    """Defensive/unreachable-in-practice branch (lesson_planner_node's own
+    AC-6 guard already rejects an unknown segment_id before lesson_plan is
+    ever written) — still must fail loudly, not dispatch narration with no
+    section body to work from, if ever reached."""
+    from app.modules.content.pipeline import graph as g
+
+    state = _state_with_plan("T1")
+    state["lesson_plan"]["segments"][0]["segment_id"] = "does_not_exist_in_sections"
+    with pytest.raises(RuntimeError, match="has no matching entry"):
+        await g._fan_out_narration_after_planning(state)  # type: ignore[arg-type]

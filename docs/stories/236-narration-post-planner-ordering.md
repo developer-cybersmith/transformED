@@ -203,7 +203,7 @@ requirement and improving every lesson generated today.
    `lesson_plan.segments`, which can only be `<=` the Phase-1 dispatched count).
    This story does not change the section-count range — it moves *when* the same
    N dispatches happen, not how many.
-2. **Fixed budgets vs. variable input.** Two: (a) `_MAX_PHASE1_SECTIONS` — reused
+2. **Fixed budgets vs. variable input.** Three: (a) `_MAX_PHASE1_SECTIONS` — reused
    as-is for the new fan-out's own guard, same behavior (explicit truncation +
    warning log) as today, not silently uncapped. (b) `max_narration_chars_per_lesson`
    — the existing lesson-wide char cap, relocated but not resized or reinterpreted;
@@ -211,6 +211,19 @@ requirement and improving every lesson generated today.
    (`node_outputs["narration_cap_applied"]`), just written by `narration_stitch_node`
    instead of `tts_node`. No new unbounded budget introduced by the stitching LLM
    call — it operates on the same already-capped-count narration list.
+   (c) **`lesson_planner_batch_size` (10), corrected after Scale & Load review**:
+   this story's own new `continuity_notes` field is authored per-batch, not
+   lesson-wide, once `segment_summaries` exceeds this size — and since
+   `structure_max_sections` defaults to 15 (D75 deliberately keeps the batch
+   size strictly below it so a maximal chapter always batches), ANY chapter
+   coalescing to 11-15 sections already takes this path today, at default
+   config — not a rare operator-misconfiguration edge case, as an earlier
+   draft of this section and the corresponding code comment incorrectly
+   claimed. Registered as **D167** (`docs/DEFECT-REGISTER.md`) rather than
+   silently accepted, per CLAUDE.md binding rule 5 — no silent-truncation
+   violation (no wrong narration ships, just thinner cross-batch continuity
+   with no signal), but a real, currently-reachable limitation, not a
+   hypothetical one.
 3. **Scope of every limit.** Per-lesson, unchanged from today — `_MAX_PHASE1_SECTIONS`
    and `max_narration_chars_per_lesson` are both keyed by the single `lesson_id`
    this pipeline run is for, not shared across users/instances.
@@ -277,11 +290,11 @@ verifiable, rather than silently absent.
 - [x] 5.2 Full regression run, ruff/format/mypy (AC 18, 19).
 
 ### Task 6 — Review
-- [ ] 6.1 6-agent `/bmad-code-review`.
+- [x] 6.1 6-agent `/bmad-code-review` (5 parallel agents, all 6 layers). See Senior Developer Review section below.
 
 ### Task 7 — Commit
 - [x] 7.1 Story-first commit (this file alone).
-- [ ] 7.2 Implementation commit(s).
+- [x] 7.2 Implementation commit(s). — `073a977`, plus a review-fix commit.
 - [ ] 7.3 `docs/dev1-tracker.md` entry referencing #236.
 
 ## Dev Agent Record
@@ -293,6 +306,7 @@ as of this story's creation) — summarized in Context & Scope Boundary above.
 ### Debug Log
 
 - Guard-test survey (Task 1.1): `grep -rln "test_.*graph\|test_.*narration\|test_no_hardcoded\|test_dunder_all" apps/api/tests/`, narrowed to actual pipeline-internal hits via a second grep on `narration_scripts|_ECONOMY_NODES|_fan_out_phase1|_PHASE1_INSTRUMENTED_NODES|narration_generator_node|narration_stitch|_apply_narration_char_cap`. Files requiring edits: `test_phase1_economy_nodes.py`, `test_fan_out_state_keys.py`, `test_tts_node.py`, `test_package_builder_node.py`, `test_duplication_canary.py`, `test_audio_duration_s3_38.py`, `test_chapter_scoped_generation.py`, `tests/integration/test_howto_pipeline_e2e.py` (and transitively `test_tier_differentiation_and_cost.py`, which imports the same fake dispatch). `test_node_return_shape.py`, `test_admin_router.py`, `test_phase1_checkpoint_idempotency.py`, `test_cost_tracker.py` needed no edits — verified by running them, not assumed.
+  **Process Integrity review correction (2026-09-21):** the AC-17 survey's literal grep command missed `test_quiz_checkpoint_tier_stamp.py`, which directly calls `_fan_out_phase1_economy_nodes` (a function this story changed — 5 economy nodes, not 6) but contains none of the survey's literal search substrings. Confirmed by direct re-run: `pytest tests/unit/test_quiz_checkpoint_tier_stamp.py` — 7/7 pass, unaffected (the test only reads the `quiz_generator` dispatch, not the node-count denominator). No functional gap, but the survey command itself is narrower than the guard-test set it's meant to find — worth widening (e.g. also grep for `_fan_out_phase1_economy_nodes\b`) the next time this module is touched.
 - RED confirmed against the pre-fix graph: `test_economy_nodes_run_before_lesson_planner_and_fan_out_per_section` failed with `RuntimeError: lesson_plan has zero segments` once the new fan-out was wired in ahead of the test being updated (the barrier stub for `lesson_planner_node` never set `lesson_plan`); `TestAC7CostCeiling`'s three dispatch-count tests failed on `15 == 3*6` (still expecting 6 economy nodes). Both confirmed the right way for the right reason before being fixed.
 - Full pre-existing-test breakage from the `narration_scripts` → `narration_scripts_final` field rename (tts_node/package_builder_node): 28 failures on first run, all traced to the rename, none to logic errors — fixed by renaming state-dict keys and override kwargs in the affected test files' fixtures (`_base_state`/`_pb_state`/`_tts_state` helpers and their per-test overrides).
 - Discovered mid-implementation (not in the original plan): `narration_stitch_node`'s prompt used an ad-hoc `"segment_id: X\nscript: Y"` format instead of the established `"- segment_id=X: <single-line text>"` convention `lesson_planner_node`/`slide_generator_node` already use — fixed for consistency, which also let the two full-graph integration tests' existing `_segment_ids_from_messages` parsing convention extend naturally instead of needing a bespoke parser.
@@ -317,9 +331,44 @@ Implemented exactly the approved plan: `narration_generator` moved from the Phas
 - `apps/api/tests/unit/test_duplication_canary.py` — MODIFIED: source-guard test updated for the new `narration_stitch` call site + `tts_node`'s renamed field.
 - `apps/api/tests/unit/test_chapter_scoped_generation.py` — MODIFIED: one field rename.
 - `apps/api/tests/integration/test_howto_pipeline_e2e.py` — MODIFIED: fake dispatch table gained a `_StitchedNarrationLLM` case (also fixes `test_tier_differentiation_and_cost.py`, which imports this module's fake).
+- `docs/DEFECT-REGISTER.md` — MODIFIED (review round): new **D167** entry for the `continuity_notes` per-batch limitation.
 - `docs/stories/236-narration-post-planner-ordering.md` — this file.
+
+Review-round additions (same files re-touched, plus): `apps/api/app/modules/content/pipeline/graph.py` (try/except around the stitching LLM call; corrected `continuity_notes` batching comment); `apps/api/tests/unit/test_narration_stitch_node.py` (+2 tests: exception fallback, permuted-order acceptance; +1 assertion: `progress_pct`); `apps/api/tests/unit/test_fan_out_state_keys.py` (+5 tests: fan-out guard paths); `apps/api/tests/unit/test_tts_node.py` (+1 negative assertion: `narration_cap_applied` absent from tts_node's own write).
 
 ### Change Log
 - 2026-09-21: Story file created (story-first commit), branch
   `feature/236-narration-post-planner-ordering`.
 - 2026-09-21: Implementation complete. All 19 ACs verified by actual test execution (not asserted from memory). Full gating-scope regression 1520 passed/6 skipped/86 deselected, zero failures. `ruff check .`, `ruff format --check` (11 touched files), and repo-wide `mypy app` all clean (mypy's 4 findings are pre-existing, in 4 files this story never touches). Remaining before merge: 6-agent `/bmad-code-review` (Task 6.1), implementation commit (Task 7.2), `docs/dev1-tracker.md` entry (Task 7.3).
+- 2026-09-21: 6-agent `/bmad-code-review` round (5 parallel adversarial agents covering all 6 CLAUDE.md layers — Test Coverage and AC Completeness combined into one). See the Senior Developer Review section below for full findings and fixes. Two real, confirmed issues fixed (an unguarded exception in `narration_stitch_node`'s LLM call, and a stale/wrong justification comment for `continuity_notes`' per-batch limitation, now registered as **D167**); one documentation-accuracy correction (AC-17 survey gap); five new tests added for previously-uncovered guard paths. Full regression re-run after fixes: **1527 passed**, 6 skipped, 86 deselected — zero regressions from the fix round. `ruff check .` / `ruff format --check` clean.
+
+## Senior Developer Review (AI) — Round 1 (5 parallel adversarial agents, all 6 CLAUDE.md layers)
+
+**Review date:** 2026-09-21
+**Outcome:** APPROVE WITH CHANGES — all applied before merge.
+
+### Layer 1 — Story Quality: PASS
+Independently re-ran every command the story claims results for (full regression, ruff, mypy) and got identical numbers. Spot-checked ACs 1–13 against the real diff, not the checkmarks. Verified the Story-First Gate's chronological ordering via `git log`/`git show --stat`, not commit messages alone. Two non-blocking wording nitpicks (Debug Log slightly overstates which grep found which files; AC15's "mirroring" is a mild overclaim) — noted, not worth a separate fix pass since the underlying facts are correct.
+
+### Layer 2 — Blind Hunter (Security): PASS, no findings
+Checked the reducer-channel doubling pattern (none found — `narration_scripts_final` is a plain field specifically to prevent this), untrusted-content placement (`continuity_notes` and the stitching prompt's narration text both correctly land in user-role messages under `_UNTRUSTED_CONTENT_GUARD`, never system-role), segment_id path-safety (no new unvalidated path/key construction), DoS/unbounded fan-out (bounded by the same `_MAX_PHASE1_SECTIONS`/cost-ceiling gates as Phase 1), and checkpoint/concurrency correctness (`narration_generator_node` still uses the atomic RPC; `narration_stitch_node` correctly uses the plain sequential-node pattern). Ran `test_node_return_shape.py` directly — 11/11 pass.
+
+### Layer 3 — Test Coverage: 5 real gaps found, 4 fixed
+Found real gaps: `_fan_out_narration_after_planning`'s guard paths (empty plan, missing lesson_id, ceiling breach, exception-fail-open, unmatched segment_id) had zero coverage, unlike the Phase-1 fan-out's thorough `TestAC7CostCeiling`; the stitching guard's permutation-order acceptance (correct code, untested); the AC 10 `progress_pct=60.0` claim was never asserted; the AC 11 "cap removed from tts_node" claim was only shown by omission. **Fixed:** added `test_narration_fan_out_empty_plan_segments_raises`, `test_narration_fan_out_missing_lesson_id_raises`, `test_narration_fan_out_ceiling_breach_raises`, `test_narration_fan_out_check_ceiling_exception_fails_open`, `test_narration_fan_out_unmatched_segment_id_raises` (`test_fan_out_state_keys.py`); `test_accepted_response_in_permuted_order_still_reassembles_correctly` (`test_narration_stitch_node.py`); a `progress_pct == 60.0` assertion added to an existing test; a `"narration_cap_applied" not in checkpoint_calls[0]["node_outputs"]` negative assertion added to `test_tts_node.py`. **Not fixed (accepted, low value):** the duplicated-fan-in-plus-cache-hit combination and a real prompt-injection-shaped `continuity_notes` string remain untested — the former is a low-value combinatorial case of two already-separately-tested behaviors, the latter can't be meaningfully asserted against a mocked LLM (the guard is a static prompt string, not runtime logic).
+
+### Layer 4 — AC Completeness: PASS, gaps closed by Layer 3's fixes
+Full AC-to-test mapping table built and cross-checked; the two soft gaps identified (AC 10's progress_pct value, AC 11's negative claim) are the same two closed by Layer 3's new tests. All 19 ACs now have a test asserting the AC's specific claim, not just exercising the code path.
+
+### Layer 5 — Process Integrity: 1 real (non-blocking) gap found and fixed
+Hardcoded-model, provider-abstraction, cross-module-DB, `**state`-spread, and checkpoint-pattern-discipline checks: all satisfied, confirmed by direct code reading. **Real finding:** the story's own AC-17 guard-test survey (a literal grep command) missed `apps/api/tests/unit/test_quiz_checkpoint_tier_stamp.py`, which directly calls `_fan_out_phase1_economy_nodes` (changed by this diff) but contains none of the survey's literal search substrings. Re-ran it directly: 7/7 pass, unaffected — not a functional regression, but a real hole in the audit trail. **Fixed:** Debug Log corrected with the real finding and the test's independently-verified pass result.
+
+### Layer 6 — Scale & Load: 2 CONFIRMED real issues, both fixed; 1 informational (not fixed, correctly out of scope)
+1. **CONFIRMED, HIGH, FIXED:** `narration_stitch_node`'s stitching LLM call had no exception handling — `complete_structured()` raises (not returns `None`) on a retry-exhausted rate limit, an open circuit breaker, or a truncated structured response, which would crash the whole node (and the lesson) at the exact point every per-section `narration_generator` dispatch had already succeeded and been paid for — directly contradicting this node's own stated "never fail the lesson over a cosmetic pass" design intent. **Fix:** wrapped the call in `try`/`except Exception`, degrading to the same `response = None` fallback path. RED-confirmed via `git stash` on the source file alone (reproduced the exact `RuntimeError` propagating uncaught), then GREEN after the fix. New test: `test_llm_call_raising_falls_back_instead_of_crashing_the_node`.
+2. **CONFIRMED, HIGH, FIXED:** the code comment (and this story's original Scale & Load Q2) claimed `continuity_notes`' per-batch-not-lesson-wide limitation was latent behind an operator explicitly raising `structure_max_sections` — checked directly against `config.py`: `structure_max_sections` defaults to 15, `lesson_planner_batch_size` defaults to 10 (D75 deliberately keeps it strictly below), so ANY chapter coalescing to 11-15 sections already takes the multi-batch path today, at default config. The pre-existing sibling comment for the analogous "objectives reflect first batch only" limitation repeats the same now-disproven premise (pre-dates D75, never updated) — this story's comment inherited that stale premise rather than introducing a new one. **Fix:** corrected the comment with the real numbers, registered as **D167** (`docs/DEFECT-REGISTER.md`) per CLAUDE.md binding rule 5 ("a documented limitation is NOT an accepted one... must carry a D-nn register ID"), and updated Q2 above to state the real numbers and reference D167.
+3. **PLAUSIBLE, MEDIUM, not separately fixed:** an unbounded-in-characters stitching prompt becomes a real token-budget risk if `structure_max_sections` is ever raised toward `_MAX_PHASE1_SECTIONS` (60) — but this compounds with, and is substantially mitigated by, Finding 1's fix: a token-limit-triggered `LengthFinishReasonError` now degrades gracefully via the same try/except instead of crashing. Not re-derived as its own budget in Q2 beyond noting the compounding relationship, since the crash path it would have caused no longer exists.
+4. **Informational, not a new regression:** `narration_stitch_node`'s plain read-modify-write checkpoint has the same theoretical concurrent-double-write exposure as `lesson_planner_node`/`slide_generator_node`, which it deliberately mirrors — pre-existing pattern, not introduced by this diff, correctly out of this story's scope to fix.
+
+### Re-verification after fixes
+- `pytest tests/unit/test_narration_stitch_node.py tests/unit/test_fan_out_state_keys.py tests/unit/test_tts_node.py tests/unit/test_phase1_economy_nodes.py -q` → **106 passed**
+- Full `tests/unit tests/integration -m "not postgres"` → **1527 passed, 6 skipped, 86 deselected** (up from 1520 — 7 new tests, zero regressions)
+- `ruff check .` → clean; `ruff format --check` (4 re-touched files) → clean

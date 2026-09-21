@@ -117,6 +117,38 @@ async def test_llm_refusal_falls_back_to_unstitched_ordered_scripts() -> None:
 
     scripts = {e["segment_id"]: e["script"] for e in result["narration_scripts_final"]}
     assert scripts == {"sec_0": "Welcome to the lesson.", "sec_1": "Here is how it works."}
+    # AC 10: progress_pct milestone between slide_generator's 48.0 and
+    # tts_node's 86.0 — the specific numeric claim AC 10 makes, not just that
+    # the key exists.
+    assert result["progress_pct"] == 60.0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_llm_call_raising_falls_back_instead_of_crashing_the_node() -> None:
+    """Scale & Load review finding: complete_structured() RAISES (not
+    returns None) on a retry-exhausted rate limit, an open circuit breaker,
+    or a truncated structured response — this node's own design intent
+    ("never fail the lesson over a cosmetic pass") must hold for that case
+    too, not just a clean None response. Every per-section narration_generator
+    dispatch has already succeeded and been paid for by the time this node
+    runs, so an uncaught exception here would crash an otherwise-complete
+    lesson."""
+    from app.modules.content.pipeline.graph import narration_stitch_node
+
+    sb = _mock_supabase()
+    provider = AsyncMock()
+    provider.complete_structured.side_effect = RuntimeError("rate limited, retries exhausted")
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings", return_value=_mock_settings()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        result = await narration_stitch_node(_base_state())
+
+    scripts = {e["segment_id"]: e["script"] for e in result["narration_scripts_final"]}
+    assert scripts == {"sec_0": "Welcome to the lesson.", "sec_1": "Here is how it works."}
 
 
 @pytest.mark.unit
@@ -151,6 +183,47 @@ async def test_accepted_response_replaces_scripts_and_recomputes_word_count() ->
     assert by_id["sec_0"]["script"] == "Welcome! Let's get started."
     assert by_id["sec_0"]["word_count"] == 4
     assert by_id["sec_0"]["narration_style"] == "conversational"
+    assert by_id["sec_1"]["script"] == "Now, here is how it works."
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_accepted_response_in_permuted_order_still_reassembles_correctly() -> None:
+    """Test Coverage review finding: the guard only checks segment_id
+    SET/count/uniqueness, so a response returning the same segment_ids in a
+    different order must still be accepted (not treated as a mismatch), and
+    reassembly must key off segment_id (dict lookup), never trust the
+    response's own order — final output stays in true lesson order regardless
+    of what order the LLM echoed the segments back in."""
+    from app.modules.content.pipeline.graph import (
+        _StitchedNarrationLLM,
+        _StitchedNarrationSegmentLLM,
+        narration_stitch_node,
+    )
+
+    sb = _mock_supabase()
+    provider = AsyncMock()
+    # Reversed relative to the input's sec_0, sec_1 order.
+    provider.complete_structured.return_value = _StitchedNarrationLLM(
+        segments=[
+            _StitchedNarrationSegmentLLM(segment_id="sec_1", script="Now, here is how it works."),
+            _StitchedNarrationSegmentLLM(segment_id="sec_0", script="Welcome! Let's get started."),
+        ]
+    )
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.config.get_settings", return_value=_mock_settings()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        result = await narration_stitch_node(_base_state())
+
+    ordered = result["narration_scripts_final"]
+    assert [e["segment_id"] for e in ordered] == ["sec_0", "sec_1"], (
+        "output order must follow true lesson order, not the LLM response's order"
+    )
+    by_id = {e["segment_id"]: e for e in ordered}
+    assert by_id["sec_0"]["script"] == "Welcome! Let's get started."
     assert by_id["sec_1"]["script"] == "Now, here is how it works."
 
 
