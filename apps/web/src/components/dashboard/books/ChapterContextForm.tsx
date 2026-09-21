@@ -134,10 +134,11 @@ export function ChapterContextForm({
     // Pre-populate from existing chapter context on mount.
     useEffect(() => {
         let cancelled = false;
-        setLoading(true);
-        booksService
-            .getChapterContext(bookId, chapterId)
-            .then((row) => {
+
+        async function fetchContext() {
+            setLoading(true);
+            try {
+                const row = await booksService.getChapterContext(bookId, chapterId);
                 if (cancelled) return;
                 if (row) {
                     setForm({
@@ -148,13 +149,14 @@ export function ChapterContextForm({
                         prerequisites_done: row.prerequisites_done ?? null,
                     });
                 }
-            })
-            .catch(() => {
+            } catch {
                 // Fetch failure is non-fatal — form stays empty.
-            })
-            .finally(() => {
+            } finally {
                 if (!cancelled) setLoading(false);
-            });
+            }
+        }
+
+        void fetchContext();
         return () => { cancelled = true; };
     }, [bookId, chapterId]);
 

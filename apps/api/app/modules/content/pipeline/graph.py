@@ -1609,6 +1609,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     chapter_ctx_block = ""
     if chapter_id_for_ctx and user_id_for_ctx:
         from app.modules.content.context_chapter import get_chapter_context_prompt_block
+
         chapter_ctx_block = await get_chapter_context_prompt_block(
             chapter_id_for_ctx, user_id_for_ctx
         )
@@ -1617,7 +1618,12 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # Langfuse at the trace level (span is not accessible from inside a @traced_node).
     _lf = get_langfuse()
     _ctx = deterministic_trace_context(_lf, lesson_id)
-    safe_trace(lambda: _lf.trace(id=_ctx.trace_id, metadata={"has_chapter_context": has_chapter_context}))
+    safe_trace(
+        lambda: _lf.trace(
+            id=_ctx.trace_id,
+            metadata={"has_chapter_context": has_chapter_context},
+        )
+    )
 
     # Story 2-16 (RC-3): a single completion asked to echo back many segment_ids
     # collapses the list (44-in/10-out crashed the whole job). At or below
@@ -1644,7 +1650,11 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     batch_size = settings.lesson_planner_batch_size
     if len(segment_summaries) <= batch_size:
         response = await _run_planner_batch(
-            provider, model, segment_summaries, tier_framing, lesson_id,
+            provider,
+            model,
+            segment_summaries,
+            tier_framing,
+            lesson_id,
             chapter_context=chapter_ctx_block,
         )
     else:
@@ -1665,7 +1675,11 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         plan_head: _LessonPlanLLM | None = None
         for batch in batches:
             batch_response = await _run_planner_batch(
-                provider, model, batch, tier_framing, lesson_id,
+                provider,
+                model,
+                batch,
+                tier_framing,
+                lesson_id,
                 chapter_context=chapter_ctx_block,
             )
             if plan_head is None:

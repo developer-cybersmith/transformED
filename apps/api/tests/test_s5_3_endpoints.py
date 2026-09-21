@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
 
@@ -43,8 +42,8 @@ _SAVED_ROW = {
 
 def _make_client_with_user(user_id: str) -> TestClient:
     """Build a TestClient with the dependency overrides needed for auth."""
-    from app.main import create_app
     from app.dependencies import get_current_user
+    from app.main import create_app
 
     app = create_app()
 
@@ -59,20 +58,20 @@ def _make_client_with_user(user_id: str) -> TestClient:
 # PUT /context tests
 # ---------------------------------------------------------------------------
 
+
 class TestPutChapterContext:
     """AC9: PUT returns 200 with saved row; IDOR returns 404; unauthed returns 401."""
 
     @patch("app.modules.content.router.get_supabase")
     @patch("app.modules.content.router.upsert_chapter_context", new_callable=AsyncMock)
     @patch("app.modules.content.router.get_chapter_context_row", new_callable=AsyncMock)
-    def test_put_valid_context_returns_200(
-        self, mock_get_row, mock_upsert, mock_db
-    ) -> None:
+    def test_put_valid_context_returns_200(self, mock_get_row, mock_upsert, mock_db) -> None:
         # _resolve_chapter_for_context needs a chapter row
         chapter_row_resp = MagicMock()
         chapter_row_resp.data = [{"chapter_id": CHAPTER_ID, "book_id": BOOK_ID}]
-        mock_db.return_value.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.limit.return_value.execute.return_value = chapter_row_resp
+        _sel = mock_db.return_value.table.return_value.select.return_value
+        _eq2 = _sel.eq.return_value.eq.return_value
+        _eq2.limit.return_value.execute.return_value = chapter_row_resp
         mock_get_row.return_value = _SAVED_ROW
 
         client = _make_client_with_user(USER_ID)
@@ -90,8 +89,9 @@ class TestPutChapterContext:
         """IDOR: chapter not owned by this user → 404, not the row data."""
         chapter_row_resp = MagicMock()
         chapter_row_resp.data = []  # chapter not found for this (book_id, user_id)
-        mock_db.return_value.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.limit.return_value.execute.return_value = chapter_row_resp
+        _sel = mock_db.return_value.table.return_value.select.return_value
+        _eq2 = _sel.eq.return_value.eq.return_value
+        _eq2.limit.return_value.execute.return_value = chapter_row_resp
 
         client = _make_client_with_user(OTHER_USER_ID)
         resp = client.put(
@@ -103,6 +103,7 @@ class TestPutChapterContext:
     def test_put_unauthenticated_returns_401(self) -> None:
         """No JWT → 401/403 before any DB call."""
         from app.main import create_app
+
         client = TestClient(create_app(), raise_server_exceptions=False)
         resp = client.put(
             f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context",
@@ -118,6 +119,7 @@ class TestPutChapterContext:
 # GET /context tests
 # ---------------------------------------------------------------------------
 
+
 class TestGetChapterContext:
     """AC10: GET returns 200 with row; 204 when no row; 404 on cross-user; 401 without auth."""
 
@@ -126,14 +128,13 @@ class TestGetChapterContext:
     def test_get_existing_context_returns_200(self, mock_get_row, mock_db) -> None:
         chapter_row_resp = MagicMock()
         chapter_row_resp.data = [{"chapter_id": CHAPTER_ID, "book_id": BOOK_ID}]
-        mock_db.return_value.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.limit.return_value.execute.return_value = chapter_row_resp
+        _sel = mock_db.return_value.table.return_value.select.return_value
+        _eq2 = _sel.eq.return_value.eq.return_value
+        _eq2.limit.return_value.execute.return_value = chapter_row_resp
         mock_get_row.return_value = _SAVED_ROW
 
         client = _make_client_with_user(USER_ID)
-        resp = client.get(
-            f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context"
-        )
+        resp = client.get(f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context")
         assert resp.status_code == status.HTTP_200_OK
         assert resp.json()["depth_duration"] == "standard_30_45m"
 
@@ -143,14 +144,13 @@ class TestGetChapterContext:
         """AC10: no existing row → 204 No Content."""
         chapter_row_resp = MagicMock()
         chapter_row_resp.data = [{"chapter_id": CHAPTER_ID, "book_id": BOOK_ID}]
-        mock_db.return_value.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.limit.return_value.execute.return_value = chapter_row_resp
+        _sel = mock_db.return_value.table.return_value.select.return_value
+        _eq2 = _sel.eq.return_value.eq.return_value
+        _eq2.limit.return_value.execute.return_value = chapter_row_resp
         mock_get_row.return_value = None
 
         client = _make_client_with_user(USER_ID)
-        resp = client.get(
-            f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context"
-        )
+        resp = client.get(f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context")
         assert resp.status_code == status.HTTP_204_NO_CONTENT
 
     @patch("app.modules.content.router.get_supabase")
@@ -158,21 +158,19 @@ class TestGetChapterContext:
         """IDOR: chapter not owned by requesting user → 404."""
         chapter_row_resp = MagicMock()
         chapter_row_resp.data = []
-        mock_db.return_value.table.return_value.select.return_value \
-            .eq.return_value.eq.return_value.limit.return_value.execute.return_value = chapter_row_resp
+        _sel = mock_db.return_value.table.return_value.select.return_value
+        _eq2 = _sel.eq.return_value.eq.return_value
+        _eq2.limit.return_value.execute.return_value = chapter_row_resp
 
         client = _make_client_with_user(OTHER_USER_ID)
-        resp = client.get(
-            f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context"
-        )
+        resp = client.get(f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context")
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
     def test_get_unauthenticated_returns_401(self) -> None:
         from app.main import create_app
+
         client = TestClient(create_app(), raise_server_exceptions=False)
-        resp = client.get(
-            f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context"
-        )
+        resp = client.get(f"/api/content/books/{BOOK_ID}/chapters/{CHAPTER_ID}/context")
         assert resp.status_code in (
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,

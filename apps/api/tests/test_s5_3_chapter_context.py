@@ -10,19 +10,20 @@ Covers:
 """
 
 from __future__ import annotations
+
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from app.modules.content.schemas import ChapterContextRequest
 from app.modules.content.context_chapter import (
-    _format_chapter_context_block,
     _DEPTH_DISPLAY,
     _LEARNING_NEED_DISPLAY,
+    _format_chapter_context_block,
     get_chapter_context_prompt_block,
     upsert_chapter_context,
 )
+from app.modules.content.schemas import ChapterContextRequest
 
 
 class TestChapterContextRequestSchema:
@@ -46,7 +47,13 @@ class TestChapterContextRequestSchema:
             ChapterContextRequest(depth_duration="invalid_value")
 
     def test_valid_learning_need_values(self) -> None:
-        for val in ("examples_analogies", "formulas_derivations", "diagrams_visuals", "practice_questions", "adaptive_mix"):
+        for val in (
+            "examples_analogies",
+            "formulas_derivations",
+            "diagrams_visuals",
+            "practice_questions",
+            "adaptive_mix",
+        ):
             req = ChapterContextRequest(learning_need=val)
             assert req.learning_need == val
 

@@ -10,7 +10,8 @@ Pattern mirrors context.py (S5-1 book context) but is intentionally independent.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from app.core.db import get_supabase
 
@@ -65,14 +66,20 @@ def _format_chapter_context_block(
     if depth_duration is not None:
         label = _DEPTH_DISPLAY.get(depth_duration)
         if label is None:
-            logger.warning("chapter_context: unknown depth_duration value %r — omitting from prompt", depth_duration)
+            logger.warning(
+                "chapter_context: unknown depth_duration value %r — omitting from prompt",
+                depth_duration,
+            )
         else:
             lines.append(f"Depth and time needed: {label}")
 
     if learning_need is not None:
         label = _LEARNING_NEED_DISPLAY.get(learning_need)
         if label is None:
-            logger.warning("chapter_context: unknown learning_need value %r — omitting from prompt", learning_need)
+            logger.warning(
+                "chapter_context: unknown learning_need value %r — omitting from prompt",
+                learning_need,
+            )
         else:
             lines.append(f"Primary learning need: {label}")
 
@@ -104,7 +111,7 @@ async def upsert_chapter_context(
     prerequisites_done: bool | None,
 ) -> None:
     """Upsert a chapter_context row for (chapter_id, user_id). All fields nullable."""
-    db: any = get_supabase()
+    db: Any = get_supabase()
     # Sanitize text fields on write path (AC6).
     db.table("chapter_context").upsert(
         {
@@ -115,15 +122,15 @@ async def upsert_chapter_context(
             "specific_doubt": _sanitize(specific_doubt),
             "goal_and_skip": _sanitize(goal_and_skip),
             "prerequisites_done": prerequisites_done,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         },
         on_conflict="chapter_id,user_id",
     ).execute()
 
 
-async def get_chapter_context_row(chapter_id: str, user_id: str) -> dict | None:
+async def get_chapter_context_row(chapter_id: str, user_id: str) -> dict[str, Any] | None:
     """Return the chapter_context row for (chapter_id, user_id), or None."""
-    db: any = get_supabase()
+    db: Any = get_supabase()
     resp = (
         db.table("chapter_context")
         .select(_CHAPTER_CONTEXT_COLUMNS)

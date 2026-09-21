@@ -37,6 +37,10 @@ from app.core.rate_limit import _get_user_key, limiter
 from app.core.retry import with_retry
 from app.core.storage import sign_storage_path
 from app.dependencies import ApprovedUser, ArqRedis, CurrentUser
+from app.modules.content.context_chapter import (
+    get_chapter_context_row,
+    upsert_chapter_context,
+)
 
 # Story 1-11: book/chapter read models live in this module, NOT packages/shared
 # (frozen contract, 4-dev review — CLAUDE.md §16).
@@ -48,10 +52,6 @@ from app.modules.content.schemas import (
     GenerateLessonRequest,
     LatestLesson,
     LessonGenerationResponse,
-)
-from app.modules.content.context_chapter import (
-    get_chapter_context_row,
-    upsert_chapter_context,
 )
 
 # S2-LM3 (Learner Mode, unblocked 2026-07-17 once S2-LM1's 4-dev sign-off was
@@ -1517,9 +1517,7 @@ async def generate_chapter_lesson(
 # ── S5-3: Chapter context endpoints ──────────────────────────────────────────
 
 
-def _resolve_chapter_for_context(
-    book_id: str, chapter_id: str, user_id: str, db: any
-) -> None:
+def _resolve_chapter_for_context(book_id: str, chapter_id: str, user_id: str, db: Client) -> None:
     """Raise 404 if chapter doesn't belong to book+user; raise 403 if book owned by another user."""
     # Verify book ownership first (same check as generate_chapter_lesson Gate 2).
     book_resp = (
@@ -1565,11 +1563,11 @@ async def put_chapter_context(
     Idempotent: subsequent PUT calls overwrite previous answers.
     """
     db = get_supabase()
-    _resolve_chapter_for_context(book_id, chapter_id, user.id, db)
+    _resolve_chapter_for_context(book_id, chapter_id, user["sub"], db)
 
     await upsert_chapter_context(
         chapter_id=chapter_id,
-        user_id=user.id,
+        user_id=user["sub"],
         depth_duration=body.depth_duration,
         learning_need=body.learning_need,
         specific_doubt=body.specific_doubt,
@@ -1577,7 +1575,7 @@ async def put_chapter_context(
         prerequisites_done=body.prerequisites_done,
     )
 
-    row = await get_chapter_context_row(chapter_id, user.id)
+    row = await get_chapter_context_row(chapter_id, user["sub"])
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1606,9 +1604,9 @@ async def get_chapter_context(
 ) -> ChapterContextResponse | None:
     """Return existing §4.3 context answers for one chapter, or 204 when none exist."""
     db = get_supabase()
-    _resolve_chapter_for_context(book_id, chapter_id, user.id, db)
+    _resolve_chapter_for_context(book_id, chapter_id, user["sub"], db)
 
-    row = await get_chapter_context_row(chapter_id, user.id)
+    row = await get_chapter_context_row(chapter_id, user["sub"])
     if row is None:
         response.status_code = status.HTTP_204_NO_CONTENT
         return None
