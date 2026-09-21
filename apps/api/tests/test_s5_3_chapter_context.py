@@ -21,6 +21,7 @@ from app.modules.content.context_chapter import (
     _DEPTH_DISPLAY,
     _LEARNING_NEED_DISPLAY,
     get_chapter_context_prompt_block,
+    upsert_chapter_context,
 )
 
 
@@ -250,3 +251,55 @@ class TestUnknownMcqValueOmitted:
         )
         assert "Let AI decide" in block
         assert "unknown_value" not in block
+
+
+class TestUpsertChapterContext:
+    """D171 guard: updated_at must be ISO-8601, never the Python string 'now()'.
+
+    Regression test for D171 (FIXED-GUARDED): the original code passed the
+    literal string "now()" as a TIMESTAMPTZ value. PostgreSQL rejected it with
+    "invalid input syntax for type timestamp with time zone: \"now()\"", making
+    every PUT /context silently fail (frontend swallowed the 500 and proceeded
+    with zero personalisation).
+
+    This test captures the dict passed to .upsert() and asserts the timestamp
+    is a real ISO-8601 datetime string that parses successfully.
+    """
+
+    @pytest.mark.asyncio
+    async def test_upsert_updated_at_is_iso8601_not_now_string(self) -> None:
+        from datetime import datetime
+        from unittest.mock import MagicMock
+
+        mock_db = MagicMock()
+        mock_table = mock_db.table.return_value
+        mock_upsert = mock_table.upsert.return_value
+        mock_upsert.execute.return_value = MagicMock()
+
+        with patch(
+            "app.modules.content.context_chapter.get_supabase",
+            return_value=mock_db,
+        ):
+            await upsert_chapter_context(
+                "chapter-uuid",
+                "user-uuid",
+                depth_duration="standard_30_45m",
+                learning_need=None,
+                specific_doubt=None,
+                goal_and_skip=None,
+                prerequisites_done=None,
+            )
+
+        call_args = mock_table.upsert.call_args
+        payload = call_args[0][0]
+        updated_at = payload["updated_at"]
+
+        # D171: must not be the SQL keyword string that PostgreSQL rejects
+        assert updated_at != "now()", (
+            'updated_at must not be the string "now()" — '
+            "PostgreSQL rejects it as invalid TIMESTAMPTZ syntax"
+        )
+
+        # Must parse as a real timezone-aware ISO-8601 datetime
+        parsed = datetime.fromisoformat(updated_at)
+        assert parsed.tzinfo is not None, "updated_at must be timezone-aware (UTC)"
