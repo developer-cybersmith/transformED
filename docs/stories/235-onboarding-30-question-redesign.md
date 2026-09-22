@@ -345,7 +345,7 @@ failure mode, same recovery path, just a different (cheaper, deterministic) inpu
 level idempotency (`user:{id}:onboarding_done` Redis SET NX) and the reassessment bypass are
 **unchanged** — both are format-agnostic.
 
-**Registered as D171** (`docs/DEFECT-REGISTER.md`) — not fixed in this story. Re-reading
+**Registered as D173** (`docs/DEFECT-REGISTER.md`) — not fixed in this story. Re-reading
 `process_onboarding()`'s current (pre-this-story) insert path confirms it uses a plain `.insert()`,
 not an upsert, for `onboarding_responses` — meaning a reassessment resubmission would already hit the
 `UNIQUE(user_id, question_id)` constraint and be misreported as a 409 "duplicate submission" today,
@@ -353,7 +353,7 @@ independent of this story. This story's new table carries the identical shape/be
 unchanged (not a regression introduced here). Caught in review (Dev 3): the first draft of this note
 said "flagging for whoever touches it next" without an actual register entry — that phrasing is
 itself the silent-comment-with-no-ID pattern CLAUDE.md binding rule 5 prohibits, not an exemption from
-it. D171 is now open with an owner and trigger condition.
+it. D173 is now open with an owner and trigger condition.
 
 ### 6. Wire all 5 Tier A fields into the tutor's existing learner-context prompt path
 
