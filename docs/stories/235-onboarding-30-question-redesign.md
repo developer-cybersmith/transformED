@@ -132,6 +132,16 @@ Decision-Maker", `penta_ctq` → "Fact-Checker", `penta_rrq` → "Deep Researche
 returned in any API response (same allowlist-filtering discipline `_build_learner_prompt_text` already
 applies to the old 9 dimensions' badges).
 
+**Fix from review (Dev 4):** `_build_learner_prompt_text` filters `badge_labels` through
+`_VALID_BADGE_LABELS = frozenset(BADGE_THRESHOLDS.values())` (`service.py:2159,2180`) — an intentional
+prompt-injection allowlist — before anything reaches the tutor's LLM prompt. The first draft of this
+story added `PENTA_BADGE_THRESHOLDS` without updating that allowlist, so a student's earned Penta
+badges would render correctly on `DNAResultCard.tsx` (which reads `badge_labels` directly, unfiltered)
+but be silently stripped to "none yet" in the one prompt-injection surface this story's AC6 change
+actually feeds — a real silent-degradation gap the story's own test plan (AC10, `DNAResultCard.tsx`
+only) wouldn't have caught. **Fix:** `_VALID_BADGE_LABELS` becomes
+`frozenset(BADGE_THRESHOLDS.values()) | frozenset(PENTA_BADGE_THRESHOLDS.values())`. See AC6b.
+
 **Tier C — Deferred (Q6-15 and Q21-30).** Stored raw in `onboarding_answers_v2` only. Q6-8 (Bilingual
 Bridge / Info-Warfare Shield inputs) and Q9-15 (Roast Ceiling / attention & scheduler signals /
 Life-Pathway vision) each name a system issue #235 explicitly lists as not yet built. Q21-25 (one-liner)
@@ -165,14 +175,37 @@ CREATE TABLE public.onboarding_answers_v2 (
   created_at       timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT onboarding_answers_v2_user_question_unique UNIQUE (user_id, question_id)
 );
+
+ALTER TABLE public.onboarding_answers_v2 ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "onboarding_answers_v2: select own"
+  ON public.onboarding_answers_v2 FOR SELECT
+  USING (user_id = auth.uid());
+
+CREATE POLICY "onboarding_answers_v2: insert own"
+  ON public.onboarding_answers_v2 FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "onboarding_answers_v2: update own"
+  ON public.onboarding_answers_v2 FOR UPDATE
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "onboarding_answers_v2: delete own"
+  ON public.onboarding_answers_v2 FOR DELETE
+  USING (user_id = auth.uid());
 ```
 
-This mirrors `onboarding_responses`' own row-per-question shape and its
-`UNIQUE(user_id, question_id)` constraint (added by `20260703000000_onboarding_unique_constraint.sql`)
-rather than inventing a new pattern. `response_text` doubles for MCQ's selected option text (matching
-the old table's `selected_text` convention passed through today) and one-liner's free text — never
-both on the same row, enforced by a model validator in the schema, not a DB CHECK (keeps the migration
-simple; the API is the only writer).
+This mirrors `onboarding_responses`' own row-per-question shape, its
+`UNIQUE(user_id, question_id)` constraint (added by `20260703000000_onboarding_unique_constraint.sql`),
+and — caught in review (Dev 4) — its RLS enablement + 4 "own row" policies
+(`20260611000000_initial_schema.sql:333,726-741`), which the first draft of this migration omitted
+entirely despite this table storing more sensitive content than before (free-text one-liner answers).
+CLAUDE.md is unconditional here: "RLS on ALL Supabase tables — users read only their own data." Fixed.
+`response_text` doubles for MCQ's selected option text (matching the old table's `selected_text`
+convention passed through today) and one-liner's free text — never both on the same row, enforced by
+a model validator in the schema, not a DB CHECK (keeps the migration simple; the API is the only
+writer).
 
 **Second migration, same PR:** `learner_dna` gains 5 new nullable columns for the Tier B
 Penta-Intelligence baseline — added via a **new** migration file (the table's original `CREATE TABLE`
@@ -345,6 +378,9 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 - **AC1b** — New migration `supabase/migrations/<ts>_learner_dna_penta_intelligence.sql` adds the 5
   nullable `penta_*` columns to `learner_dna` per Design §2. The frozen `initial_schema.sql` is not
   touched; the existing 9 behavioral dimension columns are not altered.
+- **AC1c** — The AC1 migration enables RLS on `onboarding_answers_v2` and adds the same 4 "own row"
+  (select/insert/update/delete) policies `onboarding_responses` already has, per CLAUDE.md's
+  unconditional "RLS on ALL Supabase tables" rule (caught in review — Dev 4).
 - **AC2** — `onboarding_questions.py`: `QUESTION_SUBDIMENSION_MAP` and its onboarding-scoring usage
   removed; new `Q_SPEC`/`MCQ_OPTION_COUNTS`/`ALL_QUESTION_IDS` added, matching the PDF's 30 questions
   exactly (20 MCQ across Q1-Q20 with correct per-question option counts including the two 4-option
@@ -372,6 +408,12 @@ section 3, and can land in the **same** PR (same review, same reviewers).
   §6 when present, and omits the line entirely when all 5 are `None` (e.g. user hasn't onboarded via
   the new form, or the row doesn't exist). **Also requires 4-developer PR review** (same frozen
   contract as AC3 — can be the same review round).
+- **AC6b** — `_VALID_BADGE_LABELS` (`service.py:2159`) is updated to
+  `frozenset(BADGE_THRESHOLDS.values()) | frozenset(PENTA_BADGE_THRESHOLDS.values())` (caught in
+  review — Dev 4). A new test asserts `_build_learner_prompt_text` actually surfaces a Penta badge in
+  its output string when `dna.badge_labels` contains one — not just that `process_onboarding` computes
+  one (AC10 alone doesn't cover this path, since `DNAResultCard.tsx` reads `badge_labels` unfiltered
+  and would have masked the gap).
 - **AC7** — `questions.ts` rewritten: all 30 questions present with exact PDF text/options/format,
   verified 1:1 against the source PDF (not paraphrased) in the PR description.
 - **AC8** — `QuestionCard.tsx` renders all 3 formats correctly: MCQ (unchanged visual/a11y), True/False
