@@ -54,16 +54,18 @@ class JobSummary(BaseModel):
     completed_at: str | None
     error: str | None
     cost_usd: float | None
-    # Story 3-37 Round-2 review (Scale & Load Hunter): tts_node always writes
-    # node_outputs["narration_cap_applied"] (a "capped" bool + totals + the
-    # affected segment_ids), but until this field existed nothing ever read
-    # it back out — a lesson could ship with its later narration segments
-    # silently zeroed and no admin response distinguished it from a fully-
-    # narrated one. `select("*")` already fetches node_outputs on every row
-    # this endpoint touches; this only stops discarding it. False (not None)
-    # when absent — a job that hasn't reached tts_node yet has, as far as
-    # this admin view is concerned, nothing capped, same as `completed_at`
-    # being genuinely absent is distinct from "we don't know".
+    # Story 3-37 Round-2 review (Scale & Load Hunter): the narration-cap node
+    # always writes node_outputs["narration_cap_applied"] (a "capped" bool +
+    # totals + the affected segment_ids) — narration_stitch_node since issue
+    # #236 moved the cap there from tts_node (see that story for why) — but
+    # until this field existed nothing ever read it back out — a lesson could
+    # ship with its later narration segments silently zeroed and no admin
+    # response distinguished it from a fully-narrated one. `select("*")`
+    # already fetches node_outputs on every row this endpoint touches; this
+    # only stops discarding it. False (not None) when absent — a job that
+    # hasn't reached narration_stitch_node yet has, as far as this admin view
+    # is concerned, nothing capped, same as `completed_at` being genuinely
+    # absent is distinct from "we don't know".
     narration_capped: bool
 
 

@@ -2,14 +2,17 @@
 Unit tests for Story 2-8 (S2-9): tts_node real body.
 
 Covers docs/stories/2-8-tts-node.md's ACs:
-- AC-1: input is narration_scripts only.
+- AC-1: input is narration_scripts_final only (issue #236: renamed from
+  narration_scripts — see narration_stitch_node, which now runs immediately
+  before this node and owns ordering/transition-stitching/the lesson-wide
+  char cap; that cap's own test coverage moved to test_narration_stitch_node.py).
 - AC-2: Sarvam -> Azure -> Browser fallback chain, never fails the pipeline.
 - AC-6: successful audio uploads to lesson-audio bucket.
 - AC-7: nested {segment_id, data} output, Narration-validated.
 - AC-9: cost tracked on successful synthesis.
 - AC-10: idempotency checkpoint (Phase-A style).
-- AC-11: empty narration_scripts does NOT raise (deliberate divergence from
-  lesson_planner_node/slide_generator_node's empty-input guards).
+- AC-11: empty narration_scripts_final does NOT raise (deliberate divergence
+  from lesson_planner_node/slide_generator_node's empty-input guards).
 """
 
 from __future__ import annotations
@@ -64,7 +67,7 @@ NARRATION_SCRIPTS: list[dict[str, Any]] = [
 def _base_state(**overrides: Any) -> dict[str, Any]:
     state: dict[str, Any] = {
         "lesson_id": FAKE_LESSON_ID,
-        "narration_scripts": NARRATION_SCRIPTS,
+        "narration_scripts_final": NARRATION_SCRIPTS,
         "progress_pct": 48.0,
         "error": None,
     }
@@ -82,19 +85,6 @@ def _mock_supabase(node_outputs: dict[str, Any] | None = None) -> MagicMock:
     sb.table.return_value = jobs_mock
     sb.storage.from_.return_value.upload.return_value = MagicMock()
     return sb
-
-
-def _mock_settings_with_narration_cap(cap: int) -> MagicMock:
-    """D76 (Story 3-43): tts_node's only settings read in its cap-enforcement
-    path is settings.max_narration_chars_per_lesson (verified — the sole
-    `settings.` access in that code path). Pins a test-local cap value so
-    the narration-cap boundary tests exercise the CAP MECHANISM, independent
-    of whatever the real production default happens to be — decoupled from
-    the D76 change (10,000 -> 17,000) rather than requiring every boundary
-    test's fixture arithmetic to be rewritten to a new magic number."""
-    settings = MagicMock()
-    settings.max_narration_chars_per_lesson = cap
-    return settings
 
 
 @pytest.mark.unit
@@ -267,7 +257,7 @@ async def test_sarvam_failure_falls_back_to_azure() -> None:
         patch("app.providers.tts.azure.AzureTTSProvider", return_value=mock_azure),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
-        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
 
     assets = result["audio_assets"]
     assert assets[0]["data"]["audio_provider"] == "azure"
@@ -294,7 +284,7 @@ async def test_both_providers_fail_falls_back_to_browser_never_raises() -> None:
         patch("app.providers.tts.azure.AzureTTSProvider", return_value=mock_azure),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
-        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
 
     assets = result["audio_assets"]
     assert assets[0]["data"]["audio_provider"] == "browser"
@@ -357,15 +347,16 @@ async def test_over_ceiling_skips_paid_providers_and_downshifts_to_browser() -> 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_empty_narration_scripts_does_not_raise() -> None:
-    """AC-11: empty narration_scripts produces audio_assets=[], no exception —
-    deliberate divergence from lesson_planner_node/slide_generator_node's
-    empty-input guards (TTS never hard-fails the pipeline)."""
+    """AC-11: empty narration_scripts_final produces audio_assets=[], no
+    exception — deliberate divergence from lesson_planner_node/
+    slide_generator_node's empty-input guards (TTS never hard-fails the
+    pipeline)."""
     from app.modules.content.pipeline.graph import tts_node
 
     sb = _mock_supabase()
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        result = await tts_node(_base_state(narration_scripts=[]))
+        result = await tts_node(_base_state(narration_scripts_final=[]))
 
     assert result["audio_assets"] == []
 
@@ -416,7 +407,7 @@ async def test_successful_run_writes_checkpoint() -> None:
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
-        await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+        await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
 
     checkpoint_calls = [
         call.args[0]
@@ -426,6 +417,12 @@ async def test_successful_run_writes_checkpoint() -> None:
     assert len(checkpoint_calls) == 1
     assert checkpoint_calls[0]["last_node"] == "tts_node"
     assert "tts_node" in checkpoint_calls[0]["node_outputs"]
+    # AC-11 / issue #236: tts_node no longer owns the narration-cap
+    # degradation record — narration_stitch_node writes it earlier in the
+    # same lesson_jobs row, and tts_node's own **node_outputs spread must not
+    # re-write a stale/absent value over it. tts_node's own checkpoint update
+    # must not introduce this key itself.
+    assert "narration_cap_applied" not in checkpoint_calls[0]["node_outputs"]
 
 
 @pytest.mark.unit
@@ -444,7 +441,7 @@ async def test_cost_accumulated_on_successful_synthesis() -> None:
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
-        await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+        await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
 
     mock_accumulate.assert_called_once()
     call_args = mock_accumulate.call_args
@@ -476,7 +473,7 @@ async def test_malformed_entry_degrades_that_segment_only_not_whole_node() -> No
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
-        result = await tts_node(_base_state(narration_scripts=scripts))
+        result = await tts_node(_base_state(narration_scripts_final=scripts))
 
     assets = result["audio_assets"]
     assert len(assets) == 2, "the whole node must not crash — both entries produce output"
@@ -512,12 +509,57 @@ async def test_unsafe_segment_id_degrades_to_browser_fallback() -> None:
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
-        result = await tts_node(_base_state(narration_scripts=[unsafe_entry]))
+        result = await tts_node(_base_state(narration_scripts_final=[unsafe_entry]))
 
     assets = result["audio_assets"]
     assert assets[0]["data"]["audio_provider"] == "browser"
     assert assets[0]["data"]["audio_url"] == ""
     sb.storage.from_.return_value.upload.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_provider_receives_exactly_the_narration_scripts_final_content() -> None:
+    """Round-2 review finding (2026-09-21, PR #237): the Story 3-37 cap
+    tests that used to live in this file asserted on the EXACT characters
+    actually sent to the Sarvam provider mock (`chars_sent = sum(len(call.
+    args[0]) for call in mock_sarvam.synthesize.call_args_list)`), not just
+    on an intermediate list's contents. Moving the cap logic into
+    narration_stitch_node (issue #236) relocated that assertion to
+    test_narration_stitch_node.py, but nothing there — or anywhere else —
+    verifies tts_node actually hands the FINAL, already-capped/stitched
+    content through to the provider without any further truncation or
+    mangling of its own. This test closes that specific trust-boundary gap:
+    build a narration_scripts_final entry already shaped exactly as
+    narration_stitch_node would hand it off (already ordered, already
+    capped) and assert the provider receives that exact string, verbatim."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    exact_stitched_script = "This is the exact, already-stitched-and-capped narration text."
+    already_final_entry = {
+        "segment_id": "sec_0",
+        "script": exact_stitched_script,
+        "narration_style": "conversational",
+        "word_count": len(exact_stitched_script.split()),
+    }
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts_final=[already_final_entry]))
+
+    assert mock_sarvam.synthesize.call_count == 1
+    text_sent = mock_sarvam.synthesize.call_args.args[0]
+    assert text_sent == exact_stitched_script, (
+        f"tts_node must pass narration_scripts_final's script through verbatim — "
+        f"expected {exact_stitched_script!r}, provider received {text_sent!r}"
+    )
+    assert result["audio_assets"][0]["data"]["script"] == exact_stitched_script
 
 
 @pytest.mark.unit
@@ -537,7 +579,7 @@ async def test_upload_uses_upsert_true() -> None:
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
-        await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+        await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
 
     upload_call = sb.storage.from_.return_value.upload.call_args
     assert upload_call.kwargs["file_options"]["upsert"] == "true"
@@ -553,7 +595,7 @@ async def test_empty_narration_scripts_writes_checkpoint() -> None:
     sb = _mock_supabase()
 
     with patch("app.core.db.get_supabase", return_value=sb):
-        await tts_node(_base_state(narration_scripts=[]))
+        await tts_node(_base_state(narration_scripts_final=[]))
 
     checkpoint_calls = [
         call.args[0]
@@ -584,7 +626,7 @@ async def test_sarvam_empty_audio_bytes_falls_back_to_azure() -> None:
         patch("app.providers.tts.azure.AzureTTSProvider", return_value=mock_azure),
         patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
     ):
-        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
 
     assert result["audio_assets"][0]["data"]["audio_provider"] == "azure"
 
@@ -611,410 +653,10 @@ async def test_azure_empty_audio_bytes_falls_back_to_browser() -> None:
         patch("app.providers.tts.azure.AzureTTSProvider", return_value=mock_azure),
         patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
-        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
 
     asset = result["audio_assets"][0]["data"]
     assert asset["audio_provider"] == "browser"
     assert asset["audio_url"] == ""  # no 0-byte upload
     sb.storage.from_.return_value.upload.assert_not_called()
     mock_accumulate.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Story 3-37: Node 8 narration hard cap (decisionupdate.md §8)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_lesson_wide_narration_cap_truncates_and_zeroes_over_budget_segments() -> None:
-    """Story 3-37 AC 3/4/5/6: 4 segments of 4,000 chars each (16,000 total)
-    exceed the 10,000-char lesson-wide cap. The 3rd segment (crosses the
-    boundary at 8,000 + 4,000 > 10,000) must be truncated to exactly the
-    remaining 2,000-char budget and STILL synthesized; the 4th segment must
-    be treated as empty — zero chars ever reach a TTS provider for it, and
-    it degrades through the existing browser-fallback shape. The sum of
-    characters actually sent to any provider must never exceed the cap, and
-    an explicit, always-present degradation record must be persisted.
-
-    RED (pre-fix): nothing today caps the lesson-wide total — all 16,000
-    chars reach `_synthesize_with_fallback` unmodified, and
-    `node_outputs["narration_cap_applied"]` does not exist at all (KeyError
-    on the assertion below).
-    """
-    from app.modules.content.pipeline.graph import tts_node
-
-    scripts = [
-        {"segment_id": "sec_0", "script": "A" * 4000, "narration_style": "x", "word_count": 1},
-        {"segment_id": "sec_1", "script": "B" * 4000, "narration_style": "x", "word_count": 1},
-        {"segment_id": "sec_2", "script": "C" * 4000, "narration_style": "x", "word_count": 1},
-        {"segment_id": "sec_3", "script": "D" * 4000, "narration_style": "x", "word_count": 1},
-    ]
-
-    mock_sarvam = AsyncMock()
-    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
-    sb = _mock_supabase()
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
-        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
-    ):
-        result = await tts_node(_base_state(narration_scripts=scripts))
-
-    # AC 5: total characters actually sent to the TTS provider never exceeds
-    # the cap — sum every text argument Sarvam was actually invoked with.
-    chars_sent = sum(len(call.args[0]) for call in mock_sarvam.synthesize.call_args_list)
-    assert chars_sent <= 10000, (
-        f"{chars_sent} chars reached the TTS provider — the lesson-wide cap was not enforced"
-    )
-
-    # AC 3: the crossing segment (sec_2) was truncated to the exact remainder.
-    assets = result["audio_assets"]
-    by_id = {a["segment_id"]: a["data"] for a in assets}
-    assert by_id["sec_0"]["script"] == "A" * 4000
-    assert by_id["sec_1"]["script"] == "B" * 4000
-    assert by_id["sec_2"]["script"] == "C" * 2000
-
-    # AC 4: the subsequent segment (sec_3) was zeroed and degraded through
-    # the existing browser-fallback shape — no provider call for it at all.
-    assert by_id["sec_3"]["script"] == ""
-    assert by_id["sec_3"]["audio_provider"] == "browser"
-    assert by_id["sec_3"]["audio_url"] == ""
-    sec_3_calls = [c for c in mock_sarvam.synthesize.call_args_list if c.args[0] == "D" * 4000]
-    assert sec_3_calls == [], "sec_3's full script must never reach a TTS provider"
-
-    # AC 6: explicit, always-present degradation record on the SAME write.
-    checkpoint_calls = [
-        c.args[0]
-        for c in sb.table.return_value.update.call_args_list
-        if "node_outputs" in c.args[0]
-    ]
-    assert len(checkpoint_calls) == 1
-    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
-    assert cap_record == {
-        "capped": True,
-        "original_total_chars": 16000,
-        "capped_total_chars": 10000,
-        "affected_segment_ids": ["sec_2", "sec_3"],
-    }
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_lesson_wide_narration_under_cap_is_completely_unaffected() -> None:
-    """Story 3-37 AC 2/9: a lesson whose combined narration is well under the
-    10,000-char cap must be completely unaffected — every script byte-for-
-    byte unchanged, no segment skipped, and the degradation record reports
-    capped=False with the two totals equal and an empty affected list."""
-    from app.modules.content.pipeline.graph import tts_node
-
-    mock_sarvam = AsyncMock()
-    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
-    sb = _mock_supabase()
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
-    ):
-        result = await tts_node(_base_state())  # 2 short segments, well under 10,000 chars
-
-    assets = result["audio_assets"]
-    by_id = {a["segment_id"]: a["data"] for a in assets}
-    assert by_id["sec_0"]["script"] == "Welcome to the lesson."
-    assert by_id["sec_1"]["script"] == "Here is how it works."
-    total_chars = len("Welcome to the lesson.") + len("Here is how it works.")
-
-    checkpoint_calls = [
-        c.args[0]
-        for c in sb.table.return_value.update.call_args_list
-        if "node_outputs" in c.args[0]
-    ]
-    assert len(checkpoint_calls) == 1
-    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
-    assert cap_record == {
-        "capped": False,
-        "original_total_chars": total_chars,
-        "capped_total_chars": total_chars,
-        "affected_segment_ids": [],
-    }
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_narration_cap_exact_boundary_fit_is_not_truncated() -> None:
-    """Story 3-37 round-1 self-review edge case: a segment whose length
-    exactly exhausts the remaining budget (running_total + len(script) ==
-    max_chars) must NOT be treated as truncated — only a segment that
-    exceeds the remaining budget counts as affected. Only the segment
-    AFTER the exact-fit one should be zeroed."""
-    from app.modules.content.pipeline.graph import tts_node
-
-    scripts = [
-        {"segment_id": "sec_0", "script": "A" * 10000, "narration_style": "x", "word_count": 1},
-        {"segment_id": "sec_1", "script": "B" * 100, "narration_style": "x", "word_count": 1},
-    ]
-
-    mock_sarvam = AsyncMock()
-    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
-    sb = _mock_supabase()
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
-        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
-    ):
-        result = await tts_node(_base_state(narration_scripts=scripts))
-
-    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
-    assert by_id["sec_0"]["script"] == "A" * 10000  # exact fit, unmodified
-    assert by_id["sec_1"]["script"] == ""  # zeroed, budget already exhausted
-
-    checkpoint_calls = [
-        c.args[0]
-        for c in sb.table.return_value.update.call_args_list
-        if "node_outputs" in c.args[0]
-    ]
-    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
-    assert cap_record == {
-        "capped": True,
-        "original_total_chars": 10100,
-        "capped_total_chars": 10000,
-        "affected_segment_ids": ["sec_1"],
-    }
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_narration_cap_empty_narration_scripts_list_is_uncapped_by_construction() -> None:
-    """Story 3-37 AC 6, Round-2 review (Cynical Review): a dedicated test for
-    the genuinely-empty-list case, distinct from
-    test_lesson_wide_narration_under_cap_is_completely_unaffected (which
-    only ever exercises 2 non-empty short segments). An empty
-    narration_scripts must still get an explicit, always-present
-    capped=False record — never skip the write just because there was
-    nothing to cap."""
-    from app.modules.content.pipeline.graph import tts_node
-
-    sb = _mock_supabase()
-
-    with patch("app.core.db.get_supabase", return_value=sb):
-        result = await tts_node(_base_state(narration_scripts=[]))
-
-    assert result["audio_assets"] == []
-
-    checkpoint_calls = [
-        c.args[0]
-        for c in sb.table.return_value.update.call_args_list
-        if "node_outputs" in c.args[0]
-    ]
-    assert len(checkpoint_calls) == 1
-    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
-    assert cap_record == {
-        "capped": False,
-        "original_total_chars": 0,
-        "capped_total_chars": 0,
-        "affected_segment_ids": [],
-    }
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_narration_cap_reorders_out_of_order_fan_in_by_true_section_index() -> None:
-    """Story 3-37 Round-2 review (Cynical Review + Edge Case Hunter,
-    independently): narration_scripts is Annotated[list, operator.add], fed
-    by Send()-dispatched calls into the same LangGraph superstep with NO
-    cross-call ordering guarantee (narration_generator_node's own
-    docstring: "Send()-dispatched calls do not all resolve in lockstep").
-    Hand-construct the fan-in list arriving OUT of section order — the
-    LAST section by real segment_id index (section_3) must still be the
-    one that gets zeroed, never whichever entry happened to land last in
-    the (scrambled) list."""
-    from app.modules.content.pipeline.graph import tts_node
-
-    # Arrival order: 2, 0, 3, 1 — deliberately not lesson order.
-    scripts = [
-        {"segment_id": "section_2_c", "script": "C" * 4000, "narration_style": "x"},
-        {"segment_id": "section_0_a", "script": "A" * 4000, "narration_style": "x"},
-        {"segment_id": "section_3_d", "script": "D" * 4000, "narration_style": "x"},
-        {"segment_id": "section_1_b", "script": "B" * 4000, "narration_style": "x"},
-    ]
-
-    mock_sarvam = AsyncMock()
-    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
-    sb = _mock_supabase()
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
-        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
-    ):
-        result = await tts_node(_base_state(narration_scripts=scripts))
-
-    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
-    # True lesson order is 0,1,2,3 — sections 0 and 1 fit fully (8,000
-    # chars), section 2 crosses the boundary and is truncated to the
-    # remaining 2,000, section 3 (the REAL last section) is zeroed — even
-    # though it arrived BEFORE section_1 in the raw fan-in list.
-    assert by_id["section_0_a"]["script"] == "A" * 4000
-    assert by_id["section_1_b"]["script"] == "B" * 4000
-    assert by_id["section_2_c"]["script"] == "C" * 2000
-    assert by_id["section_3_d"]["script"] == ""
-
-    checkpoint_calls = [
-        c.args[0]
-        for c in sb.table.return_value.update.call_args_list
-        if "node_outputs" in c.args[0]
-    ]
-    cap_record = checkpoint_calls[0]["node_outputs"]["narration_cap_applied"]
-    assert cap_record["affected_segment_ids"] == ["section_2_c", "section_3_d"]
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_narration_cap_skips_non_dict_entry_without_crashing_node() -> None:
-    """Story 3-37 Round-2 review (Cynical Review): a non-dict entry in
-    narration_scripts (bare string, from a schema-drifted or hand-edited
-    checkpoint — the exact case package_builder_node._index_by_segment_id
-    already defends against a few hundred lines below in this file) must
-    be logged and dropped, never crash the whole node on `entry.get(...)`
-    — matches this node's own "never hard-fails" guarantee."""
-    from app.modules.content.pipeline.graph import tts_node
-
-    scripts: list[Any] = [
-        {"segment_id": "sec_0", "script": "hello", "narration_style": "x"},
-        "not-a-dict-entry",
-        {"segment_id": "sec_1", "script": "world", "narration_style": "x"},
-    ]
-
-    mock_sarvam = AsyncMock()
-    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
-    sb = _mock_supabase()
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
-    ):
-        result = await tts_node(_base_state(narration_scripts=scripts))
-
-    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
-    assert set(by_id) == {"sec_0", "sec_1"}
-    assert by_id["sec_0"]["script"] == "hello"
-    assert by_id["sec_1"]["script"] == "world"
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_narration_cap_truncation_does_not_split_devanagari_combining_mark() -> None:
-    """Story 3-37 Round-2 review (Cynical Review + Edge Case Hunter,
-    independently): Sarvam Bulbul v2 (this repo's primary TTS provider)
-    targets Indic scripts, where a raw character-index slice can land
-    between a base consonant and a dependent vowel sign (matra) that is a
-    SEPARATE Unicode codepoint — producing a technically-valid but
-    linguistically-broken orphaned base character right at the cap
-    boundary. The truncation must back off to the nearest safe boundary
-    instead."""
-    from app.modules.content.pipeline.graph import tts_node
-
-    # "क" (KA, base) + "ि" (VOWEL SIGN I, combining) sit at indices 9999 and
-    # 10000 of a 10,001-char first segment — a raw script[:10000] slice
-    # would keep KA (index 9999) but drop its vowel sign (index 10000),
-    # landing precisely mid-cluster. The cap (10,000) forces this segment
-    # to cross the boundary since 10,001 > 10,000.
-    devanagari_pair = "कि"  # क + ि
-    first_segment = ("A" * 9999) + devanagari_pair  # 10,001 chars total
-    scripts = [
-        {"segment_id": "sec_0", "script": first_segment, "narration_style": "x"},
-        {"segment_id": "sec_1", "script": "B" * 100, "narration_style": "x"},
-    ]
-
-    mock_sarvam = AsyncMock()
-    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
-    sb = _mock_supabase()
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
-        patch("app.config.get_settings", return_value=_mock_settings_with_narration_cap(10000)),
-    ):
-        result = await tts_node(_base_state(narration_scripts=scripts))
-
-    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
-    truncated = by_id["sec_0"]["script"]
-    # A naive script[:10000] slice would produce "A"*9999 + "क" — a bare
-    # base character orphaned from its vowel sign. The grapheme-safe trim
-    # must back off past BOTH, keeping only the plain "A" run.
-    assert truncated == "A" * 9999
-    assert not truncated.endswith("क")  # bare KA with no following matra
-    assert "ि" not in truncated
-    assert len(truncated) <= 10000
-
-
-@pytest.mark.unit
-@pytest.mark.asyncio
-async def test_production_default_does_not_truncate_a_real_world_sized_lesson() -> None:
-    """D78 (Story 3-45): the REAL settings.max_narration_chars_per_lesson (not
-    a mocked test-local cap) must not truncate an ordinary real chapter.
-
-    RED (pre-fix, cap=17,000): lesson abe4e438-052f-48d9-818f-590e3a42b2bb's
-    real production run — an entirely ordinary 29-page, 15-section chapter,
-    nowhere near max_chapter_pages=200 — produced 43,793 real narration
-    chars and had segments 6-14 (9 of 15) zeroed by the cap, silently losing
-    all real TTS audio for 60% of the lesson while real cost sat at 29% of
-    the $3.00 ceiling. This test reproduces that exact per-segment character
-    distribution against the REAL default and asserts nothing is zeroed.
-    """
-    from app.modules.content.pipeline.graph import tts_node
-
-    # Exact per-segment script lengths from the real production run.
-    real_segment_char_counts = [
-        3502,
-        3083,
-        3357,
-        1436,
-        4035,
-        1587,
-        3251,
-        2160,
-        3847,
-        3984,
-        1161,
-        2910,
-        3634,
-        3187,
-        2659,
-    ]
-    assert sum(real_segment_char_counts) == 43793
-    scripts = [
-        {"segment_id": f"sec_{i}", "script": "A" * n, "narration_style": "x"}
-        for i, n in enumerate(real_segment_char_counts)
-    ]
-
-    mock_sarvam = AsyncMock()
-    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
-    sb = _mock_supabase()
-
-    with (
-        patch("app.core.db.get_supabase", return_value=sb),
-        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
-        # Deliberately NOT patching app.config.get_settings — this must
-        # exercise the real production default.
-    ):
-        result = await tts_node(_base_state(narration_scripts=scripts))
-
-    by_id = {a["segment_id"]: a["data"] for a in result["audio_assets"]}
-    for i, n in enumerate(real_segment_char_counts):
-        seg = by_id[f"sec_{i}"]
-        assert seg["script"] == "A" * n, (
-            f"sec_{i} was truncated/zeroed by the production narration cap "
-            f"({len(seg['script'])} of {n} chars survived) — the real default is "
-            "still cutting off an entirely ordinary chapter"
-        )
-        assert seg["audio_provider"] == "sarvam"
