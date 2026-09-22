@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { onboardingService } from "@/services/onboarding.service";
 import { QuestionCard, type AnswerValue } from "./QuestionCard";
 import { DNAResultCard } from "./DNAResultCard";
-import { QUESTIONS } from "./questions";
+import { QUESTIONS, type Question } from "./questions";
 import type { LearnerDNA, OnboardingAnswer, OnboardingResult } from "@/types/assessment";
 
 type Phase = "checking" | "disclaimer" | "questions" | "result" | "error";
@@ -82,8 +82,16 @@ function getErrorDetail(err: unknown): string | undefined {
 // and "answered index 0" (mcq) for every format — blank/whitespace-only text
 // never counts as answered for one_liner, consistent with the backend's own
 // model_validator on OnboardingAnswer.
-function isAnswered(value: AnswerValue | undefined): boolean {
+//
+// Also requires value.format === question.format: a persisted answer whose
+// format no longer matches the current question at that id (e.g. sessionStorage
+// held a stale mid-flight blob from before a question's format changed in a
+// later deploy) is treated as NOT answered, rather than silently letting the
+// student proceed/submit — forces a fresh answer in the current format instead
+// of handleSubmit()'s own per-question fallback silently fabricating one.
+function isAnswered(value: AnswerValue | undefined, question: Question): boolean {
     if (!value) return false;
+    if (value.format !== question.format) return false;
     if (value.format === "one_liner") return value.text.trim().length > 0;
     return true; // mcq: index is always a definite number once set; true_false: value is always set once set
 }
@@ -159,7 +167,7 @@ export function OnboardingFlow() {
     const question = QUESTIONS[current];
     const currentAnswer = question ? answers[question.id] : undefined;
     const isLast = current === TOTAL - 1;
-    const canProceed = isAnswered(currentAnswer);
+    const canProceed = question ? isAnswered(currentAnswer, question) : false;
 
     function handleChange(value: AnswerValue) {
         setAnswers((prev) => ({ ...prev, [question.id]: value }));

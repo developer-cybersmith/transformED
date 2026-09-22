@@ -526,6 +526,29 @@ async def test_generate_onboarding_profile_appends_dpdp_disclaimer() -> None:
     assert DPDP_DISCLAIMER in result
 
 
+@pytest.mark.unit
+async def test_generate_onboarding_profile_uses_llm_mini_not_a_hardcoded_string() -> None:
+    """CLAUDE.md: 'Never hardcode model strings — always use settings.llm_* aliases.'
+    Asserts provider.complete() is actually called with settings.llm_mini's live
+    value, not just that some model string was passed — a hardcoded literal that
+    happened to equal the settings value in every other test's mock would still
+    pass those tests but violate this rule."""
+    from app.modules.assessment.prompts import generate_onboarding_profile
+
+    mock_provider = MagicMock()
+    mock_provider.complete = AsyncMock(return_value="You are a careful, patient learner.")
+
+    with patch("app.modules.assessment.prompts.get_settings") as mock_settings:
+        mock_settings.return_value.llm_mini = "a-distinctive-sentinel-model-id"
+        await generate_onboarding_profile(
+            badge_labels=["Deep Researcher"],
+            provider=mock_provider,
+        )
+
+    mock_provider.complete.assert_awaited_once()
+    assert mock_provider.complete.call_args.kwargs["model"] == "a-distinctive-sentinel-model-id"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TASK 5 — process_onboarding service function (Story 235 rewrite)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -553,19 +576,46 @@ def test_validate_onboarding_responses_rejects_duplicate_question_id() -> None:
 
 @pytest.mark.unit
 def test_validate_onboarding_responses_rejects_missing_question() -> None:
+    """29 unique, non-duplicated question_ids (q30 absent, nothing else wrong) must
+    still be rejected — isolates the id_set != ALL_QUESTION_IDS branch specifically,
+    since _validate_onboarding_responses has no length check of its own that could
+    fire first (previously this test padded back to 30 with a duplicate, which meant
+    the duplicate-detection branch fired instead and "missing" was never actually
+    exercised in isolation)."""
+    from fastapi import HTTPException
+
+    from app.modules.assessment.service import _validate_onboarding_responses
+
+    answers = _make_onboarding_answers()[:29]  # missing q30, 29 unique ids, no duplicates
+    with pytest.raises(HTTPException) as exc_info:
+        _validate_onboarding_responses(answers)
+    assert exc_info.value.status_code == 422
+    assert "Missing" in exc_info.value.detail
+    assert "q30" in exc_info.value.detail
+
+
+@pytest.mark.unit
+def test_validate_onboarding_responses_rejects_unknown_question_id() -> None:
+    """30 ids, no duplicates, one of them not in ALL_QUESTION_IDS — isolates the
+    "unknown" half of the id_set != ALL_QUESTION_IDS branch specifically (the
+    existing before-any-db-call test swaps q1 for an unknown id too, but that
+    simultaneously makes q1 "missing" and the unknown id "unknown" at once, and
+    that test's actual purpose is proving supabase.table is never called, not
+    isolating this detail message)."""
     from fastapi import HTTPException
 
     from app.modules.assessment.schemas import OnboardingAnswer
     from app.modules.assessment.service import _validate_onboarding_responses
 
-    answers = _make_onboarding_answers()[:29]  # missing q30
-    # pad back to 30 with a duplicate so length check alone doesn't fire first
+    answers = _make_onboarding_answers()[:29]  # 29 known ids (q1-q29), q30 dropped
     answers.append(
-        OnboardingAnswer(question_id="q1", format="mcq", selected_index=0, response_text="dup")
+        OnboardingAnswer(question_id="q_bogus", format="mcq", selected_index=0, response_text="x")
     )
     with pytest.raises(HTTPException) as exc_info:
         _validate_onboarding_responses(answers)
     assert exc_info.value.status_code == 422
+    assert "Unknown" in exc_info.value.detail
+    assert "q_bogus" in exc_info.value.detail
 
 
 @pytest.mark.unit

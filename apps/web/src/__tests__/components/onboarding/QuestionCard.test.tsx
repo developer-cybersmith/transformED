@@ -117,6 +117,40 @@ describe('QuestionCard — mcq format', () => {
         expect(option.className).toMatch(/focus-visible:ring-4/);
       }
     });
+
+    it('renders the option-letter prefix (A./B./...) with a WCAG AA contrast class, not the pre-fix text-neutral-400', () => {
+      render(<QuestionCard question={MCQ_QUESTION} value={undefined} onChange={vi.fn()} />);
+
+      const letterSpan = screen.getByText('A.');
+      expect(letterSpan.className).toMatch(/text-neutral-600/);
+      expect(letterSpan.className).not.toMatch(/text-neutral-400/);
+    });
+
+    it('ArrowRight moves selection and focus to the next option (same code path as ArrowDown)', () => {
+      const onChange = vi.fn();
+      const value: AnswerValue = { format: 'mcq', index: 0 };
+      render(<QuestionCard question={MCQ_QUESTION} value={value} onChange={onChange} />);
+      const options = screen.getAllByRole('radio');
+
+      options[0].focus();
+      fireEvent.keyDown(options[0], { key: 'ArrowRight' });
+
+      expect(onChange).toHaveBeenCalledWith({ format: 'mcq', index: 1 });
+      expect(document.activeElement).toBe(options[1]);
+    });
+
+    it('ArrowLeft moves selection and focus to the previous option (same code path as ArrowUp)', () => {
+      const onChange = vi.fn();
+      const value: AnswerValue = { format: 'mcq', index: 1 };
+      render(<QuestionCard question={MCQ_QUESTION} value={value} onChange={onChange} />);
+      const options = screen.getAllByRole('radio');
+
+      options[1].focus();
+      fireEvent.keyDown(options[1], { key: 'ArrowLeft' });
+
+      expect(onChange).toHaveBeenCalledWith({ format: 'mcq', index: 0 });
+      expect(document.activeElement).toBe(options[0]);
+    });
   });
 });
 
@@ -221,6 +255,24 @@ describe('QuestionCard — one_liner format (Story 235)', () => {
 
     const textarea = screen.getByPlaceholderText(ONE_LINER_QUESTION.placeholder ?? '');
     expect(textarea.getAttribute('maxlength')).toBe('1000');
+  });
+
+  it('caps onChange output at exactly 1000 chars when the underlying value exceeds it -- behavioral, not just the maxlength attribute', () => {
+    // The real truncation logic lives in the onChange handler's own
+    // `.slice(0, ONE_LINER_MAX_LENGTH)` call, not the DOM `maxlength` attribute
+    // alone -- a regression in that handler (e.g. slicing with the wrong bound,
+    // or dropping the slice entirely) would not be caught by the attribute-only
+    // test above. fireEvent.change sets textarea.value directly, bypassing any
+    // native browser typing-path maxlength enforcement, so this exercises the
+    // handler's own bound regardless of jsdom's maxlength behavior.
+    const onChange = vi.fn();
+    render(<QuestionCard question={ONE_LINER_QUESTION} value={undefined} onChange={onChange} />);
+    const textarea = screen.getByPlaceholderText(ONE_LINER_QUESTION.placeholder ?? '');
+
+    const overLong = 'a'.repeat(1005);
+    fireEvent.change(textarea, { target: { value: overLong } });
+
+    expect(onChange).toHaveBeenCalledWith({ format: 'one_liner', text: 'a'.repeat(1000) });
   });
 
   it('shows a live character counter reflecting the current text length', () => {

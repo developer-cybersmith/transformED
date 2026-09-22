@@ -318,6 +318,61 @@ describe('OnboardingFlow', () => {
     ).toBe('true');
   });
 
+  it('a true_false question: Next stays disabled until answered, then enables on an explicit False click (not just True)', async () => {
+    // AC9's core claim is that "answered false" must be treated the same as
+    // "answered true" for proceed-gating, not silently left disabled the way an
+    // `isAnswered` regression using Boolean(value.value) instead of
+    // presence-of-value would. The rest of this file's answerQuestion() helper
+    // always clicks True, so this is the only test that drives a real False
+    // click through the actual OnboardingFlow component tree.
+    getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
+    const user = userEvent.setup();
+    const trueFalseIndex = QUESTIONS.findIndex((q) => q.format === 'true_false');
+    expect(trueFalseIndex).toBeGreaterThanOrEqual(0);
+
+    render(<OnboardingFlow />);
+    await acknowledgeDisclaimer(user);
+    for (let i = 0; i < trueFalseIndex; i++) {
+      await answerQuestion(user, i, false);
+    }
+
+    const q = QUESTIONS[trueFalseIndex];
+    await waitFor(() => expect(screen.getByText(q.text)).not.toBeNull());
+
+    const nextButton = () => screen.getByText('Next').closest('button');
+    expect(nextButton()).toHaveProperty('disabled', true);
+
+    await user.click(screen.getByText('False'));
+
+    expect(nextButton()).toHaveProperty('disabled', false);
+  }, 20000);
+
+  it('does not treat a persisted answer as "answered" when its format no longer matches the current question (stale mid-flight blob)', async () => {
+    // Simulates a future deploy changing QUESTIONS[0]'s format after a student's
+    // sessionStorage blob was written against the old format -- the persisted
+    // AnswerValue's format field would then disagree with the live question's
+    // format at that id. Before the isAnswered() format-match fix, this stale
+    // value would silently count as "answered" and Next would already be
+    // enabled; handleSubmit's own per-question mapping would then silently
+    // fabricate a fresh value (index 0 / false / "") rather than the student's
+    // real intent. After the fix, the mismatch is treated as unanswered.
+    expect(QUESTIONS[0].format).toBe('mcq');
+    window.sessionStorage.setItem(
+      'onboarding_progress_v2',
+      JSON.stringify({
+        current: 0,
+        answers: { [QUESTIONS[0].id]: { format: 'one_liner', text: 'stale mismatched answer' } },
+        disclaimerAcknowledged: true,
+      })
+    );
+    getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(QUESTIONS[0].text)).not.toBeNull());
+    expect(screen.getByText('Next').closest('button')).toHaveProperty('disabled', true);
+  });
+
   it('persists progress to sessionStorage and resumes on remount instead of restarting from question 1', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
     const user = userEvent.setup();
