@@ -3775,6 +3775,21 @@ async def _synthesize_with_fallback(
             lesson_id,
             segment_id,
         )
+    except ValueError:
+        # Independent PR review finding: "not configured" (missing
+        # sixtydb_api_key/sixtydb_voice_id) is a deliberate, common
+        # deployment state -- SixtyDbTTSProvider.synthesize() raises exactly
+        # this exception type for it (never anything else). Before this fix,
+        # it fell into the except-Exception branch below and logged a
+        # WARNING with a full traceback on EVERY narration segment, in
+        # EVERY deployment that hasn't yet set SIXTYDB_* -- i.e. every
+        # deployment today -- contradicting this PR's own "degrades to
+        # today's exact behavior" framing. Logged quietly instead.
+        logger.debug(
+            "[%s] tts_node: 60db not configured for segment %s, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+        )
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] tts_node: 60db synthesis failed for segment %s, falling back to Sarvam",

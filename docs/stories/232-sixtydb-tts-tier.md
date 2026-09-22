@@ -514,6 +514,72 @@ of scope) — all pass except the pre-existing D170 case. `mypy app`
 (repo-wide, corrected scope): **4** pre-existing errors, zero new. Full
 gating-scope regression re-run — see Change Log.
 
+### Review Round 4 — independent PR reviewer (fresh agent, zero prior
+context, given only PR #240's URL), 2026-09-22
+
+Rounds 1-3 were all authored by the same identity (this story, its
+implementation, and every review round so far — the reviewer explicitly
+flagged this: "self-review wearing role labels... not independent review").
+This round used a genuinely fresh agent with no memory of Rounds 1-3's
+conclusions, asked to review PR #240 from scratch as a skeptical senior
+engineer and independently re-run every verification claim rather than
+trust the story's prose.
+
+**Verdict: Comment-only / cannot approve for merge as-is** — correctly so;
+the frozen-contract 4-developer sign-off is a hard organizational gate no
+amount of code review satisfies, and this PR itself says so.
+
+**Findings, both real and both fixed:**
+
+1. **CONFIRMED, MEDIUM, FIXED** — `_synthesize_with_fallback`'s except clause
+   logged every 60db failure at WARNING with a full traceback, including the
+   expected/common "not configured" `ValueError` case. Since 60db is tried
+   FIRST, this meant a WARNING + traceback on every single narration segment
+   in every deployment that hasn't yet set `SIXTYDB_API_KEY`/`SIXTYDB_VOICE_ID`
+   — i.e. every deployment today — directly contradicting this story's own
+   "degrades to today's exact behavior" claim. Neither this story's own 3
+   review rounds nor the earlier `/code-review` pass caught it. **Fix:** added
+   a specific `except ValueError` branch (the only exception type
+   `SixtyDbTTSProvider.synthesize()` raises for config-precondition failures)
+   logging at DEBUG with no traceback; genuine failures still hit the
+   `except Exception` branch at WARNING+`exc_info`. New test:
+   `test_sixtydb_not_configured_logs_quietly_not_a_warning_with_traceback`
+   (asserts via `caplog` that no WARNING-or-above record mentions "60db" in
+   this path, and the DEBUG record carries no `exc_info`).
+2. **CONFIRMED, LOW, FIXED** — `tests/conftest.py`'s
+   `sixtydb_unconfigured_default` docstring justified the fixture by claiming
+   the missing-config `ValueError` would reach `guard_breaker` and attempt a
+   real Redis connection — stale, since Round 2 had already moved that check
+   before `guard_breaker` is entered. **Fix:** corrected the docstring to
+   state the fixture's actual remaining value (explicit, ambient-env-state-
+   independent test behavior) rather than the now-false original claim.
+3. **CONFIRMED, MEDIUM, FIXED (process gap, not a code bug)** — two of this
+   story's own "accepted, not fixed" review findings were closed without the
+   `D-nn` register ID CLAUDE.md's binding rules require: the `_chunk_text`
+   duplication (Round 1 finding 4) violates binding rule 5 (no register ID
+   at all), and the unbounded-chunk-count finding (Round 2 finding 9) was
+   explicitly closed using "matches existing pattern in Sarvam" — the exact
+   justification binding rule 6 names and forbids. Both are real: this
+   story applied CLAUDE.md's rules inconsistently even while applying them
+   correctly elsewhere (D168-D170). **Fix:** registered **D171** (chunker
+   duplication) and **D172** (unbounded chunk count / no per-segment time
+   budget, cross-referencing Sarvam's identical, worse, previously-unregistered
+   gap), and added inline `D171`/`D172` comment references at both code
+   sites, matching how D168 is already referenced in `COST_PER_CHAR`'s
+   comment.
+
+**Findings assessed and not acted on:** the reviewer's core organizational
+point — self-review across 3 rounds is not a substitute for the 4-developer
+sign-off — is correct and already disclosed (AC 15, this file's Change Log);
+no code action closes it, only the actual human review CLAUDE.md requires.
+
+Re-verification after Round 4 fixes: `test_tts_node.py`,
+`test_tts_providers_sixtydb.py`, `test_audio_duration_s3_38.py` (61 tests,
+1 new) — all pass. `ruff check`/`ruff format --check` clean; `mypy app`
+(repo-wide) — 4 pre-existing/0 new (unchanged). Full gating-scope regression
+re-run: **1522 passed, 6 skipped, 86 deselected, zero failures** (up 1 from
+Round 3's 1521 — the new log-level test).
+
 ### File List
 - `apps/api/app/providers/tts/sixtydb.py` — NEW.
 - `apps/api/app/config.py` — MODIFIED: `sixtydb_*` settings.
@@ -527,7 +593,9 @@ gating-scope regression re-run — see Change Log.
 - `docs/DEFECT-REGISTER.md` — MODIFIED: **D168** entry (expanded in Round 2),
   new **D169** (Sarvam's pre-existing analogous retry/cost bug), new **D170**
   (pre-existing `.env.example`/`config.py` CES weight drift on `main`, found
-  as a Round 3 byproduct).
+  as a Round 3 byproduct), new **D171** (unregistered chunker-duplication
+  finding), new **D172** (unregistered unbounded-chunk-count finding, closed
+  with a CLAUDE.md-forbidden justification) — both D171/D172 from Round 4.
 - `apps/api/tests/unit/test_lesson_schema.py` — MODIFIED: new
   `test_narration_audio_provider_accepts_sixtydb` (AC 8).
 - `apps/api/tests/test_env_example_consistency.py` — MODIFIED: new
@@ -592,3 +660,15 @@ gating-scope regression re-run — see Change Log.
   Remaining before merge (cannot be satisfied by this story alone): a human
   read of this review's findings/fixes, and the 4-developer sign-off
   required for the frozen `AudioProvider` contract change.
+- 2026-09-22: PR #240 opened against `main`. A genuinely independent
+  reviewer (fresh agent, no memory of Rounds 1-3, reviewing only PR #240's
+  content) found 3 real gaps Rounds 1-3 missed — a log-noise bug (every
+  segment in every unconfigured deployment logged a WARNING+traceback for
+  the expected "not configured" case), a stale fixture docstring, and 2
+  review findings closed without the `D-nn` register ID CLAUDE.md's own
+  binding rules 5/6 require (one of them closed using the exact
+  justification rule 6 explicitly forbids). All 3 fixed; **D171**/**D172**
+  registered. The reviewer's core point — 3 rounds of self-review by the
+  same author is not a substitute for the mandated 4-developer sign-off —
+  stands and is unchanged: still the one blocker only your team can clear.
+  Full gating-scope regression re-run: **1522 passed, 0 failures.**

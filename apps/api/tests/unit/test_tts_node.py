@@ -212,6 +212,45 @@ async def test_sixtydb_not_configured_falls_back_to_sarvam() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_sixtydb_not_configured_logs_quietly_not_a_warning_with_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Independent PR review finding (2026-09-22, PR #240): before this fix,
+    the expected/common "60db not configured" case logged a WARNING with a
+    full traceback on every single narration segment, in every deployment
+    that hasn't yet set SIXTYDB_API_KEY/SIXTYDB_VOICE_ID -- i.e. every
+    deployment today -- contradicting this story's own "degrades to today's
+    exact behavior" framing. Must log at most at INFO, never WARNING, and
+    never with exc_info for this specific, expected exception type."""
+    import logging
+
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        caplog.at_level(logging.DEBUG, logger="app.modules.content.pipeline.graph"),
+    ):
+        await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+
+    warning_or_above = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert not any("60db" in r.message for r in warning_or_above), (
+        "the 'not configured' case must never log at WARNING or above — "
+        f"found: {[r.message for r in warning_or_above if '60db' in r.message]}"
+    )
+    sixtydb_records = [r for r in caplog.records if "60db not configured" in r.message]
+    assert len(sixtydb_records) == 1
+    assert sixtydb_records[0].levelno == logging.DEBUG
+    assert sixtydb_records[0].exc_info is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_sarvam_failure_falls_back_to_azure() -> None:
     """AC-2: Sarvam raises -> Azure is tried and succeeds -> audio_provider='azure'."""
     from app.modules.content.pipeline.graph import tts_node

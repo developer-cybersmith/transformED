@@ -82,9 +82,17 @@ def sixtydb_unconfigured_default():
     SarvamTTSProvider/AzureTTSProvider directly — without this default, each
     would exercise the REAL SixtyDbTTSProvider (no SIXTYDB_API_KEY test stub
     exists, by design: the setting is optional so an unconfigured deployment
-    degrades gracefully). That real provider raises ValueError, which
-    `guard_breaker` does not classify as a client/infra error, so its
-    failure path would attempt a REAL Redis connection once per test.
+    degrades gracefully). Kept as an explicit, deliberate default (not relied
+    on implicitly) so these tests stay correct regardless of ambient test env
+    state, and so every test in files using it constructs the SAME mock
+    rather than each incidentally hitting the real provider's __init__ (a
+    real Langfuse-init attempt) and raising ValueError by coincidence of
+    unset env vars. (Independent PR review, 2026-09-22: an earlier version of
+    this docstring claimed the missing-config ValueError would reach
+    guard_breaker and attempt a real Redis connection — stale, since the
+    config-precondition checks in `synthesize()` were already moved before
+    `guard_breaker` is entered by the time this docstring was written;
+    corrected here.)
 
     Shared here (review finding) rather than duplicated as a private fixture
     in both test_tts_node.py and test_audio_duration_s3_38.py — kept as a

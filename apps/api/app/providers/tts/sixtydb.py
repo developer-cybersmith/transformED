@@ -85,7 +85,8 @@ def _chunk_text(text: str, max_chars: int = _SIXTYDB_MAX_CHARS_PER_REQUEST) -> l
     in practice than Sarvam's 500-char chunking does).
 
     Deliberately a separate copy, not a shared import from sarvam.py (review
-    finding, accepted not fixed): this story's stated scope explicitly keeps
+    finding, accepted not fixed — registered as D171 in DEFECT-REGISTER.md):
+    this story's stated scope explicitly keeps
     Sarvam's own provider file untouched, and every provider file in
     providers/tts/ is already independently self-contained by this
     codebase's own established pattern (providers/llm/factory.py's docstring:
@@ -289,6 +290,15 @@ class SixtyDbTTSProvider(TTSProvider):
 
         try:
             pcm_chunks: list[bytes] = []
+            # D172 (DEFECT-REGISTER.md): this loop has no overall elapsed-time
+            # budget across all chunks — each `_post_chunk` call has its own
+            # 30s timeout + up to 3 retries, but a segment needing many
+            # chunks (up to 24 at the 120,000-char lesson-wide narration cap)
+            # could still take tens of minutes worst-case before this whole
+            # call fails and falls through to Sarvam. Registered, not fixed
+            # here — an overall timeout is a broader design decision shared
+            # with sarvam.py's identical gap (worse there, at its 500-char
+            # limit), out of this file's scope to decide unilaterally.
             async with httpx.AsyncClient(timeout=30.0) as client:
                 for chunk in chunks:
                     pcm_chunks.extend(await self._post_chunk(client, chunk, voice_id))
