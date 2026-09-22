@@ -95,9 +95,7 @@ class TestPutChapterContext:
         "app.modules.content.router._resolve_chapter_for_context",
         new_callable=AsyncMock,
     )
-    def test_put_chapter_belonging_to_other_user_returns_404(
-        self, mock_resolve: AsyncMock
-    ) -> None:
+    def test_put_chapter_belonging_to_other_user_returns_404(self, mock_resolve: AsyncMock) -> None:
         """IDOR: chapter not owned by this user → 404, not the row data."""
         mock_resolve.side_effect = HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Book not found"
@@ -244,3 +242,47 @@ class TestGetChapterContext:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         )
+
+
+# ---------------------------------------------------------------------------
+# UUID pre-validation tests (AC3) — real _resolve_chapter_for_context path
+# ---------------------------------------------------------------------------
+
+
+class TestUuidPreValidation:
+    """AC3: malformed UUID path segments → 404 before any DB call.
+
+    These tests do NOT patch _resolve_chapter_for_context — they call through the
+    real implementation to verify that _validated_book_id/_validated_chapter_id catch
+    malformed UUIDs and raise 404, never reaching Postgres (which would raise 22P02 → 500).
+    """
+
+    def test_put_malformed_book_id_returns_404(self) -> None:
+        """Non-UUID book_id segment → 404, never 500/22P02."""
+        client = _make_client_with_user(USER_ID)
+        resp = client.put(
+            f"/api/content/books/not-a-uuid/chapters/{CHAPTER_ID}/context",
+            json=_VALID_CONTEXT_BODY,
+        )
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_put_malformed_chapter_id_returns_404(self) -> None:
+        """Non-UUID chapter_id segment → 404, never 500/22P02."""
+        client = _make_client_with_user(USER_ID)
+        resp = client.put(
+            f"/api/content/books/{BOOK_ID}/chapters/not-a-uuid/context",
+            json=_VALID_CONTEXT_BODY,
+        )
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_malformed_book_id_returns_404(self) -> None:
+        """GET with non-UUID book_id → 404, never 500/22P02."""
+        client = _make_client_with_user(USER_ID)
+        resp = client.get(f"/api/content/books/not-a-uuid/chapters/{CHAPTER_ID}/context")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_get_malformed_chapter_id_returns_404(self) -> None:
+        """GET with non-UUID chapter_id → 404, never 500/22P02."""
+        client = _make_client_with_user(USER_ID)
+        resp = client.get(f"/api/content/books/{BOOK_ID}/chapters/not-a-uuid/context")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND

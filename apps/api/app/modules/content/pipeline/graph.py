@@ -1616,8 +1616,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     has_chapter_context = bool(chapter_ctx_block)
     # AC7/AC14: record whether chapter context was injected so it is visible in
     # Langfuse at the trace level (span is not accessible from inside a @traced_node).
-    # Uses start_observation(as_type="event") — Langfuse.trace() does not exist
-    # on the pinned SDK version; event observation is the correct alternative.
+    # Uses start_observation(as_type="span") — a short-lived point-in-time span
+    # closed immediately after opening (span.end called by safe_trace below).
     _lf = get_langfuse()
     _ctx = deterministic_trace_context(_lf, lesson_id)
     if _ctx is not None:

@@ -132,6 +132,7 @@ async def upsert_chapter_context(
                 },
                 on_conflict="chapter_id,user_id",
             )
+            # BOUNDED: single-row upsert into (chapter_id, user_id) UNIQUE key
             .select(_CHAPTER_CONTEXT_COLUMNS)
             .execute()
         )

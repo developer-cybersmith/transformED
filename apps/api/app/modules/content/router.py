@@ -1536,7 +1536,9 @@ async def _resolve_chapter_for_context(
     # Reuse the existing ownership helper (D139 pattern — same guard as Gate 2
     # in generate_chapter_lesson). Wrapped in asyncio.to_thread because
     # _fetch_owned_book is synchronous and the callers are async routes.
-    await asyncio.to_thread(_fetch_owned_book, supabase, validated_book_id, user_id, "book_id")
+    await asyncio.to_thread(
+        _fetch_owned_book, supabase, validated_book_id, user_id, "book_id,user_id"
+    )
     chapter_resp = await asyncio.to_thread(
         lambda: (
             supabase.table("chapters")
@@ -1617,14 +1619,19 @@ async def put_chapter_context(
     responses={204: {"description": "No context row exists for this chapter"}},
     summary="Get chapter context (S5-3 §4.3)",
 )
-@limiter.limit("3/minute;20/hour", key_func=_get_user_key)
+@limiter.limit("30/minute;200/hour", key_func=_get_user_key)
 async def get_chapter_context(
     request: Request,  # load-bearing for slowapi — do not remove
     book_id: str,
     chapter_id: str,
     user: CurrentUser,
 ) -> ChapterContextResponse | Response:
-    """Return existing §4.3 context answers for one chapter, or 204 when none exist."""
+    """Return existing §4.3 context answers for one chapter, or 204 when none exist.
+
+    Rate limit is derived independently from PUT: this endpoint fires automatically
+    on component mount (not user-triggered), has zero LLM/ARQ cost, and returns ≤1 DB
+    row. "30/minute;200/hour" allows normal tab-switching while still bounding crawlers.
+    """
     supabase = get_supabase()
     validated_book_id, validated_chapter_id = await _resolve_chapter_for_context(
         book_id, chapter_id, user["sub"], supabase

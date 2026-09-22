@@ -137,17 +137,18 @@ export function ChapterContextForm({
 
         async function fetchContext() {
             setLoading(true);
+            // AbortController cancels the inflight request when the 5 s timeout
+            // fires — without this, the server still processes the full GET even
+            // after the client has moved on to rendering an empty form.
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
             try {
-                // 5 s timeout: slow network must not strand the student on an
-                // infinite spinner. Timeout resolves to null (same as 204 / no
-                // context) so the form renders empty and the student can proceed.
-                const timeout = new Promise<null>((resolve) =>
-                    setTimeout(() => resolve(null), 5000)
+                const row = await booksService.getChapterContext(
+                    bookId,
+                    chapterId,
+                    controller.signal
                 );
-                const row = await Promise.race([
-                    booksService.getChapterContext(bookId, chapterId),
-                    timeout,
-                ]);
+                clearTimeout(timeoutId);
                 if (cancelled) return;
                 if (row) {
                     setForm({
@@ -159,7 +160,9 @@ export function ChapterContextForm({
                     });
                 }
             } catch {
-                // Fetch failure is non-fatal — form stays empty.
+                // Abort (timeout), network failure, or parse error — all non-fatal:
+                // form stays empty and the student can proceed.
+                clearTimeout(timeoutId);
             } finally {
                 if (!cancelled) setLoading(false);
             }

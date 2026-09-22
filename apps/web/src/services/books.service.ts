@@ -365,10 +365,12 @@ export const booksService = {
     /** S5-3: Fetch existing §4.3 chapter context, or null when none exists (204). */
     getChapterContext: async (
         bookId: string,
-        chapterId: string
+        chapterId: string,
+        signal?: AbortSignal
     ): Promise<ChapterContextResponse | null> => {
         const response = await api.get<ChapterContextResponse>(
-            `content/books/${bookId}/chapters/${chapterId}/context`
+            `content/books/${bookId}/chapters/${chapterId}/context`,
+            { signal }
         );
         if (response.status === 204) return null;
         return response.data;
