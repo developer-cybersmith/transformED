@@ -68,6 +68,17 @@ from tinytag import TinyTag
 FAKE_LESSON_ID = "31313131-3131-3131-3131-313131313131"
 
 
+@pytest.fixture(autouse=True)
+def _default_sixtydb_unconfigured():
+    """Story 232 (review finding): shared implementation lives in
+    tests/conftest.py's `sixtydb_unconfigured_default` — see its docstring
+    (and the identical wrapper in test_tts_node.py) for the full rationale."""
+    from tests.conftest import sixtydb_unconfigured_default
+
+    with sixtydb_unconfigured_default():
+        yield
+
+
 def _build_real_mp3(n_frames: int) -> bytes:
     """Hand-built minimal MPEG-1 Layer III frame(s) — see module docstring
     for the exact byte-level construction. Real enough for `tinytag` to

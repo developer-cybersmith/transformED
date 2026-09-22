@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import os
 import sys
-from unittest.mock import MagicMock
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -69,6 +70,33 @@ def _stub_openai_package() -> None:
     sys.modules.setdefault("openai.AsyncOpenAI", stub.AsyncOpenAI)
     sys.modules.setdefault("openai.types", stub.types)
     sys.modules.setdefault("openai.types.chat", stub.types.chat)
+
+
+@contextmanager
+def sixtydb_unconfigured_default():
+    """Story 232: default SixtyDbTTSProvider to "not configured" (raises
+    ValueError) wherever `_synthesize_with_fallback`/`tts_node` runs.
+
+    60db is tried FIRST in the TTS fallback chain, ahead of Sarvam. Every
+    pre-Story-232 test that exercises that chain mocks only
+    SarvamTTSProvider/AzureTTSProvider directly — without this default, each
+    would exercise the REAL SixtyDbTTSProvider (no SIXTYDB_API_KEY test stub
+    exists, by design: the setting is optional so an unconfigured deployment
+    degrades gracefully). That real provider raises ValueError, which
+    `guard_breaker` does not classify as a client/infra error, so its
+    failure path would attempt a REAL Redis connection once per test.
+
+    Shared here (review finding) rather than duplicated as a private fixture
+    in both test_tts_node.py and test_audio_duration_s3_38.py — kept as a
+    plain context manager, NOT an autouse fixture at this (conftest) level,
+    so test_tts_providers_sixtydb.py's own dedicated tests (which import and
+    exercise the REAL class directly) are unaffected. Each file that needs
+    the default wraps this in its own local `@pytest.fixture(autouse=True)`.
+    """
+    mock_sixtydb = AsyncMock()
+    mock_sixtydb.synthesize.side_effect = ValueError("sixtydb not configured in test")
+    with patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb):
+        yield
 
 
 @pytest.fixture(autouse=True, scope="session")

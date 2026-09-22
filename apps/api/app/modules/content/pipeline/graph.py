@@ -3743,7 +3743,8 @@ _SAFE_SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 async def _synthesize_with_fallback(
     lesson_id: str, segment_id: str, text: str
 ) -> tuple[bytes | None, str, float]:
-    """Try Sarvam, then Azure, then Browser — never raises (Story 2-8 AC-2).
+    """Try 60db, then Sarvam, then Azure, then Browser — never raises
+    (Story 2-8 AC-2; 60db tier added by Story 232).
 
     Returns (audio_bytes_or_None, audio_provider, cost_usd). audio_bytes is
     None for the browser-fallback case (no server-side audio produced).
@@ -3751,8 +3752,36 @@ async def _synthesize_with_fallback(
     from app.config import get_settings
     from app.providers.tts.sarvam import COST_PER_CHAR as _SARVAM_COST_PER_CHAR
     from app.providers.tts.sarvam import SarvamTTSProvider
+    from app.providers.tts.sixtydb import COST_PER_CHAR as _SIXTYDB_COST_PER_CHAR
+    from app.providers.tts.sixtydb import SixtyDbTTSProvider
 
     settings = get_settings()
+
+    try:
+        # Review finding (considered, not changed): `or ""` here plus
+        # synthesize()'s own internal `voice_id or self._voice_id_default`
+        # fallback is a harmless double-indirection, not a bug — both read
+        # the same settings.sixtydb_voice_id and land on the same value.
+        # Left as `or ""` (not `settings.sixtydb_voice_id` directly) because
+        # the ABC's synthesize(text: str, voice_id: str) is non-Optional;
+        # passing the raw `str | None` would be a real mypy violation.
+        audio_bytes, _ = await SixtyDbTTSProvider(lesson_id).synthesize(
+            text, settings.sixtydb_voice_id or ""
+        )
+        if audio_bytes:
+            return audio_bytes, "sixtydb", len(text) * _SIXTYDB_COST_PER_CHAR
+        logger.warning(
+            "[%s] tts_node: 60db returned empty audio for segment %s, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] tts_node: 60db synthesis failed for segment %s, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+            exc_info=True,
+        )
 
     try:
         audio_bytes, _ = await SarvamTTSProvider(lesson_id).synthesize(
@@ -4135,7 +4164,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 # Story 2-13/S2-13 AC-3: proactive per-segment cost-ceiling
                 # pre-check, mirroring image_generator_node's existing
                 # pattern (Story 2-9 AC-3) — skip straight to the free
-                # browser fallback rather than attempting Sarvam/Azure.
+                # browser fallback rather than attempting 60db/Sarvam/Azure.
                 elif await check_ceiling(lesson_id):
                     logger.warning(
                         "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
@@ -4145,8 +4174,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     )
                     audio_bytes, audio_provider, cost = None, "browser", 0.0
                     if not downshift_recorded:
+                        # Story 232: 60db is now the first paid tier tried —
+                        # this label must name every tier being skipped, not
+                        # just the two that predate it (review finding).
                         node_outputs = _record_cost_downshift(
-                            node_outputs, "tts_node", "sarvam/azure", "browser"
+                            node_outputs, "tts_node", "sixtydb/sarvam/azure", "browser"
                         )
                         downshift_recorded = True
                 else:

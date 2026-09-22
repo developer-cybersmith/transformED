@@ -30,6 +30,19 @@ def _default_under_cost_ceiling():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _default_sixtydb_unconfigured():
+    """Story 232 (review finding): shared implementation lives in
+    tests/conftest.py's `sixtydb_unconfigured_default` — see its docstring
+    for the full rationale. Kept as a thin local autouse wrapper (not a
+    global conftest autouse) so test_tts_providers_sixtydb.py's own
+    dedicated tests, which exercise the real class directly, are unaffected."""
+    from tests.conftest import sixtydb_unconfigured_default
+
+    with sixtydb_unconfigured_default():
+        yield
+
+
 FAKE_LESSON_ID = "50505050-5050-5050-5050-505050505050"
 
 NARRATION_SCRIPTS: list[dict[str, Any]] = [
@@ -112,6 +125,80 @@ async def test_happy_path_sarvam_success_produces_nested_narration_entries() -> 
     sb.storage.from_.assert_any_call("lesson-audio")
     upload_calls = sb.storage.from_.return_value.upload.call_args_list
     assert any(call.kwargs.get("path") == f"{FAKE_LESSON_ID}/sec_0.mp3" for call in upload_calls)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_success_produces_nested_narration_entries() -> None:
+    """Story 232 AC 7: 60db succeeds first -> audio_provider='sixtydb',
+    Sarvam/Azure never called."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sixtydb = AsyncMock()
+    mock_sixtydb.synthesize.return_value = (b"SIXTYDB_AUDIO", [])
+    mock_sarvam = AsyncMock()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+
+    assets = result["audio_assets"]
+    assert assets[0]["data"]["audio_provider"] == "sixtydb"
+    mock_sarvam.synthesize.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_failure_falls_back_to_sarvam() -> None:
+    """Story 232 AC 7: 60db raises -> Sarvam is tried and succeeds ->
+    audio_provider='sarvam' (chain order: 60db -> Sarvam -> Azure -> Browser)."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sixtydb = AsyncMock()
+    mock_sixtydb.synthesize.side_effect = RuntimeError("60db down")
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+
+    assets = result["audio_assets"]
+    assert assets[0]["data"]["audio_provider"] == "sarvam"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_not_configured_falls_back_to_sarvam() -> None:
+    """Story 232 AC 6: no 60db key/voice configured -> ValueError inside the
+    provider -> caught, falls through to Sarvam, no crash. Uses the file's
+    own _default_sixtydb_unconfigured fixture (not overridden here) to prove
+    that default IS the "not configured" behavior, not just a test convenience."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
+
+    assets = result["audio_assets"]
+    assert assets[0]["data"]["audio_provider"] == "sarvam"
 
 
 @pytest.mark.unit
@@ -213,7 +300,7 @@ async def test_over_ceiling_skips_paid_providers_and_downshifts_to_browser() -> 
     downshifts = written_node_outputs["_cost_downshifts"]
     assert len(downshifts) == 1
     assert downshifts[0]["node"] == "tts_node"
-    assert downshifts[0]["from_model_or_provider"] == "sarvam/azure"
+    assert downshifts[0]["from_model_or_provider"] == "sixtydb/sarvam/azure"
     assert downshifts[0]["to_model_or_provider"] == "browser"
     assert mock_check_ceiling.call_count == 2  # once per segment
     assert all(c.args == (FAKE_LESSON_ID,) for c in mock_check_ceiling.call_args_list)

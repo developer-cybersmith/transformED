@@ -95,45 +95,45 @@ today whenever it isn't (no key configured, API failure, or empty response).
 ## Acceptance Criteria
 
 ### Functional
-- [ ] **AC 1.** `SixtyDbTTSProvider.synthesize(text, voice_id)` implements
+- [x] **AC 1.** `SixtyDbTTSProvider.synthesize(text, voice_id)` implements
   `TTSProvider`, applies circuit breaker (`"sixtydb"` key) and the same
   `@with_retry(max_attempts=3)` pattern as Sarvam/Azure, returns
   `(audio_bytes, [])`.
-- [ ] **AC 2.** Text over 5000 chars is chunked (sentence-boundary preferred,
+- [x] **AC 2.** Text over 5000 chars is chunked (sentence-boundary preferred,
   word-boundary fallback for an oversized single sentence — same approach as
   Sarvam's `_chunk_narration_text`, `max_chars=5000`), one `/tts-synthesize`
   request per chunk, sequential (not concurrent — same per-key rate-limit
   reasoning as Sarvam).
-- [ ] **AC 3.** Each response body is parsed defensively: split on newlines
+- [x] **AC 3.** Each response body is parsed defensively: split on newlines
   (NDJSON-tolerant), each non-empty line parsed as JSON; `audioContent` is read
   from the top level first (verified live shape), falling back to
   `result.audioContent` if the top-level key is absent (documented shape,
   unverified for variance) — raises a clear `RuntimeError` if neither shape
   yields an `audioContent` value.
-- [ ] **AC 4.** All decoded base64 PCM chunks (raw LINEAR16, no WAV header) are
+- [x] **AC 4.** All decoded base64 PCM chunks (raw LINEAR16, no WAV header) are
   concatenated as raw bytes (valid for PCM, unlike complete-WAV-file
   concatenation), then wrapped in exactly one WAV header at 48000 Hz / mono /
   16-bit at the end.
-- [ ] **AC 5.** `synthesize()` always returns `(audio_bytes, [])` — the empty
+- [x] **AC 5.** `synthesize()` always returns `(audio_bytes, [])` — the empty
   list documented as "60db's TTS response carries no timing data (confirmed
   live, 2026-09-21) — see Context & Scope Boundary," not left as an
   unexplained empty default like Sarvam/Azure's (theirs is "deferred", this
   one is "confirmed absent").
-- [ ] **AC 6.** `config.py` gains `sixtydb_api_key: str | None = None`,
+- [x] **AC 6.** `config.py` gains `sixtydb_api_key: str | None = None`,
   `sixtydb_voice_id: str | None = None`, `sixtydb_model: str = "60db-quality"`,
   `sixtydb_speed: float = Field(default=1.0, ge=0.5, le=2.0)`,
   `sixtydb_enhance: bool = True`. Missing key/voice_id raises inside the
   provider (clear `ValueError`), caught by `_synthesize_with_fallback`'s
   existing `except Exception` — falls through to Sarvam exactly like an Azure
   auth failure does today. No crash for a deployment with no 60db key set.
-- [ ] **AC 7.** `_synthesize_with_fallback()` tries 60db first, Sarvam second,
+- [x] **AC 7.** `_synthesize_with_fallback()` tries 60db first, Sarvam second,
   Azure third, browser last — same "log + fall through" shape as the existing
   Sarvam→Azure transition; returns `(audio_bytes, "sixtydb", cost)` on success.
-- [ ] **AC 8.** `AudioProvider` gains `"sixtydb"` in `schemas/lesson.py`,
+- [x] **AC 8.** `AudioProvider` gains `"sixtydb"` in `schemas/lesson.py`,
   `packages/shared/types/lesson.ts`, `packages/shared/lesson_package.schema.json`
   — all three edited together, comment on each noting the 4-developer review
   requirement before merge.
-- [ ] **AC 9.** `.env.example` gets `SARVAM_API_KEY`, `SARVAM_VOICE_ID`,
+- [x] **AC 9.** `.env.example` gets `SARVAM_API_KEY`, `SARVAM_VOICE_ID`,
   `SARVAM_NARRATION_PACE`, `AZURE_TTS_KEY`, `AZURE_TTS_REGION`,
   `AZURE_TTS_VOICE` (all currently missing), `SIXTYDB_API_KEY`,
   `SIXTYDB_VOICE_ID`, `SIXTYDB_MODEL`, `SIXTYDB_SPEED`, `SIXTYDB_ENHANCE`; the
@@ -141,25 +141,25 @@ today whenever it isn't (no key configured, API failure, or empty response).
   "deprecated, replaced by Sarvam" note — the var itself still exists in
   `config.py` as an inert optional field, only the `.env.example` line is
   stale/misleading and is what this AC fixes).
-- [ ] **AC 10.** `docs/DEFECT-REGISTER.md` gains a **D168** entry for the
+- [x] **AC 10.** `docs/DEFECT-REGISTER.md` gains a **D168** entry for the
   unconfirmed 60db per-character cost rate (placeholder = Sarvam's rate).
 
 ### Tests
-- [ ] **AC 11.** New `apps/api/tests/unit/test_tts_providers_sixtydb.py`:
+- [x] **AC 11.** New `apps/api/tests/unit/test_tts_providers_sixtydb.py`:
   success (single chunk), success (multi-chunk >5000 chars, PCM concatenation
   correctness), top-level `audioContent` shape, fallback `result.audioContent`
   shape, malformed-response `RuntimeError`, circuit-breaker-open rejection,
   missing key/voice_id `ValueError`, retry-then-succeed. Real fixture PCM/WAV
   bytes, no live network calls — same conventions as
   `test_tts_providers.py`.
-- [ ] **AC 12.** `test_tts_node.py` gains: 60db-succeeds-first case,
+- [x] **AC 12.** `test_tts_node.py` gains: 60db-succeeds-first case,
   60db-fails-falls-to-sarvam case, 60db-not-configured-falls-to-sarvam case.
 
 ### Process
-- [ ] **AC 13.** Guard-test survey run (CLAUDE.md rule) before implementation:
+- [x] **AC 13.** Guard-test survey run (CLAUDE.md rule) before implementation:
   `grep -rn "test_.*tts\|test_no_hardcoded\|test_dunder_all" apps/api/tests/` —
   results listed in Dev Agent Record.
-- [ ] **AC 14.** Full gating-scope regression
+- [x] **AC 14.** Full gating-scope regression
   (`tests/unit tests/integration -m "not postgres"`) shows zero new failures
   vs. `main`. `ruff check .`, `ruff format --check`, `mypy app` clean vs. `main`.
 - [ ] **AC 15.** 6-agent `/bmad-code-review` completed before merge — **and**,
@@ -216,32 +216,32 @@ quiet-wrongness failure mode this codebase has already been burned by once
 ## Tasks
 
 ### Task 1 — Guard-test survey (AC 13)
-- [ ] 1.1 Run the CLAUDE.md-mandated grep across `apps/api/tests/`; list results.
+- [x] 1.1 Run the CLAUDE.md-mandated grep across `apps/api/tests/`; list results.
 
 ### Task 2 — RED
-- [ ] 2.1 Write `test_tts_providers_sixtydb.py` against the desired provider
+- [x] 2.1 Write `test_tts_providers_sixtydb.py` against the desired provider
   shape; confirm failing (module doesn't exist yet).
-- [ ] 2.2 Write the 3 new `test_tts_node.py` cases; confirm failing.
+- [x] 2.2 Write the 3 new `test_tts_node.py` cases; confirm failing.
 
 ### Task 3 — GREEN: provider + config
-- [ ] 3.1 `apps/api/app/providers/tts/sixtydb.py` (AC 1-5).
-- [ ] 3.2 `config.py` settings (AC 6).
+- [x] 3.1 `apps/api/app/providers/tts/sixtydb.py` (AC 1-5).
+- [x] 3.2 `config.py` settings (AC 6).
 
 ### Task 4 — GREEN: chain wiring + frozen contract
-- [ ] 4.1 `_synthesize_with_fallback()` reorder (AC 7).
-- [ ] 4.2 `AudioProvider` enum, 3 files (AC 8) — flag 4-dev review requirement.
-- [ ] 4.3 `.env.example` fix (AC 9).
-- [ ] 4.4 `docs/DEFECT-REGISTER.md` D168 entry (AC 10).
+- [x] 4.1 `_synthesize_with_fallback()` reorder (AC 7).
+- [x] 4.2 `AudioProvider` enum, 3 files (AC 8) — flag 4-dev review requirement.
+- [x] 4.3 `.env.example` fix (AC 9).
+- [x] 4.4 `docs/DEFECT-REGISTER.md` D168 entry (AC 10).
 
 ### Task 5 — GREEN: tests green, full regression
-- [ ] 5.1 Confirm Task 2's tests pass (AC 11, 12).
-- [ ] 5.2 Full regression + ruff/format/mypy (AC 14).
+- [x] 5.1 Confirm Task 2's tests pass (AC 11, 12).
+- [x] 5.2 Full regression + ruff/format/mypy (AC 14).
 
 ### Task 6 — Review
 - [ ] 6.1 6-agent `/bmad-code-review` (AC 15).
 
 ### Task 7 — Commit
-- [ ] 7.1 Story-first commit (this file alone).
+- [x] 7.1 Story-first commit (this file alone).
 - [ ] 7.2 Implementation commit(s).
 - [ ] 7.3 `docs/dev1-tracker.md` entry referencing #232.
 
@@ -252,8 +252,233 @@ quiet-wrongness failure mode this codebase has already been burned by once
   (real key/voice_id, short test sentence) — see Context & Scope Boundary for
   the full corrected-scope finding. Raw response: single JSON object,
   top-level `audioContent` + `conditioning` keys, zero timing-keyword hits.
+- **AC 13 guard-test survey (Acceptance Auditor review finding: was checked
+  `[x]` without the required grep output actually recorded here — fixed).**
+  `grep -rln "test_.*tts\|test_no_hardcoded\|test_dunder_all" apps/api/tests/`:
+  `test_dna_fusion.py`, `test_dna_profile.py`, `test_ces_baseline.py`,
+  `test_dna_growth.py`, `test_ces.py`, `test_email_provider.py` (all
+  content-pipeline/DNA/CES/email guard tests — unrelated to `providers/tts/`,
+  confirmed unaffected by inspection, not run); `test_tts_providers_sixtydb.py`,
+  `test_tts_node.py`, `test_sarvam_chunking.py`, `test_breaker_accounting.py`,
+  `test_node_return_shape.py`, `test_audio_duration_s3_38.py` (all directly
+  relevant — run explicitly, see Completion Notes for pass counts);
+  `tests/conftest.py` (false-positive match — the grep hit its own docstring
+  text mentioning "test_tts_node.py" as a cross-reference, not an actual
+  guard-test assertion).
+
+### Completion Notes
+
+Implemented `SixtyDbTTSProvider` (`apps/api/app/providers/tts/sixtydb.py`) as
+a new `TTSProvider` — REST `/tts-synthesize`, chunked at 5000 chars/request,
+dual-shape NDJSON parsing (verified top-level `audioContent`, defensive
+`result.audioContent` fallback), raw-PCM concatenation wrapped in one WAV
+header at 48kHz/mono/16-bit, circuit breaker + retry matching Sarvam/Azure.
+Wired into `_synthesize_with_fallback()` (`graph.py`) as the new first tier:
+60db → Sarvam → Azure → Browser. Added `sixtydb_*` settings to `config.py`
+(all optional/defaulted so an unconfigured deployment degrades gracefully).
+Added `"sixtydb"` to the frozen `AudioProvider` enum in `schemas/lesson.py`,
+`packages/shared/types/lesson.ts`, `packages/shared/lesson_package.schema.json`
+— flagged for the required 4-developer review. Fixed `.env.example`'s
+pre-existing gap (missing Sarvam/Azure vars, stale ElevenLabs entry) in the
+same change. Registered **D168** for the unconfirmed 60db cost-per-char
+placeholder.
+
+Full gating-scope regression (`tests/unit tests/integration -m "not postgres"`):
+**1514 passed, 6 skipped, 86 deselected, zero failures** before the review
+round; re-run clean after the review-round fixes (see below). `ruff check`,
+`ruff format --check`, and `mypy app` (repo-wide) all clean vs. `main` (mypy's
+3 findings are pre-existing, in files this story never touches).
+
+### Review Round — /code-review, high effort (2026-09-21)
+
+5 findings, all real or reasonably accepted-as-documented:
+
+1. **CONFIRMED, HIGH, FIXED** — a 200 OK response with an empty/whitespace-only
+   body (all chunks or one chunk) previously fell through silently: zero
+   NDJSON lines meant nothing was appended to `pcm_chunks`, no error raised,
+   and `_wrap_pcm_as_wav(b"")` still produced a valid-looking (but silent)
+   WAV header — undetectable by `_synthesize_with_fallback`'s `if audio_bytes:`
+   check. Exactly the "quiet wrongness" this story's own Scale & Load section
+   was written to prevent. **Fix:** raise `RuntimeError` if a chunk's response
+   yields zero parsed audio pieces. New test:
+   `test_sixtydb_empty_response_body_raises_instead_of_silent_empty_audio`.
+2. **CONFIRMED, HIGH, FIXED** — missing `sixtydb_api_key`/`sixtydb_voice_id`
+   (the documented, intended default state for any deployment that hasn't
+   configured 60db yet — AC 6) raised inside `_synthesize_inner`, which
+   `guard_breaker` wraps; `ValueError` isn't classified as a client/infra
+   error, so every call recorded a real circuit-breaker failure — 5 calls
+   (one lesson with 5+ segments) within 120s would open the `"sixtydb"`
+   circuit and fire a Sentry "Circuit breaker OPENED" alert for a config
+   choice, not an outage. **Fix:** moved both checks into `synthesize()`,
+   before `guard_breaker` is entered — `is_circuit_open`/`record_failure` are
+   now never called for this case. New test:
+   `test_sixtydb_unconfigured_raises_before_guard_breaker_no_failure_recorded`.
+3. **CONFIRMED, MEDIUM, FIXED** — the cost-ceiling downshift record
+   (`graph.py`, cost-ceiling branch) still hardcoded `"sarvam/azure"` as the
+   tier being skipped, even though 60db is now tried (and skipped) first.
+   **Fix:** updated to `"sixtydb/sarvam/azure"`; updated the one test
+   asserting the literal string.
+4. **PLAUSIBLE, LOW, accepted not fixed** — `_chunk_text` duplicates
+   `sarvam.py`'s `_chunk_narration_text` (only `max_chars` differs). Not
+   extracted into a shared utility: this story's stated scope explicitly
+   keeps `sarvam.py` untouched, and every `providers/tts/*` file is already
+   independently self-contained by this codebase's own established pattern.
+   Documented in `_chunk_text`'s own docstring (a future chunking fix must be
+   applied to both copies) rather than silently left unexplained.
+5. **CONFIRMED, LOW, FIXED** — the `_default_sixtydb_unconfigured` autouse
+   fixture (docstring included) was duplicated verbatim in both
+   `test_tts_node.py` and `test_audio_duration_s3_38.py`. **Fix:** shared
+   implementation moved to `tests/conftest.py` as a plain (non-autouse)
+   `sixtydb_unconfigured_default()` context manager; each file now has a
+   thin 3-line autouse wrapper. Kept non-autouse at the conftest level
+   deliberately, so `test_tts_providers_sixtydb.py`'s own dedicated tests
+   (which exercise the real class directly) are unaffected.
+
+Re-verification after fixes: `test_tts_providers_sixtydb.py` (11 tests, 2 new),
+`test_tts_node.py`, `test_audio_duration_s3_38.py`, `test_sarvam_chunking.py`,
+`test_breaker_accounting.py`, `test_node_return_shape.py`, `test_tts_providers.py`
+— **116 passed**. Full gating-scope regression re-run — see Change Log.
+
+### Review Round 2 — `/bmad-code-review` (4-layer: Blind Hunter, Edge Case
+Hunter, Acceptance Auditor, Scale & Load Hunter), 2026-09-21
+
+Ran on the fully-staged diff (13 files, including the two new files
+`git diff HEAD` alone would have missed — staged first for a complete diff).
+Findings triaged below; the two most serious were confirmed independently by
+two different layers each, which is why they're rated HIGH.
+
+1. **CONFIRMED, HIGH, FIXED (found independently by both Edge Case Hunter and
+   Scale & Load Hunter, with the latter providing exact arithmetic)** —
+   `@with_retry(max_attempts=3)` decorated `_synthesize_inner` as a whole, so
+   a transient failure on chunk N re-sent (and would re-bill, per 60db's
+   wallet-credit model) every already-succeeded chunk 1..N-1, while cost was
+   computed once from `len(text)` regardless of how many real HTTP calls were
+   made. Scale & Load Hunter's worked example: one retried chunk on a real
+   ~4,000-char segment undercounts recorded cost by ~2x against the
+   $3.00/lesson ceiling — reports success while silently under-billing, the
+   exact failure class `docs/SCALE-CONTRACT.md` was written to catch. **Fix:**
+   extracted the per-chunk HTTP call into a new `_post_chunk` method,
+   individually `@with_retry`-decorated; `_synthesize_inner` itself is no
+   longer retried, so a retry only ever resends the one chunk that failed.
+   `guard_breaker` still records exactly one outcome per `synthesize()` call
+   (Story 2-32 AC-3 preserved — nested retry does not change this). New test:
+   `test_sixtydb_retry_on_second_chunk_does_not_resend_first_chunk`. Also
+   registered **D169**: the identical structural bug is pre-existing (not
+   introduced by this story) in `sarvam.py`, discovered as a byproduct of
+   this review — out of this story's scope to fix (Sarvam's file is
+   deliberately untouched), so registered for a future story instead of
+   silently left unrecorded.
+2. **CONFIRMED, MEDIUM, FIXED** — the empty-text guard (`if not chunks: raise
+   ValueError`) still lived inside the `guard_breaker`-wrapped body, so an
+   empty-text call recorded a real breaker failure for a caller bug, not a
+   provider outage — the same class of issue as (and missed by) the first
+   review round's fix for missing `api_key`/`voice_id`. **Fix:** moved the
+   check into `synthesize()`, before `guard_breaker` is entered, alongside
+   the other two config-precondition checks. New test:
+   `test_sixtydb_empty_text_raises_before_guard_breaker_no_failure_recorded`.
+3. **CONFIRMED, MEDIUM, FIXED (Edge Case Hunter)** — `wave.writeframes()`
+   does not validate frame alignment; a truncated/corrupted PCM buffer whose
+   byte length wasn't a multiple of channels×sample_width would silently
+   produce a "valid-looking" but subtly wrong WAV file. **Fix:** explicit
+   `len(combined_pcm) % frame_size` check before wrapping, raises
+   `RuntimeError` on misalignment. New test:
+   `test_sixtydb_misaligned_pcm_length_raises_runtime_error`.
+4. **CONFIRMED, LOW, FIXED (Edge Case Hunter)** — `b64decode()` without
+   `validate=True` silently drops non-base64-alphabet characters instead of
+   raising; a corrupted/garbled response would decode to wrong-length garbage
+   PCM rather than fail loudly. **Fix:** added `validate=True`. New test:
+   `test_sixtydb_invalid_base64_raises_instead_of_silently_dropping_chars`.
+5. **CONFIRMED, LOW, FIXED (Acceptance Auditor, AC 8)** — the frozen-contract
+   review-flag comment was added to `schemas/lesson.py` and `lesson.ts` but
+   not to `packages/shared/lesson_package.schema.json`, only 2 of the 3 files
+   AC 8 requires. **Fix:** added a `"$comment"` to the JSON Schema's
+   `audio_provider` enum matching the other two files' wording.
+6. **CONFIRMED, LOW, FIXED (Acceptance Auditor, AC 13)** — the guard-test
+   survey was checked `[x]` without its required grep output ever being
+   recorded in the Debug Log. **Fix:** added the actual `grep -rln` output
+   and per-file disposition to the Debug Log (see above).
+7. **CONFIRMED, LOW, strengthened not code-fixed (Scale & Load Hunter)** —
+   the pre-existing `max_narration_chars_per_lesson` cap's 80%-of-ceiling
+   headroom arithmetic (D78) was derived against Sarvam's real rate and never
+   re-derived now that 60db (unconfirmed, different billing model) is the
+   first tier tried. Same root cause as D168, not a separate code change —
+   **D168's register entry was expanded** to name this explicitly and its
+   trigger now also covers re-deriving the 120,000-char cap once 60db's real
+   rate is confirmed.
+8. **PLAUSIBLE, LOW, considered and reverted (Blind Hunter)** — flagged
+   `settings.sixtydb_voice_id or ""` at the `_synthesize_with_fallback` call
+   site as a "confusing double-indirection" against `synthesize()`'s own
+   `voice_id or self._voice_id_default` fallback. Attempted a simplification
+   (`settings.sixtydb_voice_id` passed directly) but reverted it: the ABC's
+   `synthesize(text: str, voice_id: str)` is non-Optional, so passing the raw
+   `str | None` would be a real `mypy` violation. Left as-is with a comment
+   explaining why, since the "fix" would have traded a harmless style nit for
+   a real type-safety regression.
+9. **Considered, not acted on** — Blind Hunter's concern that the NDJSON
+   parser assumes compact single-line JSON and could break on a
+   pretty-printed response: refuted by this story's own live verification
+   call, which returned genuinely compact single-line JSON, not
+   pretty-printed — evidence outweighs the theoretical concern. Edge Case
+   Hunter's oversized-single-"word"-chunk edge case: inherited verbatim from
+   `sarvam.py`'s identical chunker (out of scope, same reasoning as finding
+   4 in Review Round 1) and fails loud (413 → caught → falls through to
+   Sarvam) rather than silently, so it doesn't violate the Scale Contract's
+   one-line test even though it's a real latent gap. Both Blind Hunter's and
+   Edge Case Hunter's "unbounded chunk count / no overall per-segment time
+   budget" findings: real, but the same shape already exists (worse, at
+   Sarvam's smaller 500-char limit) in production today — not a new
+   regression this story introduces, and fixing it well is a broader
+   per-node-timeout design decision out of this story's scope.
+
+Re-verification after Round 2 fixes: `test_tts_providers_sixtydb.py` (15
+tests, 4 new) — all pass. `ruff check`/`ruff format --check`/`mypy` clean on
+all re-touched files (same 3 pre-existing, unrelated mypy findings). Full
+gating-scope regression re-run — see Change Log.
+
+### File List
+- `apps/api/app/providers/tts/sixtydb.py` — NEW.
+- `apps/api/app/config.py` — MODIFIED: `sixtydb_*` settings.
+- `apps/api/app/modules/content/pipeline/graph.py` — MODIFIED:
+  `_synthesize_with_fallback()` (60db first tier); cost-downshift label fix.
+- `apps/api/app/schemas/lesson.py` — MODIFIED: `AudioProvider` +`"sixtydb"`.
+- `packages/shared/types/lesson.ts` — MODIFIED: `AudioProvider` +`"sixtydb"`.
+- `packages/shared/lesson_package.schema.json` — MODIFIED: same enum.
+- `.env.example` — MODIFIED: added Sarvam/Azure/60db vars, removed stale
+  ElevenLabs entry.
+- `docs/DEFECT-REGISTER.md` — MODIFIED: **D168** entry (expanded in Round 2),
+  new **D169** entry (Sarvam's pre-existing analogous retry/cost bug).
+- `apps/api/tests/unit/test_tts_providers_sixtydb.py` — NEW.
+- `apps/api/tests/unit/test_tts_node.py` — MODIFIED: 3 new fallback-order
+  tests, autouse fixture (thinned to conftest wrapper), downshift-label fix.
+- `apps/api/tests/unit/test_audio_duration_s3_38.py` — MODIFIED: autouse
+  fixture (thinned to conftest wrapper).
+- `apps/api/tests/conftest.py` — MODIFIED: shared
+  `sixtydb_unconfigured_default()` context manager.
+- `docs/stories/232-sixtydb-tts-tier.md` — this file.
 
 ### Change Log
 - 2026-09-21: Story file created (story-first commit), branch
   `feature/232-sixtydb-tts-tier`. Scope corrected from the original issue text
   (word-level timestamps dropped — confirmed not to exist via live API call).
+- 2026-09-21: Implementation complete. Full gating-scope regression (1514
+  passed, zero failures), `ruff check`/`ruff format --check`/`mypy app` clean.
+- 2026-09-21: `/code-review` (high effort) — 5 findings, 4 fixed, 1 accepted
+  and documented (see Review Round above). Re-verified clean after fixes.
+- 2026-09-22: `/bmad-code-review` run — the skill's 4 built-in layers only
+  (Blind Hunter, Edge Case Hunter, Acceptance Auditor, Scale & Load Hunter).
+  **Not the full 6-layer gate CLAUDE.md requires**: per CLAUDE.md's own text,
+  the skill supplies 4 layers and the invoking prompt must separately supply
+  Story Quality, Test Coverage, and Process Integrity — those 3 were not run
+  this round. 9 findings triaged from the 4 layers that did run, 6 fixed
+  (including a HIGH-severity cost-integrity bug confirmed independently by
+  two layers), 1 strengthened via the defect register, 2 considered and
+  correctly left as-is (see Review Round 2 above). New **D169** registered
+  for an identical pre-existing bug discovered in Sarvam's own provider file,
+  out of this story's scope to fix. Full gating-scope regression re-run after
+  fixes: **1520 passed, 6 skipped, 86 deselected, zero failures**; `ruff
+  check`/`ruff format --check`/`mypy app` clean (same 3 pre-existing,
+  unrelated errors).
+  Remaining before merge (cannot be satisfied by this story alone): the
+  3 missing review layers (Story Quality, Test Coverage, Process Integrity),
+  a human read of this review's findings/fixes, and the 4-developer sign-off
+  required for the frozen `AudioProvider` contract change.
