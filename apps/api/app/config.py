@@ -14,6 +14,11 @@ from typing import Annotated
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# Safe at import time: app.schemas.lesson imports only pydantic/stdlib, never
+# app.config — no cycle. Story S5-4 keeps the 45/30/15 mapping in exactly one
+# place, so these defaults cannot drift from it.
+from app.schemas.lesson import DEFAULT_TIER, qa_budget_seconds
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -571,21 +576,40 @@ class Settings(BaseSettings):
     )
 
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
+    # Story S5-4: derived from qa_budget_seconds(tier) — the tier's seat time
+    # x SEAT_TIME_SHARES["qa"] (10%). Under S5-4 the Q&A window is SUBTRACTED
+    # from the advertised duration; the pre-S5-4 values (600/300/150) were
+    # additive, so a "45-minute" T1 lesson really ran 55 minutes. Still fully
+    # env-tunable — only the defaults moved.
     learner_tier_t1_qa_seconds: int = Field(
-        default=600,
+        default=qa_budget_seconds("T1"),
         description="Q&A phase duration in seconds for T1 (Full-Depth, 45-min) tier",
     )
     learner_tier_t2_qa_seconds: int = Field(
-        default=300,
+        default=qa_budget_seconds("T2"),
         description="Q&A phase duration in seconds for T2 (Standard, 30-min) tier",
     )
     learner_tier_t3_qa_seconds: int = Field(
-        default=150,
+        default=qa_budget_seconds("T3"),
         description="Q&A phase duration in seconds for T3 (Refresher, 15-min) tier",
     )
     learner_tier_default_qa_seconds: int = Field(
-        default=300,
+        default=qa_budget_seconds(DEFAULT_TIER),
         description="Q&A phase duration in seconds when tier is unknown or absent (T2 equivalent)",
+    )
+
+    # ── Learner Mode — quiz pacing (Story S5-4) ───────────────────────────────
+    quiz_seconds_per_question: int = Field(
+        default=25,
+        gt=0,
+        description=(
+            "Assumed seconds a student spends on one MCQ. Divides the tier's "
+            "quiz_budget_seconds to give the lesson's TOTAL question count, "
+            "which is then allocated across segments in proportion to their "
+            "narration duration. Replaces the pre-S5-4 per-segment count band, "
+            "which multiplied by segment count (15 segments x T1's 3-5 = 45-75 "
+            "questions, 19-31 minutes of a 45-minute lesson)."
+        ),
     )
 
     # ── PDF extraction ────────────────────────────────────────────────────────

@@ -139,16 +139,37 @@ def _no_checkpoint_infra():
 
 
 @pytest.mark.unit
-def test_tier_quiz_count_band_constant_has_correct_values() -> None:
-    """AC 4: T1→(3,5), T2→(2,3), T3→(1,2)."""
-    from app.modules.content.pipeline.graph import (
-        _TIER_QUIZ_COUNT_BAND,  # type: ignore[attr-defined]
-    )
+def test_per_segment_band_constant_is_gone() -> None:
+    """Story S5-4 (AC12/AC22) replaces Story 3-28's AC 4.
 
-    assert _TIER_QUIZ_COUNT_BAND["T1"] == (3, 5)
-    assert _TIER_QUIZ_COUNT_BAND["T2"] == (2, 3)
-    assert _TIER_QUIZ_COUNT_BAND["T3"] == (1, 2)
-    assert set(_TIER_QUIZ_COUNT_BAND.keys()) == {"T1", "T2", "T3"}
+    `_TIER_QUIZ_COUNT_BAND` was a per-SEGMENT count band (T1 3-5, T2 2-3,
+    T3 1-2). A fixed per-segment count multiplies by segment count: at
+    structure_max_sections=15 a T1 lesson generated 45-75 questions, i.e.
+    19-31 minutes of quizzing inside a lesson advertised as 45 minutes of
+    TOTAL seat time. The budget is now lesson-level and allocated across
+    segments, so the constant is deleted rather than retuned — a dangling
+    band is how a per-segment count comes back.
+    """
+    from app.modules.content.pipeline import graph
+
+    assert not hasattr(graph, "_TIER_QUIZ_COUNT_BAND")
+
+
+@pytest.mark.unit
+def test_lesson_level_budget_replaces_the_per_segment_band() -> None:
+    """The replacement invariant: the LESSON total is fixed per tier and does
+    not grow with segment count."""
+    from app.config import get_settings
+    from app.modules.content.pipeline.graph import _quiz_budget_per_segment
+
+    spq = get_settings().quiz_seconds_per_question
+    for tier, expected in (("T1", 16), ("T2", 10), ("T3", 5)):
+        for segment_count in (1, 2, 15):
+            counts = _quiz_budget_per_segment(tier, [5.0] * segment_count, spq)
+            assert sum(counts) == expected, (
+                f"tier {tier} with {segment_count} segments budgeted {sum(counts)} "
+                f"questions, expected {expected} regardless of segment count"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +684,10 @@ async def test_all_questions_carry_correct_segment_id() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_t1_prompt_contains_tier_specific_n_min_n_max() -> None:
-    """P1 patch: system message must contain 'Write 3 to 5' for T1 tier."""
+    """S5-4 (AC22): the prompt states the section's ALLOCATED count, not the
+    old per-segment 3-5 band. The allocation is passed in the dispatch
+    payload as `_quiz_count` by the fan-out — the only place that can see the
+    whole lesson — so the count asserted here is that value, exactly."""
     from app.modules.content.pipeline.graph import quiz_generator_node
 
     batch = _make_batch(_make_q(), _make_q(question="Q2?"), _make_q(question="Q3?"))
@@ -671,20 +695,23 @@ async def test_t1_prompt_contains_tier_specific_n_min_n_max() -> None:
     mock_provider.complete_structured.return_value = batch
 
     with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
-        await quiz_generator_node(_state(tier="T1"))
+        await quiz_generator_node(_state(tier="T1", _quiz_count=4))
 
     call_args = mock_provider.complete_structured.call_args
     messages, *_ = call_args.args
     system_content = messages[0]["content"]
-    assert "Write 3 to 5" in system_content, (
-        f"T1 system prompt must contain 'Write 3 to 5', got: {system_content!r}"
+    assert "Write 4 to 4" in system_content, (
+        f"T1 system prompt must request its allocated 4 questions, got: {system_content!r}"
     )
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_t2_prompt_contains_tier_specific_n_min_n_max() -> None:
-    """P1 patch: system message must contain 'Write 2 to 3' for T2 tier."""
+    """S5-4 (AC22): the prompt states the section's ALLOCATED count, not the
+    old per-segment 2-3 band. The allocation is passed in the dispatch
+    payload as `_quiz_count` by the fan-out — the only place that can see the
+    whole lesson — so the count asserted here is that value, exactly."""
     from app.modules.content.pipeline.graph import quiz_generator_node
 
     batch = _make_batch(_make_q(), _make_q(question="Q2?"))
@@ -692,20 +719,23 @@ async def test_t2_prompt_contains_tier_specific_n_min_n_max() -> None:
     mock_provider.complete_structured.return_value = batch
 
     with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
-        await quiz_generator_node(_state(tier="T2"))
+        await quiz_generator_node(_state(tier="T2", _quiz_count=3))
 
     call_args = mock_provider.complete_structured.call_args
     messages, *_ = call_args.args
     system_content = messages[0]["content"]
-    assert "Write 2 to 3" in system_content, (
-        f"T2 system prompt must contain 'Write 2 to 3', got: {system_content!r}"
+    assert "Write 3 to 3" in system_content, (
+        f"T2 system prompt must request its allocated 3 questions, got: {system_content!r}"
     )
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_t3_prompt_contains_tier_specific_n_min_n_max() -> None:
-    """P1 patch: system message must contain 'Write 1 to 2' for T3 tier."""
+    """S5-4 (AC22): the prompt states the section's ALLOCATED count, not the
+    old per-segment 1-2 band. The allocation is passed in the dispatch
+    payload as `_quiz_count` by the fan-out — the only place that can see the
+    whole lesson — so the count asserted here is that value, exactly."""
     from app.modules.content.pipeline.graph import quiz_generator_node
 
     batch = _make_batch(_make_q(question="Q1?"))
@@ -713,13 +743,13 @@ async def test_t3_prompt_contains_tier_specific_n_min_n_max() -> None:
     mock_provider.complete_structured.return_value = batch
 
     with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
-        await quiz_generator_node(_state(tier="T3"))
+        await quiz_generator_node(_state(tier="T3", _quiz_count=1))
 
     call_args = mock_provider.complete_structured.call_args
     messages, *_ = call_args.args
     system_content = messages[0]["content"]
-    assert "Write 1 to 2" in system_content, (
-        f"T3 system prompt must contain 'Write 1 to 2', got: {system_content!r}"
+    assert "Write 1 to 1" in system_content, (
+        f"T3 system prompt must request its allocated 1 question, got: {system_content!r}"
     )
 
 
@@ -731,7 +761,10 @@ async def test_t3_prompt_contains_tier_specific_n_min_n_max() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_t1_nmax_truncation_discards_extra_questions() -> None:
-    """P2 patch: T1 n_max=5; LLM returning 6 valid questions → only 5 kept."""
+    """P2 patch, rewritten for S5-4 (AC22): the cap is this section's ALLOCATED
+    count, not a per-tier band maximum. Allocated 5; an LLM returning
+    6 valid questions is still truncated to 5 — over-supply must never
+    inflate the lesson past the seat-time budget the count was derived from."""
     from app.modules.content.pipeline.graph import quiz_generator_node
 
     batch = _make_batch(*[_make_q(question=f"Q{i}?") for i in range(6)])
@@ -739,10 +772,10 @@ async def test_t1_nmax_truncation_discards_extra_questions() -> None:
     mock_provider.complete_structured.return_value = batch
 
     with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
-        result = await quiz_generator_node(_state(tier="T1"))
+        result = await quiz_generator_node(_state(tier="T1", _quiz_count=5))
 
     assert len(result["quiz_questions"]) == 5, (
-        f"T1 n_max=5; 6 input questions should be truncated to 5, "
+        f"T1 allocated 5; 6 input questions should be truncated to 5, "
         f"got {len(result['quiz_questions'])}"
     )
 
@@ -750,7 +783,10 @@ async def test_t1_nmax_truncation_discards_extra_questions() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_t2_nmax_truncation_discards_extra_questions() -> None:
-    """P2 patch: T2 n_max=3; LLM returning 4 valid questions → only 3 kept."""
+    """P2 patch, rewritten for S5-4 (AC22): the cap is this section's ALLOCATED
+    count, not a per-tier band maximum. Allocated 3; an LLM returning
+    4 valid questions is still truncated to 3 — over-supply must never
+    inflate the lesson past the seat-time budget the count was derived from."""
     from app.modules.content.pipeline.graph import quiz_generator_node
 
     batch = _make_batch(*[_make_q(question=f"Q{i}?") for i in range(4)])
@@ -758,10 +794,10 @@ async def test_t2_nmax_truncation_discards_extra_questions() -> None:
     mock_provider.complete_structured.return_value = batch
 
     with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
-        result = await quiz_generator_node(_state(tier="T2"))
+        result = await quiz_generator_node(_state(tier="T2", _quiz_count=3))
 
     assert len(result["quiz_questions"]) == 3, (
-        f"T2 n_max=3; 4 input questions should be truncated to 3, "
+        f"T2 allocated 3; 4 input questions should be truncated to 3, "
         f"got {len(result['quiz_questions'])}"
     )
 
@@ -769,7 +805,10 @@ async def test_t2_nmax_truncation_discards_extra_questions() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_t3_nmax_truncation_discards_extra_questions() -> None:
-    """P2 patch: T3 n_max=2; LLM returning 3 valid questions → only 2 kept."""
+    """P2 patch, rewritten for S5-4 (AC22): the cap is this section's ALLOCATED
+    count, not a per-tier band maximum. Allocated 2; an LLM returning
+    3 valid questions is still truncated to 2 — over-supply must never
+    inflate the lesson past the seat-time budget the count was derived from."""
     from app.modules.content.pipeline.graph import quiz_generator_node
 
     batch = _make_batch(_make_q(), _make_q(question="Q2?"), _make_q(question="Q3?"))
@@ -777,10 +816,10 @@ async def test_t3_nmax_truncation_discards_extra_questions() -> None:
     mock_provider.complete_structured.return_value = batch
 
     with patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider):
-        result = await quiz_generator_node(_state(tier="T3"))
+        result = await quiz_generator_node(_state(tier="T3", _quiz_count=2))
 
     assert len(result["quiz_questions"]) == 2, (
-        f"T3 n_max=2; 3 input questions should be truncated to 2, "
+        f"T3 allocated 2; 3 input questions should be truncated to 2, "
         f"got {len(result['quiz_questions'])}"
     )
 

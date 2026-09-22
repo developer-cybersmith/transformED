@@ -27,6 +27,7 @@ import pytest
 # guarantees this import has already happened (same convention as
 # test_phase1_economy_nodes.py).
 import app.providers.llm.openai as openai_provider_module  # noqa: E402,F401
+from app.schemas.lesson import narration_budget_minutes
 
 
 @pytest.fixture(autouse=True)
@@ -139,13 +140,19 @@ async def test_happy_path_produces_lesson_plan_matching_input_count() -> None:
     assert plan["subject"] == "General Studies"
     assert plan["complexity_level"] == "medium"
     assert plan["total_segments"] == 3
-    assert plan["total_duration_min"] == pytest.approx(15.0), (
-        "must be summed, not LLM-supplied directly"
+    # S5-4: the LLM's raw 4+6+5=15 min is rescaled onto the tier's narration
+    # budget (T2 default: 19.5 min) before assembly, so the plan's total is the
+    # duration CONTRACT, not the model's free-running estimate. Still summed
+    # from the segments, never LLM-supplied directly.
+    assert plan["total_duration_min"] == pytest.approx(19.5), (
+        "must be summed from the rescaled segments, not LLM-supplied directly"
     )
     assert len(plan["segments"]) == 3
     assert plan["segments"][0]["segment_id"] == "sec_0"
     assert plan["segments"][0]["title"] == "Getting Started"
-    assert plan["segments"][0]["duration_min"] == 4.0
+    assert plan["segments"][0]["duration_min"] == pytest.approx(4.0 * 1.3), (
+        "segment durations carry the S5-4 rescale factor (19.5 / 15.0 = 1.3)"
+    )
     # Original summary text is preserved verbatim, not re-derived from the LLM.
     assert plan["segments"][0]["summary"] == "Introduction to the topic."
     # Issue #236: continuity_notes present on every segment.
@@ -836,11 +843,15 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
     before this story — T2 slide_budget, no tier framing in the prompt.
 
     D85+D87: slide_budget is allocated per-segment, proportional to each
-    segment's share of estimated duration (duration_min=4.0/6.0/5.0 from
-    _plan_llm_response's default segments, total=15.0), and the total itself
-    is now duration-scaled via T2's minutes-per-slide ratio (1.2-1.8) rather
-    than a fixed lesson-wide count: total_min=15/1.8=8.33, total_max=15/1.2=12.5.
-    share 4/15 -> (2,3); share 6/15 -> (3,5); share 5/15 -> (3,4)."""
+    segment's share of estimated duration, with the total duration-scaled via
+    T2's minutes-per-slide ratio (1.2-1.8).
+
+    S5-4 rescales the LLM's durations (4.0/6.0/5.0, total 15.0) onto T2's
+    narration budget of 19.5 min first — factor 1.3 — so the budget is computed
+    from 5.2/7.8/6.5. total_min=19.5/1.8=10.83, total_max=19.5/1.2=16.25;
+    shares 4/15 -> (3,4); 6/15 -> (4,6); 5/15 -> (4,5). The SHARES are
+    untouched by the rescale, which is the property that keeps this allocation
+    meaningful."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -855,25 +866,31 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
 
     segments = result["lesson_plan"]["segments"]
     assert [seg["slide_budget"] for seg in segments] == [
-        {"min": 2, "max": 3},
-        {"min": 3, "max": 5},
         {"min": 3, "max": 4},
+        {"min": 4, "max": 6},
+        {"min": 4, "max": 5},
     ]
 
+    # S5-4 (D-G): the depth wording is gone from every tier's prompt — duration
+    # is the only size instruction the planner receives now.
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
+    assert "19.5 minutes" in sent_prompt, "T2's narration budget must reach the planner"
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
-    """AC-4/AC-6: T1 -> full-depth prompt framing + a wider per-segment
-    slide_budget than T2's default.
+    """AC-4/AC-6: T1 -> a longer narration budget in the prompt + a wider
+    per-segment slide_budget than T2's default.
 
-    D85+D87: T1's minutes-per-slide ratio (0.8-1.2), same default durations
-    (4.0/6.0/5.0, total=15.0): total_min=15/1.2=12.5, total_max=15/0.8=18.75.
-    share 4/15 -> (3,5); share 6/15 -> (5,8); share 5/15 -> (4,6)."""
+    D85+D87 with S5-4's rescale: T1's budget is 29.25 min, so the LLM's 15.0
+    is scaled by 1.95 to 7.8/11.7/9.75, then divided by T1's minutes-per-slide
+    ratio (0.8-1.2): total_min=29.25/1.2=24.375, total_max=29.25/0.8=36.5625.
+    Two of the three segments clamp to _MAX_SLIDES_PER_SEGMENT (8) — at T1's
+    budget with only 3 segments the structural per-segment ceiling binds, which
+    is the clamp working as designed, not a budget error."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -888,30 +905,33 @@ async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
 
     segments = result["lesson_plan"]["segments"]
     assert [seg["slide_budget"] for seg in segments] == [
-        {"min": 3, "max": 5},
-        {"min": 5, "max": 8},
-        {"min": 4, "max": 6},
+        {"min": 6, "max": 8},
+        {"min": 8, "max": 8},
+        {"min": 8, "max": 8},
     ]
     # Every T1 segment still has a wider (or equal, at the structural
     # ceiling) budget than the equivalent T2 default segment above.
-    t2_defaults = [{"min": 2, "max": 3}, {"min": 3, "max": 5}, {"min": 3, "max": 4}]
+    t2_defaults = [{"min": 3, "max": 4}, {"min": 4, "max": 6}, {"min": 4, "max": 5}]
     for t1_seg, t2_seg in zip(segments, t2_defaults, strict=True):
         assert t1_seg["slide_budget"]["max"] >= t2_seg["max"]
 
+    # S5-4: T1 is distinguished by a LONGER narration budget, not by depth
+    # wording. The old "FULL-DEPTH" framing is deleted repo-wide.
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
-    assert "FULL-DEPTH" in sent_prompt
+    assert "29.25 minutes" in sent_prompt
+    assert "FULL-DEPTH" not in sent_prompt
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
-    """AC-4/AC-6: T3 -> critical-topics-only/refresher framing + a narrower
+    """AC-4/AC-6: T3 -> a shorter narration budget in the prompt + a narrower
     per-segment slide_budget than T2's default.
 
-    D85+D87: T3's minutes-per-slide ratio (2.0-3.0), same default durations
-    (4.0/6.0/5.0, total=15.0): total_min=15/3.0=5.0, total_max=15/2.0=7.5.
-    share 4/15 -> (1,2); share 6/15 -> (2,3); share 5/15 -> (2,2)."""
+    D85+D87 with S5-4's rescale: T3's budget is 9.75 min, so the LLM's 15.0 is
+    scaled DOWN by 0.65 to 2.6/3.9/3.25, then divided by T3's minutes-per-slide
+    ratio (2.0-3.0): total_min=9.75/3.0=3.25, total_max=9.75/2.0=4.875."""
     from app.modules.content.pipeline.graph import lesson_planner_node
 
     mock_provider = AsyncMock()
@@ -926,18 +946,21 @@ async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
 
     segments = result["lesson_plan"]["segments"]
     assert [seg["slide_budget"] for seg in segments] == [
+        {"min": 1, "max": 1},
         {"min": 1, "max": 2},
-        {"min": 2, "max": 3},
-        {"min": 2, "max": 2},
+        {"min": 1, "max": 2},
     ]
     # Every T3 segment still has a narrower (or equal) budget than the
     # equivalent T2 default segment above.
-    t2_defaults = [{"min": 2, "max": 3}, {"min": 3, "max": 5}, {"min": 3, "max": 4}]
+    t2_defaults = [{"min": 3, "max": 4}, {"min": 4, "max": 6}, {"min": 4, "max": 5}]
     for t3_seg, t2_seg in zip(segments, t2_defaults, strict=True):
         assert t3_seg["slide_budget"]["max"] <= t2_seg["max"]
 
+    # S5-4: T3 is distinguished by a SHORTER narration budget, not by
+    # refresher/depth wording.
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
-    assert "CRITICAL-TOPICS-ONLY" in sent_prompt
+    assert "9.75 minutes" in sent_prompt
+    assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
 
 
@@ -993,11 +1016,14 @@ async def test_unknown_tier_value_falls_back_to_t2_budget_and_framing() -> None:
     segments = result["lesson_plan"]["segments"]
     # Same per-segment values as test_default_tier_produces_t2_slide_budget_and_no_framing.
     assert [seg["slide_budget"] for seg in segments] == [
-        {"min": 2, "max": 3},
-        {"min": 3, "max": 5},
         {"min": 3, "max": 4},
+        {"min": 4, "max": 6},
+        {"min": 4, "max": 5},
     ]
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    # S5-4: the fallback covers the narration budget too — an invalid tier must
+    # not silently produce an unbudgeted lesson.
+    assert "19.5 minutes" in sent_prompt
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
 
@@ -1169,7 +1195,14 @@ async def test_planner_batches_above_threshold_produces_full_plan() -> None:
     plan = result["lesson_plan"]
     assert plan["total_segments"] == n
     assert [s["segment_id"] for s in plan["segments"]] == [f"sec_{i}" for i in range(n)]
-    assert plan["total_duration_min"] == pytest.approx(3.0 * n)
+    # S5-4: the batched path's reassembled durations are rescaled onto the
+    # lesson's narration budget exactly like the single-call path (20 segments
+    # x 3.0 = 60 min, well outside T2's 19.5 +/-15% band). This is also the
+    # test that would catch the batching-specific hazard: each batch is issued
+    # its own PRO-RATA share of the budget, so a regression that passed the
+    # whole-lesson figure to every batch would leave the reassembled total at
+    # budget x batch_count instead of budget.
+    assert plan["total_duration_min"] == pytest.approx(narration_budget_minutes("T2"))
 
 
 @pytest.mark.unit

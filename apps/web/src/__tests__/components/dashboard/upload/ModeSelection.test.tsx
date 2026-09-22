@@ -74,8 +74,13 @@ describe('ModeSelection', () => {
   it('Balanced shows a time-deficit disclaimer', () => {
     render(<ModeSelection onSelect={vi.fn()} />);
 
+    // S5-4 reworded this: the duration is now enforced end to end (narration
+    // word budget, quiz volume and Q&A window are all derived from it), so the
+    // disclaimer says content is PLANNED to fit the time rather than trimmed to
+    // it after the fact. The property under test is unchanged — Balanced must
+    // still warn that choosing less time means covering less.
     const balancedCard = screen.getByText('Balanced').closest('button')!;
-    expect(balancedCard.textContent).toMatch(/trimmed|condensed/i);
+    expect(balancedCard.textContent).toMatch(/planned to fit|trimmed|condensed/i);
     expect(balancedCard.textContent).toMatch(/time/i);
   });
 
