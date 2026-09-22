@@ -131,25 +131,34 @@ async def test_happy_path_sarvam_success_produces_nested_narration_entries() -> 
 @pytest.mark.asyncio
 async def test_sixtydb_success_produces_nested_narration_entries() -> None:
     """Story 232 AC 7: 60db succeeds first -> audio_provider='sixtydb',
-    Sarvam/Azure never called."""
+    Sarvam/Azure never called, and cost is accumulated using 60db's own
+    COST_PER_CHAR (review finding: AC 7's `cost` component of the returned
+    tuple was previously unasserted for the 60db path)."""
     from app.modules.content.pipeline.graph import tts_node
+    from app.providers.tts.sixtydb import COST_PER_CHAR as _SIXTYDB_COST_PER_CHAR
 
     mock_sixtydb = AsyncMock()
     mock_sixtydb.synthesize.return_value = (b"SIXTYDB_AUDIO", [])
     mock_sarvam = AsyncMock()
     sb = _mock_supabase()
+    mock_accumulate = AsyncMock()
 
     with (
         patch("app.core.db.get_supabase", return_value=sb),
         patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb),
         patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
-        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
     ):
         result = await tts_node(_base_state(narration_scripts=[NARRATION_SCRIPTS[0]]))
 
     assets = result["audio_assets"]
     assert assets[0]["data"]["audio_provider"] == "sixtydb"
     mock_sarvam.synthesize.assert_not_called()
+    mock_accumulate.assert_called_once()
+    call_args = mock_accumulate.call_args
+    assert call_args.args[0] == FAKE_LESSON_ID
+    expected_cost = len(NARRATION_SCRIPTS[0]["script"]) * _SIXTYDB_COST_PER_CHAR
+    assert call_args.args[1] == pytest.approx(expected_cost)
 
 
 @pytest.mark.unit

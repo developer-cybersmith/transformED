@@ -292,16 +292,25 @@ async def test_sixtydb_missing_api_key_raises_value_error() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_sixtydb_missing_voice_id_raises_value_error() -> None:
+    """Review finding (Test Coverage layer): parity with the api_key sibling
+    test — must also assert this branch doesn't trip the circuit breaker."""
     from app.providers.tts.sixtydb import SixtyDbTTSProvider
+
+    mock_is_open = AsyncMock(return_value=False)
+    mock_record_failure = AsyncMock()
 
     with (
         patch("app.config.get_settings") as mock_settings,
-        patch("app.providers.tts.sixtydb.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.providers.tts.sixtydb.is_circuit_open", new=mock_is_open),
+        patch("app.core.circuit_breaker.record_failure", new=mock_record_failure),
     ):
         _patch_settings(mock_settings, voice_id=None)
         provider = SixtyDbTTSProvider()
         with pytest.raises(ValueError, match="no voice_id configured"):
             await provider.synthesize("Hello world", "")
+
+    mock_is_open.assert_not_called()
+    mock_record_failure.assert_not_called()
 
 
 @pytest.mark.unit

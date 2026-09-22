@@ -162,11 +162,15 @@ today whenever it isn't (no key configured, API failure, or empty response).
 - [x] **AC 14.** Full gating-scope regression
   (`tests/unit tests/integration -m "not postgres"`) shows zero new failures
   vs. `main`. `ruff check .`, `ruff format --check`, `mypy app` clean vs. `main`.
-- [ ] **AC 15.** 6-agent `/bmad-code-review` completed before merge — **and**,
-  because this diff touches a frozen contract (AC 8), a PR reviewed by all 4
-  developers per CLAUDE.md's frozen-contract rule, in addition to the 6-agent
-  review. Both are merge blockers this story cannot itself satisfy — recorded
-  here as an explicit open item, not silently assumed done.
+- [x] **AC 15 (partial — see note).** All 6 CLAUDE.md review layers now
+  complete across Review Rounds 2-3 (Blind Hunter, Edge Case Hunter,
+  Acceptance Auditor, Scale & Load Hunter, Story Quality, Test Coverage, AC
+  Completeness, Process Integrity — 8 ran total, the 6 CLAUDE.md names among
+  them all present). **Still outstanding, cannot be satisfied by this story
+  alone:** because this diff touches a frozen contract (AC 8), a PR reviewed
+  by all 4 developers per CLAUDE.md's frozen-contract rule is also required
+  before merge — checked `[x]` for the review-layer portion this story CAN
+  complete, not for the human sign-off it cannot.
 
 ## Scale & Load
 
@@ -238,7 +242,7 @@ quiet-wrongness failure mode this codebase has already been burned by once
 - [x] 5.2 Full regression + ruff/format/mypy (AC 14).
 
 ### Task 6 — Review
-- [ ] 6.1 6-agent `/bmad-code-review` (AC 15).
+- [x] 6.1 6-layer review complete (AC 15) — 4-developer frozen-contract sign-off still outstanding (not a task this story can perform).
 
 ### Task 7 — Commit
 - [x] 7.1 Story-first commit (this file alone).
@@ -287,7 +291,8 @@ Full gating-scope regression (`tests/unit tests/integration -m "not postgres"`):
 **1514 passed, 6 skipped, 86 deselected, zero failures** before the review
 round; re-run clean after the review-round fixes (see below). `ruff check`,
 `ruff format --check`, and `mypy app` (repo-wide) all clean vs. `main` (mypy's
-3 findings are pre-existing, in files this story never touches).
+4 findings are pre-existing, in files this story never touches — corrected
+from an earlier "3" miscount here, see Review Round 3 below).
 
 ### Review Round — /code-review, high effort (2026-09-21)
 
@@ -431,8 +436,82 @@ two different layers each, which is why they're rated HIGH.
    per-node-timeout design decision out of this story's scope.
 
 Re-verification after Round 2 fixes: `test_tts_providers_sixtydb.py` (15
-tests, 4 new) — all pass. `ruff check`/`ruff format --check`/`mypy` clean on
-all re-touched files (same 3 pre-existing, unrelated mypy findings). Full
+tests, 4 new) — all pass. `ruff check`/`ruff format --check` clean on all
+re-touched files; `mypy` was run scoped to touched files only in this round
+(3 pre-existing findings visible at that scope) — **Review Round 3 caught
+that this violated CLAUDE.md binding rule 1 ("verification scope = CI
+scope") and found a 4th pre-existing error (`providers/stt/whisper.py`) only
+visible under the full repo-wide `mypy app` command.** Full gating-scope
+regression re-run — see Change Log.
+
+### Review Round 3 — the 4 remaining CLAUDE.md layers (Story Quality, Test
+Coverage, AC Completeness, Process Integrity), 2026-09-22
+
+Round 2 ran only the `/bmad-code-review` skill's 4 built-in layers. This
+round supplies the 4 CLAUDE.md names not covered by that skill (per
+CLAUDE.md's own text: "only Blind Hunter and Scale & Load appear in both
+lists... Story Quality, Test Coverage, AC Completeness and Process Integrity
+must be supplied by the invoking prompt") — completing all 6 required layers.
+
+**Process Integrity: PASS, no findings.** Provider abstraction, no-hardcoded-
+models, node-return-shape, frozen-contract consistency (all 3 files, honestly
+flagged), Defect Register format, and the guard-test survey all independently
+re-verified against the real code/commits, not the story's prose.
+
+**AC Completeness: 11 COVERED, 3 PARTIAL, 0 MISSING.** AC 8 (frozen enum),
+AC 9 (`.env.example` contents), and AC 10 (D168 register entry) each have a
+real underlying artifact but no *explicit test assertion* — reasonable for
+AC 10 (a prose registry entry), but AC 8 and AC 9 were closeable with a
+trivial test. **Fixed:** added
+`test_narration_audio_provider_accepts_sixtydb` (`test_lesson_schema.py`,
+validates both the Pydantic model and the raw JSON schema) and
+`test_env_example_has_tts_chain_vars_and_no_stale_elevenlabs`
+(`test_env_example_consistency.py`, asserts all 11 new keys present and
+`ELEVENLABS_*` absent).
+
+**Test Coverage: solid, 3 minor gaps, no mock-echo false confidence found.**
+Every branch in `sixtydb.py` has a dedicated exercising test; the reviewer
+mentally reverted the per-chunk-retry fix and confirmed
+`test_sixtydb_retry_on_second_chunk_does_not_resend_first_chunk` would
+actually catch the regression. **Fixed:** `test_sixtydb_missing_voice_id_raises_value_error`
+now also asserts `is_circuit_open`/`record_failure` are never called (parity
+with its `api_key` sibling test); `test_sixtydb_success_produces_nested_narration_entries`
+(`test_tts_node.py`) now asserts the actual `cost` value passed to
+`accumulate_cost`, not just `audio_provider`.
+
+**Story Quality: PASS, one factual discrepancy found and fixed.** Story-First
+Gate genuinely chronological (verified via `git show --stat` on the story-first
+commit — one file, no code); every AC spot-checked against the real diff, not
+rubber-stamped; all 15 ACs concrete and falsifiable; every claimed command
+re-run independently and matched — **except** `mypy`: the story claimed "3
+pre-existing findings," but an independent repo-wide `mypy app` run (matching
+CLAUDE.md binding rule 1, "verification scope = CI scope") found **4** —
+`providers/stt/whisper.py` was invisible in every prior run because those
+runs were scoped to only the files this story touches, not the full app.
+Confirmed via a clean check of `main` at the merge-base: `main` already has
+all 4, so this is not a new regression, only a miscount in this story's own
+prose. **Fixed:** corrected "3" → "4" everywhere it appeared in this file.
+
+**Byproduct finding, out of scope, registered not fixed:** while adding this
+round's new tests to two shared, pre-existing test files
+(`test_lesson_schema.py`, `test_env_example_consistency.py`), the full run of
+`test_env_example_consistency.py` surfaced that its own pre-existing generic
+guard (`test_env_example_matches_settings_defaults_or_is_a_documented_exception`)
+**already fails on `main`** — `.env.example`'s `CES_WEIGHT_*` values drifted
+from `config.py`'s real defaults, unrelated to anything this story touches.
+Not caught by CI because this test file lives in the advisory bucket
+(`continue-on-error: true`), exactly the trap CLAUDE.md warns about ("a green
+checkmark does NOT mean the advisory bucket is clean"). Registered as
+**D170**, per CLAUDE.md's own rule for a pre-existing-on-main failure ("note
+it... If yes [pre-existing], note it in the PR description") — not fixed
+here, since it's a CES calibration question with no relationship to TTS.
+
+Re-verification after Round 3 fixes: `test_lesson_schema.py` (35 tests, 1
+new), `test_tts_providers_sixtydb.py` (15 tests, assertions strengthened),
+`test_tts_node.py` (assertions strengthened), `test_env_example_consistency.py`
+(1 new test; the pre-existing D170 failure remains, correctly, since it's out
+of scope) — all pass except the pre-existing D170 case. `mypy app`
+(repo-wide, corrected scope): **4** pre-existing errors, zero new. Full
 gating-scope regression re-run — see Change Log.
 
 ### File List
@@ -446,7 +525,13 @@ gating-scope regression re-run — see Change Log.
 - `.env.example` — MODIFIED: added Sarvam/Azure/60db vars, removed stale
   ElevenLabs entry.
 - `docs/DEFECT-REGISTER.md` — MODIFIED: **D168** entry (expanded in Round 2),
-  new **D169** entry (Sarvam's pre-existing analogous retry/cost bug).
+  new **D169** (Sarvam's pre-existing analogous retry/cost bug), new **D170**
+  (pre-existing `.env.example`/`config.py` CES weight drift on `main`, found
+  as a Round 3 byproduct).
+- `apps/api/tests/unit/test_lesson_schema.py` — MODIFIED: new
+  `test_narration_audio_provider_accepts_sixtydb` (AC 8).
+- `apps/api/tests/test_env_example_consistency.py` — MODIFIED: new
+  `test_env_example_has_tts_chain_vars_and_no_stale_elevenlabs` (AC 9).
 - `apps/api/tests/unit/test_tts_providers_sixtydb.py` — NEW.
 - `apps/api/tests/unit/test_tts_node.py` — MODIFIED: 3 new fallback-order
   tests, autouse fixture (thinned to conftest wrapper), downshift-label fix.
@@ -467,18 +552,43 @@ gating-scope regression re-run — see Change Log.
 - 2026-09-22: `/bmad-code-review` run — the skill's 4 built-in layers only
   (Blind Hunter, Edge Case Hunter, Acceptance Auditor, Scale & Load Hunter).
   **Not the full 6-layer gate CLAUDE.md requires**: per CLAUDE.md's own text,
-  the skill supplies 4 layers and the invoking prompt must separately supply
-  Story Quality, Test Coverage, and Process Integrity — those 3 were not run
-  this round. 9 findings triaged from the 4 layers that did run, 6 fixed
-  (including a HIGH-severity cost-integrity bug confirmed independently by
-  two layers), 1 strengthened via the defect register, 2 considered and
-  correctly left as-is (see Review Round 2 above). New **D169** registered
-  for an identical pre-existing bug discovered in Sarvam's own provider file,
-  out of this story's scope to fix. Full gating-scope regression re-run after
-  fixes: **1520 passed, 6 skipped, 86 deselected, zero failures**; `ruff
-  check`/`ruff format --check`/`mypy app` clean (same 3 pre-existing,
-  unrelated errors).
-  Remaining before merge (cannot be satisfied by this story alone): the
-  3 missing review layers (Story Quality, Test Coverage, Process Integrity),
-  a human read of this review's findings/fixes, and the 4-developer sign-off
+  only Blind Hunter and Scale & Load overlap by name with the 6 required —
+  Story Quality, Test Coverage, AC Completeness, and Process Integrity (4,
+  not 3 as first noted here) still needed to be supplied separately. 9
+  findings triaged from the 4 layers that did run, 6 fixed (including a
+  HIGH-severity cost-integrity bug confirmed independently by two layers), 1
+  strengthened via the defect register, 2 considered and correctly left
+  as-is (see Review Round 2 above). New **D169** registered for an identical
+  pre-existing bug discovered in Sarvam's own provider file, out of this
+  story's scope to fix. Full gating-scope regression re-run after fixes:
+  **1520 passed, 6 skipped, 86 deselected, zero failures**; `ruff
+  check`/`ruff format --check` clean; `mypy` (run scoped to touched files
+  only — a mistake caught and corrected next round) showed 3 pre-existing
+  errors.
+- 2026-09-22: Ran the 4 remaining CLAUDE.md-named layers (Story Quality, Test
+  Coverage, AC Completeness, Process Integrity) — **all 6 required layers
+  now complete.** Process Integrity: clean PASS. AC Completeness: 11
+  covered, 3 partial, 0 missing — closed 2 of the 3 partials with new tests
+  (`test_narration_audio_provider_accepts_sixtydb`,
+  `test_env_example_has_tts_chain_vars_and_no_stale_elevenlabs`). Test
+  Coverage: solid, no mock-echo false confidence, 2 minor gaps closed
+  (voice_id breaker-not-tripped assertion, 60db cost-value assertion). Story
+  Quality: PASS, but caught a real discrepancy — the mypy pre-existing-error
+  count was reported as "3" in three places, when an independently-run,
+  correctly-scoped **repo-wide** `mypy app` (matching CLAUDE.md binding rule
+  1: "verification scope = CI scope") found **4** — `providers/stt/whisper.py`
+  was invisible in every prior run because those runs were scoped to touched
+  files only. Confirmed via `main` at the merge-base: all 4 pre-exist there
+  too, so not a new regression, only a miscount in this story's own prose —
+  corrected everywhere it appeared. **Byproduct finding, registered not
+  fixed:** adding this round's tests to two shared pre-existing test files
+  surfaced that `.env.example`'s `CES_WEIGHT_*` values already drift from
+  `config.py`'s real defaults **on `main`**, unrelated to this story —
+  registered as **D170** per CLAUDE.md's rule for pre-existing-on-main
+  failures. Full gating-scope regression re-run: **1521 passed, 6 skipped,
+  86 deselected, zero failures** (up 1 from Round 2's 1520 — the new
+  `test_narration_audio_provider_accepts_sixtydb`); repo-wide `mypy app`
+  corrected to **4** pre-existing/zero-new.
+  Remaining before merge (cannot be satisfied by this story alone): a human
+  read of this review's findings/fixes, and the 4-developer sign-off
   required for the frozen `AudioProvider` contract change.
