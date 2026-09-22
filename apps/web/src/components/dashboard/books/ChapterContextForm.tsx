@@ -138,7 +138,16 @@ export function ChapterContextForm({
         async function fetchContext() {
             setLoading(true);
             try {
-                const row = await booksService.getChapterContext(bookId, chapterId);
+                // 5 s timeout: slow network must not strand the student on an
+                // infinite spinner. Timeout resolves to null (same as 204 / no
+                // context) so the form renders empty and the student can proceed.
+                const timeout = new Promise<null>((resolve) =>
+                    setTimeout(() => resolve(null), 5000)
+                );
+                const row = await Promise.race([
+                    booksService.getChapterContext(bookId, chapterId),
+                    timeout,
+                ]);
                 if (cancelled) return;
                 if (row) {
                     setForm({

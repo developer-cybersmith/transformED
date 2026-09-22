@@ -9,6 +9,7 @@ Pattern mirrors context.py (S5-1 book context) but is intentionally independent.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -109,39 +110,52 @@ async def upsert_chapter_context(
     specific_doubt: str | None,
     goal_and_skip: str | None,
     prerequisites_done: bool | None,
-) -> None:
-    """Upsert a chapter_context row for (chapter_id, user_id). All fields nullable."""
+) -> dict[str, Any]:
+    """Upsert a chapter_context row for (chapter_id, user_id). Returns the written row.
+
+    Sanitizes text fields on write path. Non-blocking: wrapped in asyncio.to_thread.
+    """
     db: Any = get_supabase()
-    # Sanitize text fields on write path (AC6).
-    db.table("chapter_context").upsert(
-        {
-            "chapter_id": chapter_id,
-            "user_id": user_id,
-            "depth_duration": depth_duration,
-            "learning_need": learning_need,
-            "specific_doubt": _sanitize(specific_doubt),
-            "goal_and_skip": _sanitize(goal_and_skip),
-            "prerequisites_done": prerequisites_done,
-            "updated_at": datetime.now(UTC).isoformat(),
-        },
-        on_conflict="chapter_id,user_id",
-    ).execute()
+    resp = await asyncio.to_thread(
+        lambda: (
+            db.table("chapter_context")
+            .upsert(
+                {
+                    "chapter_id": chapter_id,
+                    "user_id": user_id,
+                    "depth_duration": depth_duration,
+                    "learning_need": learning_need,
+                    "specific_doubt": _sanitize(specific_doubt),
+                    "goal_and_skip": _sanitize(goal_and_skip),
+                    "prerequisites_done": prerequisites_done,
+                    "updated_at": datetime.now(UTC).isoformat(),
+                },
+                on_conflict="chapter_id,user_id",
+            )
+            .select(_CHAPTER_CONTEXT_COLUMNS)
+            .execute()
+        )
+    )
+    written_rows = resp.data or []
+    return written_rows[0] if written_rows else {}
 
 
 async def get_chapter_context_row(chapter_id: str, user_id: str) -> dict[str, Any] | None:
     """Return the chapter_context row for (chapter_id, user_id), or None."""
     db: Any = get_supabase()
-    resp = (
-        db.table("chapter_context")
-        .select(_CHAPTER_CONTEXT_COLUMNS)
-        .eq("chapter_id", chapter_id)
-        .eq("user_id", user_id)
-        # BOUNDED: single-row by (chapter_id, user_id) UNIQUE constraint
-        .limit(1)
-        .execute()
+    resp = await asyncio.to_thread(
+        lambda: (
+            db.table("chapter_context")
+            .select(_CHAPTER_CONTEXT_COLUMNS)
+            .eq("chapter_id", chapter_id)
+            .eq("user_id", user_id)
+            # BOUNDED: single-row by (chapter_id, user_id) UNIQUE constraint
+            .limit(1)
+            .execute()
+        )
     )
-    rows = resp.data or []
-    return rows[0] if rows else None
+    fetched = resp.data or []
+    return fetched[0] if fetched else None
 
 
 async def get_chapter_context_prompt_block(chapter_id: str, user_id: str) -> str:

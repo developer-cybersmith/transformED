@@ -278,16 +278,30 @@ class TestUpsertChapterContext:
         from datetime import datetime
         from unittest.mock import MagicMock
 
+        _RETURNED_ROW = {
+            "chapter_id": "chapter-uuid",
+            "user_id": "user-uuid",
+            "depth_duration": "standard_30_45m",
+            "learning_need": None,
+            "specific_doubt": None,
+            "goal_and_skip": None,
+            "prerequisites_done": None,
+            "updated_at": "2026-09-22T10:00:00+00:00",
+        }
+
         mock_db = MagicMock()
         mock_table = mock_db.table.return_value
         mock_upsert = mock_table.upsert.return_value
-        mock_upsert.execute.return_value = MagicMock()
+        mock_select = mock_upsert.select.return_value
+        execute_resp = MagicMock()
+        execute_resp.data = [_RETURNED_ROW]
+        mock_select.execute.return_value = execute_resp
 
         with patch(
             "app.modules.content.context_chapter.get_supabase",
             return_value=mock_db,
         ):
-            await upsert_chapter_context(
+            result = await upsert_chapter_context(
                 "chapter-uuid",
                 "user-uuid",
                 depth_duration="standard_30_45m",
@@ -310,3 +324,8 @@ class TestUpsertChapterContext:
         # Must parse as a real timezone-aware ISO-8601 datetime
         parsed = datetime.fromisoformat(updated_at)
         assert parsed.tzinfo is not None, "updated_at must be timezone-aware (UTC)"
+
+        # S5-3b AC6: upsert_chapter_context must return the written row (dict),
+        # not None — eliminates the redundant get_chapter_context_row round-trip.
+        assert isinstance(result, dict), "upsert_chapter_context must return the written row"
+        assert result["chapter_id"] == "chapter-uuid"

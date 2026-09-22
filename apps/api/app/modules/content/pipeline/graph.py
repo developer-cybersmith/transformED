@@ -1624,7 +1624,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         # Bind to a non-Optional local so the lambda captures TraceContext,
         # not TraceContext | None — mypy cannot narrow closed-over variables.
         _bound_ctx = _ctx
-        safe_trace(
+        _span = safe_trace(
             lambda: _lf.start_observation(
                 name="chapter_context_check",
                 as_type="span",
@@ -1632,6 +1632,11 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 metadata={"has_chapter_context": has_chapter_context},
             )
         )
+        # End the span immediately — this node is a point-in-time check, not a
+        # long-running operation. Failing to call end() leaves a dangling span
+        # in Langfuse that never appears in the trace timeline.
+        if _span is not None:
+            safe_trace(_span.end)
 
     # Story 2-16 (RC-3): a single completion asked to echo back many segment_ids
     # collapses the list (44-in/10-out crashed the whole job). At or below
