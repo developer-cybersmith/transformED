@@ -10,51 +10,9 @@ The router still declares its older lesson models inline; new models land here.
 
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.lesson import DEFAULT_TIER, VALID_TIERS
-
-# ── S5-3 Chapter Context (§4.3) ──────────────────────────────────────────────
-
-_DepthDurationValue = Literal[
-    "quick_15_20m", "standard_30_45m", "deep_60_90m", "mastery_multi", "ai_decide"
-]
-_LearningNeedValue = Literal[
-    "examples_analogies",
-    "formulas_derivations",
-    "diagrams_visuals",
-    "practice_questions",
-    "adaptive_mix",
-]
-
-
-class ChapterContextRequest(BaseModel):
-    """Body of PUT /books/{book_id}/chapters/{chapter_id}/context (Story S5-3)."""
-
-    # Q41 MCQ: depth + time for this chapter
-    depth_duration: _DepthDurationValue | None = None
-    # Q42 MCQ: primary learning need
-    learning_need: _LearningNeedValue | None = None
-    # Q43 one-liner: specific doubt or topic
-    specific_doubt: str | None = Field(None, max_length=500)
-    # Q44 one-liner: end goal + topics to skip
-    goal_and_skip: str | None = Field(None, max_length=500)
-    # Q45 T/F: prerequisites complete
-    prerequisites_done: bool | None = None
-
-
-class ChapterContextResponse(BaseModel):
-    """Response from GET/PUT /books/{book_id}/chapters/{chapter_id}/context."""
-
-    chapter_id: str
-    depth_duration: str | None = None
-    learning_need: str | None = None
-    specific_doubt: str | None = None
-    goal_and_skip: str | None = None
-    prerequisites_done: bool | None = None
-    updated_at: str | None = None
 
 
 class GenerateLessonRequest(BaseModel):

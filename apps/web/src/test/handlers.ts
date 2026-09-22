@@ -126,19 +126,6 @@ export const handlers = [
         return HttpResponse.json(CHAPTERS, { status: 200 });
     }),
 
-    // ── GET/PUT /content/books/{book_id}/chapters/{chapter_id}/context ───────
-    // S5-3: chapter context form. Default: 204 (no saved context). Tests that
-    // need a pre-populated row override this handler with server.use().
-    http.get(
-        `${API_BASE}/content/books/:bookId/chapters/:chapterId/context`,
-        () => new HttpResponse(null, { status: 204 })
-    ),
-
-    http.put(
-        `${API_BASE}/content/books/:bookId/chapters/:chapterId/context`,
-        () => HttpResponse.json({}, { status: 200 })
-    ),
-
     // ── POST /content/books/{book_id}/chapters/{chapter_id}/lessons ──────────
     http.post(
         `${API_BASE}/content/books/:bookId/chapters/:chapterId/lessons`,

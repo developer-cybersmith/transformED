@@ -50,20 +50,13 @@ function renderRow(
     return { onGenerated, user: userEvent.setup() };
 }
 
-/**
- * Open the tier picker, choose one of S2-07's three cards, then click Skip on
- * the S5-3 chapter context form to proceed directly to generation.
- */
+/** Open the tier picker and choose one of S2-07's three cards. */
 async function chooseTier(
     user: ReturnType<typeof userEvent.setup>,
     label: 'Deep' | 'Balanced' | 'Refresher'
 ) {
     await user.click(screen.getByRole('button', { name: /generate|retry|try again/i }));
     await user.click(screen.getByRole('button', { name: new RegExp(label, 'i') }));
-    // S5-3: tier selection now transitions to ChapterContextForm before
-    // generation. Skip bypasses it so callers that only care about the
-    // generation path are not affected.
-    await user.click(screen.getByRole('button', { name: /skip/i }));
 }
 
 describe('ChapterGenerateControl — ModeSelection is reused, not rebuilt (AC2)', () => {

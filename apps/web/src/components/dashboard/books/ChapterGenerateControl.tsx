@@ -7,7 +7,6 @@ import { AlertCircle, Check, Info, Loader2, Sparkles, X } from "lucide-react";
 // that is where S2-07 put it and moving a file W3 does not own would be a
 // gratuitous conflict; the component itself has nothing upload-specific in it.
 import { ModeSelection } from "@/components/dashboard/upload/ModeSelection";
-import { ChapterContextForm } from "@/components/dashboard/books/ChapterContextForm";
 import { LEARNER_TIER_TO_BACKEND, type LearnerTier } from "@/types/learnerMode";
 import {
     booksService,
@@ -39,8 +38,6 @@ export const GENERATION_STARTED_MESSAGE =
 type Phase =
     | { kind: "idle" }
     | { kind: "choosing" }
-    /** S5-3: chapter context form, shown after tier selection and before generation. */
-    | { kind: "chapter-form"; tier: LearnerTier }
     | { kind: "submitting" }
     /** 202 -- a lesson row was created and a job enqueued. */
     | { kind: "created"; lesson: LessonGenerationResponse }
@@ -77,14 +74,7 @@ export function ChapterGenerateControl({
     // Watch gate (`watchableLessonId`) is untouched by this story (AC7).
     const isRetry = chapter.latest_lesson?.status === "failed";
 
-    // S5-3: tier selection now transitions to the chapter-form phase instead of
-    // immediately calling the generation API. The actual API call lives in
-    // handleGenerate so both "Generate Now" and "Skip" share the same path.
-    function handleSelect(tier: LearnerTier) {
-        setPhase({ kind: "chapter-form", tier });
-    }
-
-    async function handleGenerate(tier: LearnerTier) {
+    async function handleSelect(tier: LearnerTier) {
         // The single tier mapping. There is no second copy of this anywhere.
         const backendTier = LEARNER_TIER_TO_BACKEND[tier];
         setPhase({ kind: "submitting" });
@@ -123,7 +113,7 @@ export function ChapterGenerateControl({
                         <Sparkles className="h-4 w-4" />
                         {phase.kind === "error" ? "Try again" : isRetry ? "Retry" : "Generate"}
                     </button>
-                ) : phase.kind === "choosing" || phase.kind === "chapter-form" ? (
+                ) : phase.kind === "choosing" ? (
                     <button
                         type="button"
                         onClick={() => setPhase({ kind: "idle" })}
@@ -159,18 +149,6 @@ export function ChapterGenerateControl({
                         How deep should this lesson go?
                     </p>
                     <ModeSelection onSelect={handleSelect} />
-                </div>
-            )}
-
-            {/* S5-3: chapter context form — shown after tier selection, before generation */}
-            {phase.kind === "chapter-form" && (
-                <div className="w-full basis-full border-t border-neutral-100 pt-4">
-                    <ChapterContextForm
-                        bookId={bookId}
-                        chapterId={chapter.chapter_id}
-                        onGenerate={() => handleGenerate(phase.tier)}
-                        onSkip={() => handleGenerate(phase.tier)}
-                    />
                 </div>
             )}
 
