@@ -28,6 +28,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from postgrest.exceptions import APIError
 from pydantic import BaseModel
 from supabase import Client
 
@@ -37,11 +38,17 @@ from app.core.rate_limit import _get_user_key, limiter
 from app.core.retry import with_retry
 from app.core.storage import sign_storage_path
 from app.dependencies import ApprovedUser, ArqRedis, CurrentUser
+from app.modules.content.context_chapter import (
+    get_chapter_context_row,
+    upsert_chapter_context,
+)
 
 # Story 1-11: book/chapter read models live in this module, NOT packages/shared
 # (frozen contract, 4-dev review — CLAUDE.md §16).
 from app.modules.content.schemas import (
     BookResponse,
+    ChapterContextRequest,
+    ChapterContextResponse,
     ChapterResponse,
     GenerateLessonRequest,
     LatestLesson,
@@ -1505,4 +1512,144 @@ async def generate_chapter_lesson(
         status="queued",
         job_id=job_id,
         truncation_expected=truncation_expected,
+    )
+
+
+# ── S5-3: Chapter context endpoints ──────────────────────────────────────────
+
+
+async def _resolve_chapter_for_context(
+    book_id: str,
+    chapter_id: str,
+    user_id: str,
+    supabase: Any,  # noqa: ANN401
+) -> tuple[str, str]:
+    """Return (validated_book_id, validated_chapter_id) after ownership checks.
+
+    Raises 404 if either UUID is malformed, the book is absent or not owned by
+    user_id, or the chapter does not belong to the book. Never raises 403 — a 403
+    would confirm the resource exists. Non-blocking: DB calls wrapped in
+    asyncio.to_thread (D139 pattern).
+    """
+    validated_book_id = _validated_book_id(book_id)
+    validated_chapter_id = _validated_chapter_id(chapter_id)
+    # Reuse the existing ownership helper (D139 pattern — same guard as Gate 2
+    # in generate_chapter_lesson). Wrapped in asyncio.to_thread because
+    # _fetch_owned_book is synchronous and the callers are async routes.
+    await asyncio.to_thread(
+        _fetch_owned_book, supabase, validated_book_id, user_id, "book_id,user_id"
+    )
+    chapter_resp = await asyncio.to_thread(
+        lambda: (
+            supabase.table("chapters")
+            .select("chapter_id")
+            .eq("chapter_id", validated_chapter_id)
+            .eq("book_id", validated_book_id)
+            # BOUNDED: single-row by (chapter_id, book_id)
+            .limit(1)
+            .execute()
+        )
+    )
+    if not (chapter_resp.data or []):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found")
+    return validated_book_id, validated_chapter_id
+
+
+@router.put(
+    "/books/{book_id}/chapters/{chapter_id}/context",
+    response_model=ChapterContextResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Upsert chapter context (S5-3 §4.3)",
+)
+@limiter.limit("3/minute;20/hour", key_func=_get_user_key)
+async def put_chapter_context(
+    request: Request,  # load-bearing for slowapi — do not remove
+    book_id: str,
+    chapter_id: str,
+    body: ChapterContextRequest,
+    user: CurrentUser,
+) -> ChapterContextResponse:
+    """Store or update the §4.3 context answers for one chapter.
+
+    Text fields are sanitized (internal newlines collapsed) on the write path.
+    Idempotent: subsequent PUT calls overwrite previous answers.
+    """
+    supabase = get_supabase()
+    validated_book_id, validated_chapter_id = await _resolve_chapter_for_context(
+        book_id, chapter_id, user["sub"], supabase
+    )
+    del validated_book_id  # only chapter_id is needed downstream
+    try:
+        row = await upsert_chapter_context(
+            chapter_id=validated_chapter_id,
+            user_id=user["sub"],
+            depth_duration=body.depth_duration,
+            learning_need=body.learning_need,
+            specific_doubt=body.specific_doubt,
+            goal_and_skip=body.goal_and_skip,
+            prerequisites_done=body.prerequisites_done,
+        )
+    except APIError as exc:
+        # PREMISE: APIError(code="23503") is the FK violation from supabase-py's
+        # postgrest layer — chapter deleted between ownership check and upsert.
+        if getattr(exc, "code", None) == "23503":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Chapter not found"
+            ) from exc
+        raise
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Chapter context was not saved",
+        )
+    return ChapterContextResponse(
+        chapter_id=row["chapter_id"],
+        depth_duration=row.get("depth_duration"),
+        learning_need=row.get("learning_need"),
+        specific_doubt=row.get("specific_doubt"),
+        goal_and_skip=row.get("goal_and_skip"),
+        prerequisites_done=row.get("prerequisites_done"),
+        updated_at=str(row.get("updated_at")) if row.get("updated_at") else None,
+    )
+
+
+@router.get(
+    "/books/{book_id}/chapters/{chapter_id}/context",
+    response_model=ChapterContextResponse,
+    responses={204: {"description": "No context row exists for this chapter"}},
+    summary="Get chapter context (S5-3 §4.3)",
+)
+@limiter.limit("30/minute;200/hour", key_func=_get_user_key)
+async def get_chapter_context(
+    request: Request,  # load-bearing for slowapi — do not remove
+    book_id: str,
+    chapter_id: str,
+    user: CurrentUser,
+) -> ChapterContextResponse | Response:
+    """Return existing §4.3 context answers for one chapter, or 204 when none exist.
+
+    Rate limit is derived independently from PUT: this endpoint fires automatically
+    on component mount (not user-triggered), has zero LLM/ARQ cost, and returns ≤1 DB
+    row. "30/minute;200/hour" allows normal tab-switching while still bounding crawlers.
+    """
+    supabase = get_supabase()
+    validated_book_id, validated_chapter_id = await _resolve_chapter_for_context(
+        book_id, chapter_id, user["sub"], supabase
+    )
+    del validated_book_id  # only chapter_id is needed downstream
+    row = await get_chapter_context_row(validated_chapter_id, user["sub"])
+    if row is None:
+        # RFC 9110 §15.3.5: 204 must have no message body. Returning
+        # Response(status_code=204) directly bypasses FastAPI's JSON serializer,
+        # ensuring a truly empty body. Setting response.status_code = 204 and
+        # returning None emits "null", which violates the spec.
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return ChapterContextResponse(
+        chapter_id=row["chapter_id"],
+        depth_duration=row.get("depth_duration"),
+        learning_need=row.get("learning_need"),
+        specific_doubt=row.get("specific_doubt"),
+        goal_and_skip=row.get("goal_and_skip"),
+        prerequisites_done=row.get("prerequisites_done"),
+        updated_at=str(row.get("updated_at")) if row.get("updated_at") else None,
     )
