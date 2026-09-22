@@ -68,9 +68,18 @@ split rather than inventing its own:
 
 | Tier | Questions | Treatment |
 |---|---|---|
-| **Direct preferences** | Q1-5, Q9-15 (Goal, Level, Language, Tone, Schooling, Roast Ceiling, Focus, Time, Vision — all marked "no wrong answer" in the PDF) | Stored raw, read **directly** by personalization consumers (no scoring, no fabrication risk — it's literally what the user said) |
+| **Direct preferences** | Q1-5 only (Goal, Level, Language, Tone, Schooling — all marked "no wrong answer" in the PDF, and none of them depend on a system this codebase doesn't have yet) | Stored raw **and** actively wired into the tutor's existing personalization consumer (no scoring, no fabrication risk — it's literally what the user said) |
 | **Penta-Intelligence baseline** | Q16-20 (CRT / EQ scenario / SQ dilemma / fact-vs-opinion / research method) — the PDF's own **"(scored)"** section with a real answer key | **Scored at onboarding time** using the spec's answer key → 5 new numeric columns on `learner_dna`, seeding the very first lesson's personalization exactly as onboarding is meant to |
-| **Deferred** | Q21-25 (one-liner, needs an NLP scorer that doesn't exist) and Q26-30 (true/false, explicitly "cross-validated against telemetry in the first 7 sessions" — can't be scored before any sessions exist by definition) | Stored raw only, matches issue #235's own "store, don't build the consumer" instruction — now correctly scoped to just this tier |
+| **Deferred** | Q6-15 (Bilingual Bridge / Info-Warfare Shield / Roast Ceiling / attention & scheduler signals / Life-Pathway vision — each explicitly named in issue #235's own "systems that don't exist yet" list) and Q21-30 (one-liner needs an NLP scorer that doesn't exist; true/false is explicitly "cross-validated against telemetry in the first 7 sessions" — can't be scored before any sessions exist) | Stored raw only — matches issue #235's own "store, don't build the consumer" instruction |
+
+**Correction from this table's first draft:** Q9-15 (Roast Ceiling, Focus Span, Reels Diet, Daily Time,
+Vision) were initially grouped into "direct preferences" alongside Q1-5. On closer reading, each of
+them explicitly feeds a named system issue #235 itself lists as not yet built — Roast Ceiling
+enforcement, the Scheduler agent, the Life-Pathway engine. Wiring them into a live prompt as if they
+were plain facts would mean half-building those systems' consumption logic without their actual
+design. Only Q1-5 are genuinely dependency-free facts (goal/level/language/tone/schooling need no
+supporting system to be usable as-is) — they're the only ones actually wired in §6/AC6 below. Q6-15
+now sit in Tier C with Q21-30: stored, not consumed, until their real system gets designed.
 
 This keeps the existing 9 behavioral dimensions (`pattern_recognition`, `logical_deduction`, ...)
 **completely untouched** — they stay session-EMA-driven exactly as today. The 5 new Penta-Intelligence
@@ -83,10 +92,12 @@ a reviewer has to dig for.
 
 ### 1. Three-tier treatment of the 30 answers (see table above)
 
-**Tier A — Direct preferences (Q1-5, Q9-15), stored raw, read directly.** No scoring. Lesson
-generation and the tutor's prompt-injection path (§6 below) read these literally — e.g. "preferred
-tone: witty" goes straight into a prompt as a fact, never through a derived score. Zero fabrication
-risk because nothing is inferred beyond what the user stated.
+**Tier A — Direct preferences (Q1-5 only), stored raw, read directly.** No scoring. The tutor's
+prompt-injection path (§6 below) reads these literally — e.g. "preferred tone: witty" goes straight
+into a prompt as a fact, never through a derived score. Zero fabrication risk because nothing is
+inferred beyond what the user stated. Deliberately narrower than the first draft of this section (see
+the correction note above the tier table) — Q6-15 are excluded because each feeds a named system
+issue #235 itself defers.
 
 **Tier B — Penta-Intelligence baseline (Q16-20), scored at onboarding time.** Uses the PDF's own
 answer key (Section 4.1, Q16-Q20 "Penta-Intelligence Psychometrics (scored)"):
@@ -121,11 +132,12 @@ Decision-Maker", `penta_ctq` → "Fact-Checker", `penta_rrq` → "Deep Researche
 returned in any API response (same allowlist-filtering discipline `_build_learner_prompt_text` already
 applies to the old 9 dimensions' badges).
 
-**Tier C — Deferred (Q21-30).** Stored raw in `onboarding_answers_v2` only, exactly as the original
-draft proposed. No NLP scoring of one-liners, no telemetry cross-validation of true/false answers —
-both require infrastructure this story doesn't build, matching issue #235's explicit "store the raw
-answers, do not build the consuming system" instruction (now correctly scoped to only the tier that
-instruction was actually describing).
+**Tier C — Deferred (Q6-15 and Q21-30).** Stored raw in `onboarding_answers_v2` only. Q6-8 (Bilingual
+Bridge / Info-Warfare Shield inputs) and Q9-15 (Roast Ceiling / attention & scheduler signals /
+Life-Pathway vision) each name a system issue #235 explicitly lists as not yet built. Q21-25 (one-liner)
+need an NLP scorer that doesn't exist; Q26-30 (true/false) are explicitly "cross-validated against
+telemetry in the first 7 sessions" and can't be scored before any sessions exist. All of Tier C matches
+issue #235's own "store the raw answers, do not build the consuming system" instruction.
 
 `OnboardingResult`'s frozen shape (`badge_labels: list[str]`, `profile_text: str`,
 `session_count: int`) is **unchanged** — but now genuinely populated from real onboarding-time
@@ -274,7 +286,7 @@ carries the identical shape/behavior forward unchanged (not a regression introdu
 for a `docs/DEFECT-REGISTER.md` entry (owner: whoever next touches reassessment) rather than silently
 noting it in a comment with no ID, per CLAUDE.md binding rule 5.
 
-### 6. Wire 4 fields into the tutor's existing learner-context prompt path
+### 6. Wire all 5 Tier A fields into the tutor's existing learner-context prompt path
 
 The **only** existing LLM-prompt consumer of Learner DNA in this codebase is `get_learner_context()` /
 `_build_learner_prompt_text()` (Story F2-1, `assessment/service.py`), read by Dev 4's tutor state
@@ -282,15 +294,15 @@ machine for live Q&A. (Confirmed by repo-wide search: the content-generation pip
 **no** learner-context read of any kind today — issue #6 in the platform-changes-scope tracking doc,
 "learning behaviour in system prompt," is genuinely unimplemented and out of scope for this story.)
 
-Add 4 new optional fields to `LearnerContextDNA` — `stated_goal: str | None`, `current_level: str |
-None`, `preferred_language: str | None`, `preferred_tone: str | None` — populated from Q1
-(`[A · Goal]`), Q2 (`[B · Level]`), Q3 (`[C · Language]`), Q4 (`[C · Tone]`) via a new
-`_read_onboarding_headline_answers(user_id)` helper reading `onboarding_answers_v2` directly (not
-`learner_dna`, since these now live only in the raw-answers table). `_build_learner_prompt_text` gains
-one new descriptive line when any of the 4 are present:
+Add 5 new optional fields to `LearnerContextDNA` — `stated_goal: str | None`, `current_level: str |
+None`, `preferred_language: str | None`, `preferred_tone: str | None`, `schooling_level: str | None`
+— populated from Q1 (`[A · Goal]`), Q2 (`[B · Level]`), Q3 (`[C · Language]`), Q4 (`[C · Tone]`), Q5
+(`[D · Schooling]`) via a new `_read_onboarding_headline_answers(user_id)` helper reading
+`onboarding_answers_v2` directly (not `learner_dna`, since these now live only in the raw-answers
+table). `_build_learner_prompt_text` gains one new descriptive line when any of the 5 are present:
 
 ```
-- Stated goal: {stated_goal} | Level: {current_level} | Language preference: {preferred_language} | Tone preference: {preferred_tone}
+- Stated goal: {stated_goal} | Level: {current_level} | Schooling: {schooling_level} | Language preference: {preferred_language} | Tone preference: {preferred_tone}
 ```
 
 This is also an Assessment-API (frozen contract #3) change — same 4-dev PR review requirement as
@@ -354,10 +366,10 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 - **AC5** — `POST /onboarding/submit` router: idempotency (Redis SET NX) and reassessment-bypass logic
   unchanged; a fresh `test_onboarding_endpoint.py` test proves 30 valid answers succeed end-to-end and
   a 409 still fires on a second submission attempt.
-- **AC6** — `LearnerContextDNA` gains `stated_goal`/`current_level`/`preferred_language`/
-  `preferred_tone` (all `str | None`), populated from Q1-Q4 via a new read of
+- **AC6** — `LearnerContextDNA` gains `stated_goal`/`current_level`/`schooling_level`/
+  `preferred_language`/`preferred_tone` (all `str | None`), populated from Q1-Q5 via a new read of
   `onboarding_answers_v2`; `_build_learner_prompt_text` includes them in its output line per Design
-  §6 when present, and omits the line entirely when all 4 are `None` (e.g. user hasn't onboarded via
+  §6 when present, and omits the line entirely when all 5 are `None` (e.g. user hasn't onboarded via
   the new form, or the row doesn't exist). **Also requires 4-developer PR review** (same frozen
   contract as AC3 — can be the same review round).
 - **AC7** — `questions.ts` rewritten: all 30 questions present with exact PDF text/options/format,
@@ -408,8 +420,8 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 4. **Unbounded reads/writes.** The bulk-insert is always exactly 30 rows (bounded by
    `Field(min_length=30, max_length=30)` on the submission schema itself, enforced before any DB call).
    The new `_read_onboarding_headline_answers` read (AC6) is `.eq("user_id", ...).in_("question_id",
-   ["q1","q2","q3","q4"]).limit(4)` — bounded by construction, never more than 4 rows regardless of
-   how many total answers a user has on file.
+   ["q1","q2","q3","q4","q5"]).limit(5)` — bounded by construction, never more than 5 rows regardless
+   of how many total answers a user has on file.
 5. **Inherited caps re-derived.** None inherited — this is new storage, not a modification of an
    existing capacity assumption. The old `onboarding_responses` table's 20-row-per-user shape is not
    reused or extended; the new table's 30-row-per-user shape is sized directly from this story's own
