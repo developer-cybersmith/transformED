@@ -123,6 +123,40 @@ Each of the 5 scores is a single-question measurement (unlike the old 9 dimensio
 multiple questions) — that's a property of the source spec's own design (5 scored questions mapped
 1:1 to 5 named constructs), not a simplification this story is introducing.
 
+**Source verification (added per Dev 3 review):** the PDF gives an exact right/wrong answer for Q16
+and Q19 (binary: correct=full credit, everything else=0), and a *qualitative* ranking only —
+"highest," "second," "also high," "mid," "low" — for Q17, Q18, and Q20, with no exact numbers. The
+table below traces every option to the PDF's own wording and states plainly which scores are PDF-exact
+vs. this story's own quantization of a stated qualitative rank:
+
+| Q | Option (PDF text, Section 4.1) | PDF says | Assigned score | Source |
+|---|---|---|---|---|
+| Q16 | a) ₹10 | "intuitive trap" (wrong) | 0.0 | PDF-exact |
+| Q16 | b) ₹5 | "correct" | 100.0 | PDF-exact |
+| Q16 | c) ₹15 / d) ₹1 / e) ₹2.50 | not addressed | 25.0 | Quantized (uniform partial-credit for an unaddressed wrong option) |
+| Q17 | a) Snap back immediately | "low" | 0.0 | Quantized |
+| Q17 | b) Assume bad day, check later | "highest" | 100.0 | Quantized (PDF states rank, not number) |
+| Q17 | c) Ignore for days | "mid" | 60.0 | Quantized |
+| Q17 | d) Confront aggressively | "low" | 0.0 | Quantized |
+| Q17 | e) Feel hurt, say nothing | "mid" | 60.0 | Quantized |
+| Q18 | a) Keep the cash | "low" | 0.0 | Quantized |
+| Q18 | b) Return, hope for reward | "mid" | 50.0 | Quantized |
+| Q18 | c) Return anonymously | "highest" | 100.0 | Quantized |
+| Q18 | d) Hand to police/authority | "also high" | 85.0 | Quantized |
+| Q18 | e) Post about it to look good | "mid" | 50.0 | Quantized |
+| Q19 | c) 'Unemployment rose from 4.1% to 5.3%' | "correct" (verifiable fact) | 100.0 | PDF-exact |
+| Q19 | a/b/d/e (opinion/appeal-to-consensus statements) | "opinion/appeal fallacies" | 0.0 | PDF-exact |
+| Q20 | a) First Google / b) Wikipedia / e) Ask AI | "dependence layers to train out" | 25.0 | Quantized |
+| Q20 | c) Compare 3+ sources | "second [highest]" | 75.0 | Quantized |
+| Q20 | d) Primary sources/papers | "highest" | 100.0 | Quantized |
+
+Quantization rule used throughout: PDF "highest"/correct → 100, "also high" → 85, "second" → 75,
+"mid" → 60, unaddressed-wrong → 25 (kept below the existing `BADGE_THRESHOLD = 70` so it never earns
+a badge), "low"/fallacy/incorrect → 0. This preserves the PDF's stated ORDER exactly (100 > 85 > 75 >
+60 > 25 > 0 matches "highest > also high > second > mid > low/wrong" in every one of the 5 questions)
+— the only thing this story adds is the specific numbers between those ranks, which the PDF itself
+doesn't give.
+
 **CLAUDE.md compliance:** these 5 scores are computed and stored, but per "No raw IQ/EQ/SQ claims —
 branded as Learner DNA" and "No clinical scores shown to students," they are **never labeled
 literally** in any student-facing surface. A new `PENTA_BADGE_THRESHOLDS` map (mirrors the existing
@@ -311,13 +345,15 @@ failure mode, same recovery path, just a different (cheaper, deterministic) inpu
 level idempotency (`user:{id}:onboarding_done` Redis SET NX) and the reassessment bypass are
 **unchanged** — both are format-agnostic.
 
-**Dev Note, not fixed in this story:** re-reading `process_onboarding()`'s current (pre-this-story)
-insert path confirms it uses a plain `.insert()`, not an upsert, for `onboarding_responses` — meaning
-a reassessment resubmission would already hit the `UNIQUE(user_id, question_id)` constraint and be
-misreported as a 409 "duplicate submission" today, independent of this story. This story's new table
-carries the identical shape/behavior forward unchanged (not a regression introduced here). Flagging
-for a `docs/DEFECT-REGISTER.md` entry (owner: whoever next touches reassessment) rather than silently
-noting it in a comment with no ID, per CLAUDE.md binding rule 5.
+**Registered as D171** (`docs/DEFECT-REGISTER.md`) — not fixed in this story. Re-reading
+`process_onboarding()`'s current (pre-this-story) insert path confirms it uses a plain `.insert()`,
+not an upsert, for `onboarding_responses` — meaning a reassessment resubmission would already hit the
+`UNIQUE(user_id, question_id)` constraint and be misreported as a 409 "duplicate submission" today,
+independent of this story. This story's new table carries the identical shape/behavior forward
+unchanged (not a regression introduced here). Caught in review (Dev 3): the first draft of this note
+said "flagging for whoever touches it next" without an actual register entry — that phrasing is
+itself the silent-comment-with-no-ID pattern CLAUDE.md binding rule 5 prohibits, not an exemption from
+it. D171 is now open with an owner and trigger condition.
 
 ### 6. Wire all 5 Tier A fields into the tutor's existing learner-context prompt path
 
