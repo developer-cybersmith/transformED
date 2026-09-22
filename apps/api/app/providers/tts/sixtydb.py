@@ -85,7 +85,7 @@ def _chunk_text(text: str, max_chars: int = _SIXTYDB_MAX_CHARS_PER_REQUEST) -> l
     in practice than Sarvam's 500-char chunking does).
 
     Deliberately a separate copy, not a shared import from sarvam.py (review
-    finding, accepted not fixed — registered as D171 in DEFECT-REGISTER.md):
+    finding, accepted not fixed — registered as D173 in DEFECT-REGISTER.md):
     this story's stated scope explicitly keeps
     Sarvam's own provider file untouched, and every provider file in
     providers/tts/ is already independently self-contained by this
@@ -179,6 +179,45 @@ def _wrap_pcm_as_wav(pcm_bytes: bytes) -> bytes:
     return output.getvalue()
 
 
+class SixtyDbPartialSpendError(RuntimeError):
+    """Raised instead of the original exception when `_synthesize_inner`
+    fails after at least one chunk already succeeded (and, per 60db's
+    wallet-credit billing, was already paid for).
+
+    Human reviewer finding, PR #240 (Developer-2-max): when a multi-chunk
+    segment has already-succeeded chunks followed by one that exhausts all
+    retries, the ORIGINAL exception just propagated with no record of the
+    real spend on the chunks that DID succeed -- `_synthesize_with_fallback`
+    falls through to Sarvam, which (if it succeeds) is the only cost ever
+    accumulated against the $3.00/lesson ceiling. 60db's real wallet spend
+    for the successful chunks is silently dropped — the opposite-direction
+    gap from D168/D169's double-billing concern. Carries `partial_cost_usd`
+    so the caller can record it before falling through, and `__cause__`
+    (via `raise ... from exc`) preserves the real failure for logging.
+    """
+
+    def __init__(self, message: str, partial_cost_usd: float) -> None:
+        super().__init__(message)
+        self.partial_cost_usd = partial_cost_usd
+
+
+class SixtyDbNotConfiguredError(ValueError):
+    """Raised only for the three config-precondition/caller-bug cases in
+    `synthesize()` below (missing api_key, missing voice_id, empty text).
+
+    A dedicated subclass, not bare `ValueError` (review finding, PR #240):
+    `json.JSONDecodeError` and `binascii.Error` (raised deep inside
+    `_post_chunk` for a genuinely corrupted live response) are BOTH real
+    `ValueError` subclasses. `graph.py`'s fallback chain used to catch bare
+    `ValueError` to log the expected "not configured" case quietly (DEBUG,
+    no traceback) — which meant a live response-corruption bug would ALSO
+    match that branch and get silently mislabeled as "not configured"
+    instead of surfacing as the WARNING+traceback it actually is. Catching
+    this specific subclass instead closes that hole: only the three
+    deliberate raise sites below are ever instances of it.
+    """
+
+
 class SixtyDbTTSProvider(TTSProvider):
     """New primary TTS provider — 60db.ai (Story 232)."""
 
@@ -221,17 +260,21 @@ class SixtyDbTTSProvider(TTSProvider):
         provider outage.
         """
         if not self._api_key:
-            raise ValueError("SixtyDbTTSProvider: settings.sixtydb_api_key is not configured")
+            raise SixtyDbNotConfiguredError(
+                "SixtyDbTTSProvider: settings.sixtydb_api_key is not configured"
+            )
         effective_voice_id = voice_id or self._voice_id_default
         if not effective_voice_id:
-            raise ValueError("SixtyDbTTSProvider: no voice_id configured or passed")
+            raise SixtyDbNotConfiguredError("SixtyDbTTSProvider: no voice_id configured or passed")
         # Review finding: this check previously lived inside the guard_breaker-
         # wrapped body, so an empty-text call recorded a real breaker failure
         # for what is a caller bug, not a provider outage — same class of
         # issue as the api_key/voice_id checks above, fixed the same way.
         chunks = _chunk_text(text)
         if not chunks:
-            raise ValueError("SixtyDbTTSProvider.synthesize() called with empty text")
+            raise SixtyDbNotConfiguredError(
+                "SixtyDbTTSProvider.synthesize() called with empty text"
+            )
 
         return await guard_breaker(
             _PROVIDER_KEY, lambda: self._synthesize_inner(chunks, text, effective_voice_id)
@@ -288,9 +331,10 @@ class SixtyDbTTSProvider(TTSProvider):
                 )
             )
 
+        chars_completed = 0
         try:
             pcm_chunks: list[bytes] = []
-            # D172 (DEFECT-REGISTER.md): this loop has no overall elapsed-time
+            # D174 (DEFECT-REGISTER.md): this loop has no overall elapsed-time
             # budget across all chunks — each `_post_chunk` call has its own
             # 30s timeout + up to 3 retries, but a segment needing many
             # chunks (up to 24 at the 120,000-char lesson-wide narration cap)
@@ -302,13 +346,15 @@ class SixtyDbTTSProvider(TTSProvider):
             async with httpx.AsyncClient(timeout=30.0) as client:
                 for chunk in chunks:
                     pcm_chunks.extend(await self._post_chunk(client, chunk, voice_id))
+                    chars_completed += len(chunk)
 
             combined_pcm = b"".join(pcm_chunks)
-            # Review finding: an odd/misaligned PCM byte length (a truncated
-            # or corrupted chunk) previously passed silently into `wave` —
-            # writeframes does not validate frame alignment, so a corrupted
-            # buffer produced a "valid-looking" but subtly wrong WAV file
-            # with no error. Raise loudly instead.
+            # Defense in depth, not the primary guard: `_post_chunk` now
+            # validates each PIECE's alignment individually (human reviewer
+            # finding, PR #240 — two independently-truncated pieces could
+            # otherwise cancel out here, e.g. 51 + 49 = 100, an exact
+            # multiple of frame_size, even though both pieces are corrupted).
+            # This check stays as a final sanity check on the whole buffer.
             frame_size = _SIXTYDB_CHANNELS * _SIXTYDB_SAMPLE_WIDTH_BYTES
             if len(combined_pcm) % frame_size != 0:
                 raise RuntimeError(
@@ -334,6 +380,21 @@ class SixtyDbTTSProvider(TTSProvider):
             if generation is not None:
                 error_message = str(exc)
                 safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
+            if chars_completed > 0:
+                # Human reviewer finding, PR #240: at least one chunk already
+                # succeeded (and, per wallet-credit billing, was already
+                # paid for) before this failure — that real spend must not
+                # be silently dropped just because the overall call didn't
+                # return audio. Wrap with the partial cost so
+                # _synthesize_with_fallback can record it before falling
+                # through to Sarvam. `from exc` preserves the real failure
+                # for logging (graph.py logs `exc_info=True` on the caught
+                # exception, which follows `__cause__`).
+                raise SixtyDbPartialSpendError(
+                    f"60db synthesis failed after {chars_completed}/{len(text)} chars "
+                    f"already succeeded: {exc}",
+                    partial_cost_usd=chars_completed * COST_PER_CHAR,
+                ) from exc
             raise
 
         finally:
@@ -392,7 +453,24 @@ class SixtyDbTTSProvider(TTSProvider):
             # DROPS non-base64-alphabet characters instead of raising —
             # a corrupted/garbled response would decode to wrong-length
             # garbage PCM rather than fail loudly.
-            pcm_pieces.append(b64decode(audio_b64, validate=True))
+            pcm_piece = b64decode(audio_b64, validate=True)
+            # Human reviewer finding, PR #240 (Developer-2-max, real bug,
+            # fixed): the frame-alignment check used to run ONLY on the
+            # final buffer after concatenating every chunk's PCM. Two
+            # independently truncated pieces whose byte-length parities
+            # happen to cancel out (e.g. 51 + 49 = 100, an exact multiple of
+            # frame_size=2) would pass that check even though BOTH pieces
+            # are individually corrupted. Checking each piece immediately,
+            # before it ever reaches the combined buffer, closes that hole —
+            # no combination of corrupted pieces can cancel out.
+            frame_size = _SIXTYDB_CHANNELS * _SIXTYDB_SAMPLE_WIDTH_BYTES
+            if len(pcm_piece) % frame_size != 0:
+                raise RuntimeError(
+                    f"60db TTS returned {len(pcm_piece)} bytes of PCM for one line, not a "
+                    f"multiple of {frame_size} (channels*sample_width) — refusing to use "
+                    "misaligned/corrupted audio"
+                )
+            pcm_pieces.append(pcm_piece)
 
         if not pcm_pieces:
             # Review finding: a 200 OK with an empty/whitespace-only body

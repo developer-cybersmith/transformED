@@ -561,10 +561,10 @@ amount of code review satisfies, and this PR itself says so.
    explicitly closed using "matches existing pattern in Sarvam" — the exact
    justification binding rule 6 names and forbids. Both are real: this
    story applied CLAUDE.md's rules inconsistently even while applying them
-   correctly elsewhere (D168-D170). **Fix:** registered **D171** (chunker
-   duplication) and **D172** (unbounded chunk count / no per-segment time
+   correctly elsewhere (D168-D170). **Fix:** registered **D173** (chunker
+   duplication) and **D174** (unbounded chunk count / no per-segment time
    budget, cross-referencing Sarvam's identical, worse, previously-unregistered
-   gap), and added inline `D171`/`D172` comment references at both code
+   gap), and added inline `D173`/`D174` comment references at both code
    sites, matching how D168 is already referenced in `COST_PER_CHAR`'s
    comment.
 
@@ -580,6 +580,105 @@ Re-verification after Round 4 fixes: `test_tts_node.py`,
 re-run: **1522 passed, 6 skipped, 86 deselected, zero failures** (up 1 from
 Round 3's 1521 — the new log-level test).
 
+### Merge + Review Round 5 — real human reviewer (Developer-2-max) + a merge
+conflict with `main`, 2026-09-22
+
+PR #240 attracted its first genuinely independent HUMAN review (not an
+agent), and `main` advanced (PR #238, chapter-context form) creating a real
+merge conflict. Both handled in this round.
+
+**Merge:** `origin/main` merged in. Only real conflict: `docs/dev1-tracker.md`
+(a "Last updated" line both branches touched) — resolved by combining both
+notes. `apps/api/app/modules/content/pipeline/graph.py` auto-merged cleanly
+(PR #238's changes and this story's are in disjoint regions of that file).
+**Real ID collision found and fixed:** PR #238's own Story S5-3 independently
+registered **D171**/**D172** for unrelated findings, colliding with this
+story's own D171/D172 (Round 2/3). Per the register's own established
+collision convention (the later-merging entries are renumbered), this
+story's two entries were renumbered to **D173**/**D174** everywhere — the
+register, this story file, and the two inline code comments in `sixtydb.py`.
+**Also found as a merge-quality issue (not a conflict, but silently wrong):**
+this story's own new tests still used the pre-236-rename `narration_scripts`
+override key in `_base_state(...)` calls; the merge correctly combined both
+branches' text with no conflict markers, but story 236's `narration_scripts`
+→ `narration_scripts_final` rename meant those overrides silently stopped
+taking effect (the full 2-segment default state was used instead of the
+intended 1-segment override) — caught immediately by 2 tests failing after
+the merge, not a silent runtime bug, but exactly the "clean merge, wrong
+semantics" trap this codebase's own binding rules warn about. Fixed all 5
+call sites. Also found: the shared `sixtydb_unconfigured_default()` test
+fixture (`conftest.py`) raised bare `ValueError`, which no longer matched
+`graph.py`'s newly-narrowed `except SixtyDbNotConfiguredError:` (see below) —
+fixed to raise the same subclass the real provider raises.
+
+**Human reviewer findings (Developer-2-max, PR #240 comment) — 5 findings,
+all confirmed real:**
+
+1. **CONFIRMED, HIGH, FIXED** — `except ValueError:` in
+   `_synthesize_with_fallback` was too broad: `json.JSONDecodeError` and
+   `binascii.Error` (raised deep inside `_post_chunk` for a genuinely
+   CORRUPTED live response) are both real `ValueError` subclasses, so a live
+   provider-corruption bug would be silently mislabeled "60db not
+   configured" at DEBUG with no traceback — hiding a real, actionable bug
+   behind a factually wrong diagnosis. **Fix:** new `SixtyDbNotConfiguredError`
+   subclass, raised only by the three deliberate config/caller-bug checks in
+   `synthesize()`; `graph.py` now catches that specific subclass instead of
+   bare `ValueError`. New tests:
+   `test_sixtydb_genuine_corruption_still_logs_loudly_not_mislabeled`
+   (graph-level) proves a real `binascii.Error` still logs at WARNING with a
+   traceback and is never mislabeled.
+2. **CONFIRMED, HIGH, FIXED** — when a multi-chunk segment has
+   already-succeeded (already-paid-for, per 60db's wallet-credit billing)
+   chunks followed by a chunk that exhausts all retries, the real spend on
+   the successful chunks was never recorded anywhere — `_synthesize_with_fallback`
+   falls through to Sarvam, whose cost is the only one ever accumulated
+   against the $3.00/lesson ceiling. The opposite-direction gap from
+   D168/D169's double-billing concern (that one over-counts on retry; this
+   one under-counts on permanent failure). **Fix:** new
+   `SixtyDbPartialSpendError(RuntimeError)` carrying `partial_cost_usd`,
+   raised by `_synthesize_inner` when `chars_completed > 0` at the point of
+   failure; `graph.py` catches it specifically, calls `accumulate_cost`
+   with the partial amount, then falls through exactly like any other
+   failure. New tests: `test_sixtydb_partial_spend_raised_when_later_chunk_fails_permanently`
+   (provider-level) and `test_sixtydb_partial_spend_recorded_before_falling_back_to_sarvam`
+   (graph-level, asserts the actual `accumulate_cost` call).
+3. **CONFIRMED, LOW, acknowledged not changed** — branch is named
+   `feature/232-sixtydb-tts-tier`, not the `sprint4/s4-9-{slug}` pattern
+   CLAUDE.md's Sprint Task Branch Rule names. Correct per the rule's letter.
+   Not renamed: matches the identical precedent already set by issue #236's
+   own branch (`feature/236-narration-post-planner-ordering`, also merged
+   under this naming style), and this branch was created before S4-9 existed
+   as a tracker entry — S4-9 was added to `dev1-tracker.md` retroactively to
+   document ad hoc work, not the other way around. Renaming an already-open,
+   already-reviewed PR's branch now would be disruptive for no functional
+   benefit. Flagged in the PR reply rather than silently accepted or acted on.
+4. **CONFIRMED, MEDIUM, FIXED** — the PCM frame-alignment check ran only on
+   the final CONCATENATED buffer, so two independently truncated pieces
+   whose byte-length parities happen to cancel out (51 + 49 = 100, an exact
+   multiple of `frame_size=2`) would pass even though both pieces are
+   individually corrupted. **Fix:** each piece is now validated immediately
+   after decoding, inside `_post_chunk`, before it ever reaches the combined
+   buffer — no combination of corrupted pieces can cancel out anymore. The
+   original combined-buffer check is kept as defense-in-depth, re-commented
+   to reflect it's no longer the primary guard. New test:
+   `test_sixtydb_two_misaligned_pieces_that_cancel_out_still_raise`.
+5. **CONFIRMED, LOW, FIXED** — `tts_node`'s own docstring still said "Sarvam
+   -> Azure -> Browser Speech", not updated when the 60db tier was added,
+   even though `_synthesize_with_fallback`'s docstring immediately above its
+   definition in the same file was correctly updated at the same time.
+   **Fix:** corrected `tts_node`'s docstring; also found and fixed the same
+   staleness in `config.py`'s `# Fallback chain: Sarvam → Azure → Browser
+   Speech` comment and `sarvam_api_key`'s "primary TTS" description (now
+   "fallback #1 TTS (was primary before 60db)") while checking for other
+   instances.
+
+Re-verification after Round 5 fixes: `test_tts_node.py` (23 tests, 2 new),
+`test_tts_providers_sixtydb.py` (19 tests, 2 new), plus the full merged
+suite — all pass. `ruff check`/`ruff format --check` clean; `mypy app`
+(repo-wide) — 4 pre-existing/0 new. Full gating-scope regression re-run
+after the merge: **1557 passed, 6 skipped, 86 deselected, zero failures**
+(up from 1522 pre-merge — includes PR #238's own ~35 new tests).
+
 ### File List
 - `apps/api/app/providers/tts/sixtydb.py` — NEW.
 - `apps/api/app/config.py` — MODIFIED: `sixtydb_*` settings.
@@ -593,9 +692,9 @@ Round 3's 1521 — the new log-level test).
 - `docs/DEFECT-REGISTER.md` — MODIFIED: **D168** entry (expanded in Round 2),
   new **D169** (Sarvam's pre-existing analogous retry/cost bug), new **D170**
   (pre-existing `.env.example`/`config.py` CES weight drift on `main`, found
-  as a Round 3 byproduct), new **D171** (unregistered chunker-duplication
-  finding), new **D172** (unregistered unbounded-chunk-count finding, closed
-  with a CLAUDE.md-forbidden justification) — both D171/D172 from Round 4.
+  as a Round 3 byproduct), new **D173** (unregistered chunker-duplication
+  finding), new **D174** (unregistered unbounded-chunk-count finding, closed
+  with a CLAUDE.md-forbidden justification) — both D173/D174 from Round 4.
 - `apps/api/tests/unit/test_lesson_schema.py` — MODIFIED: new
   `test_narration_audio_provider_accepts_sixtydb` (AC 8).
 - `apps/api/tests/test_env_example_consistency.py` — MODIFIED: new
@@ -606,8 +705,17 @@ Round 3's 1521 — the new log-level test).
 - `apps/api/tests/unit/test_audio_duration_s3_38.py` — MODIFIED: autouse
   fixture (thinned to conftest wrapper).
 - `apps/api/tests/conftest.py` — MODIFIED: shared
-  `sixtydb_unconfigured_default()` context manager.
+  `sixtydb_unconfigured_default()` context manager; now raises
+  `SixtyDbNotConfiguredError` (Round 5 fix).
 - `docs/stories/232-sixtydb-tts-tier.md` — this file.
+
+**Round 5 additions (same files re-touched, plus none new):**
+`sixtydb.py` (+`SixtyDbNotConfiguredError`, +`SixtyDbPartialSpendError`,
+per-piece PCM alignment check in `_post_chunk`), `graph.py` (narrowed
+except clause, partial-spend handling, 2 stale-docstring fixes),
+`config.py` (2 stale fallback-chain comments fixed), `test_tts_node.py`
+(+2 tests), `test_tts_providers_sixtydb.py` (+2 tests), `docs/DEFECT-REGISTER.md`
+(D171/D172 → D173/D174 renumbering, no new entries this round).
 
 ### Change Log
 - 2026-09-21: Story file created (story-first commit), branch
@@ -667,8 +775,24 @@ Round 3's 1521 — the new log-level test).
   the expected "not configured" case), a stale fixture docstring, and 2
   review findings closed without the `D-nn` register ID CLAUDE.md's own
   binding rules 5/6 require (one of them closed using the exact
-  justification rule 6 explicitly forbids). All 3 fixed; **D171**/**D172**
+  justification rule 6 explicitly forbids). All 3 fixed; **D173**/**D174**
   registered. The reviewer's core point — 3 rounds of self-review by the
   same author is not a substitute for the mandated 4-developer sign-off —
   stands and is unchanged: still the one blocker only your team can clear.
   Full gating-scope regression re-run: **1522 passed, 0 failures.**
+- 2026-09-22: Merged `origin/main` (PR #238 landed) — one real conflict
+  (`docs/dev1-tracker.md`, resolved), one real D-number collision found and
+  fixed (**D171/D172 renumbered to D173/D174** — PR #238's own Story S5-3
+  independently claimed D171/D172 first), and one merge-quality bug found
+  and fixed (this story's tests silently stopped overriding narration
+  scripts correctly after story 236's key rename — no conflict marker, just
+  silently wrong, caught by 2 failing tests). A real human reviewer
+  (Developer-2-max) then left 5 findings on the PR — all 5 confirmed real,
+  4 fixed (a `except ValueError` too-broad bug that could mislabel genuine
+  response corruption as "not configured"; a partial-spend-never-recorded
+  cost-integrity gap, the mirror image of D168/D169's over-counting concern;
+  a frame-alignment check that could be defeated by two corrupted pieces
+  cancelling out; two stale docstrings/comments), 1 acknowledged and not
+  changed (branch naming — matches issue #236's own precedent, reasoned in
+  a PR reply rather than silently accepted). Full gating-scope regression
+  after the merge and all fixes: **1557 passed, 0 failures.**

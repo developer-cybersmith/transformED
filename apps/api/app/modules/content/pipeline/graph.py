@@ -4057,7 +4057,11 @@ async def _synthesize_with_fallback(
     from app.providers.tts.sarvam import COST_PER_CHAR as _SARVAM_COST_PER_CHAR
     from app.providers.tts.sarvam import SarvamTTSProvider
     from app.providers.tts.sixtydb import COST_PER_CHAR as _SIXTYDB_COST_PER_CHAR
-    from app.providers.tts.sixtydb import SixtyDbTTSProvider
+    from app.providers.tts.sixtydb import (
+        SixtyDbNotConfiguredError,
+        SixtyDbPartialSpendError,
+        SixtyDbTTSProvider,
+    )
 
     settings = get_settings()
 
@@ -4079,21 +4083,52 @@ async def _synthesize_with_fallback(
             lesson_id,
             segment_id,
         )
-    except ValueError:
-        # Independent PR review finding: "not configured" (missing
-        # sixtydb_api_key/sixtydb_voice_id) is a deliberate, common
-        # deployment state -- SixtyDbTTSProvider.synthesize() raises exactly
-        # this exception type for it (never anything else). Before this fix,
-        # it fell into the except-Exception branch below and logged a
-        # WARNING with a full traceback on EVERY narration segment, in
-        # EVERY deployment that hasn't yet set SIXTYDB_* -- i.e. every
-        # deployment today -- contradicting this PR's own "degrades to
-        # today's exact behavior" framing. Logged quietly instead.
+    except SixtyDbNotConfiguredError:
+        # PR #240 review finding (real bug, fixed): this used to catch bare
+        # `ValueError`, but `json.JSONDecodeError` and `binascii.Error` --
+        # both raised deep inside `_post_chunk` for a genuinely CORRUPTED
+        # live response -- are themselves real ValueError subclasses. That
+        # meant a live provider-corruption bug would ALSO match this branch
+        # and get silently mislabeled as "not configured" at DEBUG (no
+        # traceback), hiding a real, actionable bug. Catching this specific
+        # subclass instead means only the three deliberate config/caller-bug
+        # raise sites in synthesize() ever land here; a corrupted response
+        # now correctly falls through to the `except Exception` branch below
+        # (WARNING + traceback), matching what actually happened.
+        #
+        # "not configured" (missing sixtydb_api_key/sixtydb_voice_id, or a
+        # caller passing empty text) is a deliberate, common deployment
+        # state. Before the ORIGINAL fix (this docstring's prior version),
+        # it fell into the except-Exception branch and logged a WARNING with
+        # a full traceback on EVERY narration segment, in EVERY deployment
+        # that hasn't yet set SIXTYDB_* -- i.e. every deployment today --
+        # contradicting this PR's own "degrades to today's exact behavior"
+        # framing. Logged quietly instead.
         logger.debug(
             "[%s] tts_node: 60db not configured for segment %s, falling back to Sarvam",
             lesson_id,
             segment_id,
         )
+    except SixtyDbPartialSpendError as exc:
+        # Human reviewer finding, PR #240 (Developer-2-max, real bug, fixed):
+        # at least one chunk of this segment already succeeded against 60db
+        # (and, per its wallet-credit billing, was already paid for) before
+        # a later chunk failed permanently. Without this, that real spend
+        # was never recorded anywhere — _synthesize_with_fallback falls
+        # through to Sarvam, whose cost is the only one ever accumulated
+        # against the $3.00/lesson ceiling, silently dropping 60db's actual
+        # wallet spend. Record it now, before falling through.
+        from app.core.cost_tracker import accumulate_cost
+
+        logger.warning(
+            "[%s] tts_node: 60db synthesis failed for segment %s after partial spend "
+            "($%.6f already incurred) — recording it, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+            exc.partial_cost_usd,
+            exc_info=True,
+        )
+        await accumulate_cost(lesson_id, exc.partial_cost_usd)
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] tts_node: 60db synthesis failed for segment %s, falling back to Sarvam",
@@ -4606,7 +4641,11 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
 @traced_node("tts_node")
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
-    Sarvam -> Azure -> Browser Speech fallback chain.
+    60db -> Sarvam -> Azure -> Browser Speech fallback chain (60db tier
+    added by Story 232 — human reviewer finding, PR #240: this docstring had
+    gone stale when that tier was added, even though
+    `_synthesize_with_fallback`'s own docstring immediately above its
+    definition was correctly updated at the same time).
 
     Input is `state["narration_scripts_final"]` ONLY (AC-1; renamed from
     `narration_scripts` by issue #236 — see `narration_stitch_node`, which now

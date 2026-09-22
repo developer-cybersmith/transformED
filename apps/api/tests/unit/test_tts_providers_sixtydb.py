@@ -450,6 +450,52 @@ async def test_sixtydb_retry_on_second_chunk_does_not_resend_first_chunk() -> No
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_sixtydb_partial_spend_raised_when_later_chunk_fails_permanently() -> None:
+    """Human reviewer finding, PR #240 (Developer-2-max, real bug, fixed):
+    when chunk 1 succeeds (real wallet spend) and chunk 2 exhausts all
+    retries, the real cost of chunk 1 must not be silently dropped —
+    `synthesize()` must raise `SixtyDbPartialSpendError` carrying that
+    partial cost, not a bare exception with no cost information at all."""
+    from app.providers.tts.sixtydb import (
+        COST_PER_CHAR,
+        SixtyDbPartialSpendError,
+        SixtyDbTTSProvider,
+    )
+
+    with patch(
+        "app.providers.tts.sixtydb._chunk_text",
+        return_value=["First chunk.", "Second chunk."],
+    ):
+
+        async def _fake_post(*_args: object, **kwargs: object) -> MagicMock:
+            sent_text = kwargs["json"]["text"]  # type: ignore[index]
+            if sent_text == "First chunk.":
+                return _make_sixtydb_response(200, lines=[_top_level_line(_make_raw_pcm(5))])
+            return _make_sixtydb_response(503, raw_text="persistent outage")
+
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = _fake_post
+
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.providers.tts.sixtydb.is_circuit_open", new=AsyncMock(return_value=False)),
+            patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
+            patch("httpx.AsyncClient") as mock_client_cls,
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            _patch_settings(mock_settings)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            provider = SixtyDbTTSProvider()
+            with pytest.raises(SixtyDbPartialSpendError) as exc_info:
+                await provider.synthesize("irrelevant (chunks mocked)", "test-voice")
+
+    expected_partial_cost = len("First chunk.") * COST_PER_CHAR
+    assert exc_info.value.partial_cost_usd == pytest.approx(expected_partial_cost)
+    assert exc_info.value.__cause__ is not None, "original failure must be preserved as __cause__"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_sixtydb_misaligned_pcm_length_raises_runtime_error() -> None:
     """Review finding: a truncated/corrupted PCM buffer whose byte length
     isn't a multiple of channels*sample_width must raise, not silently
@@ -459,6 +505,46 @@ async def test_sixtydb_misaligned_pcm_length_raises_runtime_error() -> None:
     odd_pcm = b"\x00" * 51  # not a multiple of 2 (mono, 16-bit)
     line = {"audioContent": base64.b64encode(odd_pcm).decode("ascii")}
     mock_response = _make_sixtydb_response(200, lines=[line])
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    with (
+        patch("app.config.get_settings") as mock_settings,
+        patch("app.providers.tts.sixtydb.is_circuit_open", new=AsyncMock(return_value=False)),
+        patch("app.core.circuit_breaker.record_failure", new=AsyncMock()),
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        _patch_settings(mock_settings)
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        provider = SixtyDbTTSProvider()
+        with pytest.raises(RuntimeError, match="not a multiple of"):
+            await provider.synthesize("Hello world", "test-voice")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_two_misaligned_pieces_that_cancel_out_still_raise() -> None:
+    """Human reviewer finding, PR #240 (Developer-2-max, real bug, fixed):
+    the misalignment check used to run only on the FINAL concatenated
+    buffer, so two independently truncated pieces whose lengths sum to an
+    exact multiple of frame_size (51 + 49 = 100) passed silently even though
+    BOTH pieces are individually corrupted. Each piece is now validated
+    immediately after decoding, so this can no longer cancel out."""
+    from app.providers.tts.sixtydb import SixtyDbTTSProvider
+
+    piece_a = b"\x00" * 51  # misaligned on its own
+    piece_b = b"\x00" * 49  # misaligned on its own — 51+49=100 is NOT
+    line = {
+        "audioContent": base64.b64encode(piece_a).decode("ascii"),
+    }
+    line2 = {
+        "audioContent": base64.b64encode(piece_b).decode("ascii"),
+    }
+    # Both pieces arrive in the SAME response (multi-line NDJSON), so the
+    # old combined-buffer-only check would have summed them before ever
+    # looking at either piece individually.
+    raw_text = json.dumps(line) + "\n" + json.dumps(line2)
+    mock_response = _make_sixtydb_response(200, raw_text=raw_text)
     mock_client = AsyncMock()
     mock_client.post.return_value = mock_response
 

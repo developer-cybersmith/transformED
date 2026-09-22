@@ -64,8 +64,11 @@ class Settings(BaseSettings):
     )
 
     # ── TTS providers ─────────────────────────────────────────────────────────
-    # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
-    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v3 API key — primary TTS")
+    # Fallback chain: 60db → Sarvam → Azure → Browser Speech (PRD §14; 60db
+    # tier added by Story 232 — see sixtydb_* settings below).
+    sarvam_api_key: str = Field(
+        ..., description="Sarvam AI Bulbul v3 API key — fallback #1 TTS (was primary before 60db)"
+    )
     sarvam_voice_id: str = Field(
         # D67 (historical): "meera" is not a valid Bulbul v2 speaker --
         # confirmed via a real, live call to api.sarvam.ai. "anushka" was

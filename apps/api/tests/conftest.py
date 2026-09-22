@@ -75,7 +75,8 @@ def _stub_openai_package() -> None:
 @contextmanager
 def sixtydb_unconfigured_default():
     """Story 232: default SixtyDbTTSProvider to "not configured" (raises
-    ValueError) wherever `_synthesize_with_fallback`/`tts_node` runs.
+    SixtyDbNotConfiguredError) wherever `_synthesize_with_fallback`/`tts_node`
+    runs.
 
     60db is tried FIRST in the TTS fallback chain, ahead of Sarvam. Every
     pre-Story-232 test that exercises that chain mocks only
@@ -101,8 +102,19 @@ def sixtydb_unconfigured_default():
     exercise the REAL class directly) are unaffected. Each file that needs
     the default wraps this in its own local `@pytest.fixture(autouse=True)`.
     """
+    from app.providers.tts.sixtydb import SixtyDbNotConfiguredError
+
     mock_sixtydb = AsyncMock()
-    mock_sixtydb.synthesize.side_effect = ValueError("sixtydb not configured in test")
+    # PR #240 review finding: must raise the same SixtyDbNotConfiguredError
+    # subclass the real provider raises, not bare ValueError — graph.py's
+    # fallback chain now catches that specific subclass (not bare
+    # ValueError, which also matches genuine json.JSONDecodeError/
+    # binascii.Error corruption) to avoid mislabeling a real bug as
+    # "not configured". A bare ValueError here would silently stop
+    # exercising the "not configured" code path this fixture exists for.
+    mock_sixtydb.synthesize.side_effect = SixtyDbNotConfiguredError(
+        "sixtydb not configured in test"
+    )
     with patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb):
         yield
 
