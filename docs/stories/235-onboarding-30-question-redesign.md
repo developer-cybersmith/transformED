@@ -52,28 +52,88 @@ MCQ, Q21-Q25 one-liner free-text, Q26-Q30 true/false).
    Changing them to carry 3 answer formats instead of 1 MCQ-only shape is exactly the kind of change
    that gate exists for.
 
+## ⚠️ Plan needing all-4-dev sign-off before implementation begins
+
+The first draft of this story proposed dropping Learner DNA computation from onboarding entirely,
+reasoning that the new question taxonomy doesn't map onto the old 9 behavioral dimensions and that
+`dna_fusion.py`'s session-driven EMA update already has a clean cold-start path. **That was wrong** —
+raised in review: the entire point of onboarding is to give lesson generation an initial learner
+profile *before* any session exists to derive one from. Dropping it would mean a brand-new student's
+very first lesson generates with zero personalization, which defeats the purpose of running onboarding
+before lesson generation in the first place.
+
+Revised plan (Design §1 below): the 30 questions are **not** treated as one undifferentiated batch —
+the source spec itself already splits them into 3 tiers by design intent, and this story follows that
+split rather than inventing its own:
+
+| Tier | Questions | Treatment |
+|---|---|---|
+| **Direct preferences** | Q1-5, Q9-15 (Goal, Level, Language, Tone, Schooling, Roast Ceiling, Focus, Time, Vision — all marked "no wrong answer" in the PDF) | Stored raw, read **directly** by personalization consumers (no scoring, no fabrication risk — it's literally what the user said) |
+| **Penta-Intelligence baseline** | Q16-20 (CRT / EQ scenario / SQ dilemma / fact-vs-opinion / research method) — the PDF's own **"(scored)"** section with a real answer key | **Scored at onboarding time** using the spec's answer key → 5 new numeric columns on `learner_dna`, seeding the very first lesson's personalization exactly as onboarding is meant to |
+| **Deferred** | Q21-25 (one-liner, needs an NLP scorer that doesn't exist) and Q26-30 (true/false, explicitly "cross-validated against telemetry in the first 7 sessions" — can't be scored before any sessions exist by definition) | Stored raw only, matches issue #235's own "store, don't build the consumer" instruction — now correctly scoped to just this tier |
+
+This keeps the existing 9 behavioral dimensions (`pattern_recognition`, `logical_deduction`, ...)
+**completely untouched** — they stay session-EMA-driven exactly as today. The 5 new Penta-Intelligence
+scores are additive columns alongside them, not a replacement. **This split, and specifically the
+decision to add 5 new `learner_dna` columns via a new migration, needs explicit sign-off from all 4
+developers before implementation** — flagging here so it's visible in the PR diff, not buried in prose
+a reviewer has to dig for.
+
 ## Design
 
-### 1. Stop computing 9-dimension Learner DNA scores from onboarding answers
+### 1. Three-tier treatment of the 30 answers (see table above)
 
-`process_onboarding()` for the new form does **not** call `_compute_dimension_scores`, does **not**
-call the profile-text LLM, and does **not** write to `learner_dna` at all. Reasoning: `dna_fusion.py`
-(the per-session EMA updater) already treats a missing prior value as neutral 50 on first fusion
-(`_apply_ema`'s `old is None → _NEUTRAL`) — the 9-dimension system already has a fully-defined
-cold-start path that doesn't depend on onboarding having seeded anything. The dimension/badge/
-profile_text system keeps working exactly as before, driven entirely by post-session behavioral
-signals (quiz accuracy, teach-back, events) — onboarding just stops being one of its two current
-inputs. This is not a regression to that system; it removes a weak, unvalidated input (20 self-report
-MCQ answers guessing at 9 behavioral traits) and leaves the stronger one (actual session behavior)
-untouched.
+**Tier A — Direct preferences (Q1-5, Q9-15), stored raw, read directly.** No scoring. Lesson
+generation and the tutor's prompt-injection path (§6 below) read these literally — e.g. "preferred
+tone: witty" goes straight into a prompt as a fact, never through a derived score. Zero fabrication
+risk because nothing is inferred beyond what the user stated.
 
-`OnboardingResult`'s shape (`badge_labels: list[str]`, `profile_text: str`, `session_count: int`) is
-**not changed** — all three fields are non-optional but not "non-empty": the new flow returns
-`badge_labels=[]` and a static, non-LLM-generated `profile_text` (e.g. "Your personalised learning
-profile builds as you complete lessons — check back after your first session."). Confirmed against
-`DNAResultCard.tsx` directly: it already renders correctly with an empty `badgeLabels` array (the
-badge-pill row is conditionally rendered) and any non-empty `profileText` string — **no frontend
-result-screen code change is required**, only a test proving this explicitly (AC10).
+**Tier B — Penta-Intelligence baseline (Q16-20), scored at onboarding time.** Uses the PDF's own
+answer key (Section 4.1, Q16-Q20 "Penta-Intelligence Psychometrics (scored)"):
+
+```python
+# apps/api/app/modules/assessment/onboarding_questions.py
+# Each question's per-option score (0-100), taken directly from the PDF's answer key —
+# not invented here. "b"/"c"/etc. are option letters, 0-indexed to selected_index.
+PENTA_SCORING: dict[str, dict[int, float]] = {
+    "q16": {0: 0.0, 1: 100.0, 2: 25.0, 3: 25.0, 4: 25.0},   # CRT: b) correct=100, a) intuitive trap=0
+    "q17": {0: 0.0, 1: 100.0, 2: 60.0, 3: 0.0, 4: 60.0},     # EQ scenario: b) highest
+    "q18": {0: 0.0, 1: 50.0, 2: 100.0, 3: 85.0, 4: 50.0},    # SQ dilemma: c) highest, d) also high
+    "q19": {0: 0.0, 1: 0.0, 2: 100.0, 3: 0.0, 4: 0.0},       # CTQ fact-vs-opinion: c) correct
+    "q20": {0: 25.0, 1: 25.0, 2: 75.0, 3: 100.0, 4: 25.0},   # RRQ research method: d) highest, c) second
+}
+PENTA_DIMENSIONS: tuple[str, ...] = ("penta_iq", "penta_eq", "penta_sq", "penta_ctq", "penta_rrq")
+PENTA_QUESTION_MAP: dict[str, str] = {  # question_id -> learner_dna column
+    "q16": "penta_iq", "q17": "penta_eq", "q18": "penta_sq", "q19": "penta_ctq", "q20": "penta_rrq",
+}
+```
+
+Each of the 5 scores is a single-question measurement (unlike the old 9 dimensions, which each blend
+multiple questions) — that's a property of the source spec's own design (5 scored questions mapped
+1:1 to 5 named constructs), not a simplification this story is introducing.
+
+**CLAUDE.md compliance:** these 5 scores are computed and stored, but per "No raw IQ/EQ/SQ claims —
+branded as Learner DNA" and "No clinical scores shown to students," they are **never labeled
+literally** in any student-facing surface. A new `PENTA_BADGE_THRESHOLDS` map (mirrors the existing
+`BADGE_THRESHOLDS` pattern exactly) gives each dimension a descriptive badge name for scores ≥ 70:
+`penta_iq` → "Sharp Reasoner", `penta_eq` → "Empathetic Responder", `penta_sq` → "Principled
+Decision-Maker", `penta_ctq` → "Fact-Checker", `penta_rrq` → "Deep Researcher". Raw scores are never
+returned in any API response (same allowlist-filtering discipline `_build_learner_prompt_text` already
+applies to the old 9 dimensions' badges).
+
+**Tier C — Deferred (Q21-30).** Stored raw in `onboarding_answers_v2` only, exactly as the original
+draft proposed. No NLP scoring of one-liners, no telemetry cross-validation of true/false answers —
+both require infrastructure this story doesn't build, matching issue #235's explicit "store the raw
+answers, do not build the consuming system" instruction (now correctly scoped to only the tier that
+instruction was actually describing).
+
+`OnboardingResult`'s frozen shape (`badge_labels: list[str]`, `profile_text: str`,
+`session_count: int`) is **unchanged** — but now genuinely populated from real onboarding-time
+signal again: `badge_labels` = Penta badges (≥ 70 threshold, same convention as the existing system),
+`profile_text` = LLM-generated via the **same existing** `generate_onboarding_profile` call, now given
+Penta badges instead of (today's) behavioral badges that don't exist yet pre-session. The immediate
+post-onboarding "Your Learner DNA" screen (`DNAResultCard.tsx`) requires **no code change** — it
+already renders whatever badges/profile_text it's given.
 
 ### 2. New table for the 30 raw answers, not a reused/altered `onboarding_responses`
 
@@ -101,6 +161,25 @@ rather than inventing a new pattern. `response_text` doubles for MCQ's selected 
 the old table's `selected_text` convention passed through today) and one-liner's free text — never
 both on the same row, enforced by a model validator in the schema, not a DB CHECK (keeps the migration
 simple; the API is the only writer).
+
+**Second migration, same PR:** `learner_dna` gains 5 new nullable columns for the Tier B
+Penta-Intelligence baseline — added via a **new** migration file (the table's original `CREATE TABLE`
+lives in the frozen `20260611000000_initial_schema.sql` and is not touched; this follows the exact
+precedent `20260813000001_dna_session_count_atomic_increment.sql` already set for building on top of
+this same frozen table):
+
+```sql
+ALTER TABLE public.learner_dna
+  ADD COLUMN penta_iq  numeric(5,2) CHECK (penta_iq  >= 0 AND penta_iq  <= 100),
+  ADD COLUMN penta_eq  numeric(5,2) CHECK (penta_eq  >= 0 AND penta_eq  <= 100),
+  ADD COLUMN penta_sq  numeric(5,2) CHECK (penta_sq  >= 0 AND penta_sq  <= 100),
+  ADD COLUMN penta_ctq numeric(5,2) CHECK (penta_ctq >= 0 AND penta_ctq <= 100),
+  ADD COLUMN penta_rrq numeric(5,2) CHECK (penta_rrq >= 0 AND penta_rrq <= 100);
+```
+
+All 5 nullable (a pre-redesign user, if any existed, would have none of these — not applicable here
+since there are no real users yet, but the columns are nullable on principle, matching every other
+optional dimension column in this table).
 
 ### 3. Backend schema changes (`OnboardingAnswer` / `OnboardingDiagnosticSubmission`)
 
@@ -167,15 +246,25 @@ ALL_QUESTION_IDS: frozenset[str] = frozenset(Q_SPEC)
    here applied to client input instead).
 2. Bulk-insert 30 rows into onboarding_answers_v2 (same duplicate -> 409 handling as today, matching
    UNIQUE(user_id, question_id)).
-3. Return OnboardingResult(badge_labels=[], profile_text=_ONBOARDING_COMPLETE_MESSAGE, session_count
-   = existing session_count if a learner_dna row already exists, else 0) -- session_count is read
-   only, never written by this path anymore.
+3. Compute the 5 Penta-Intelligence scores from Q16-20's selected_index via PENTA_SCORING (Design
+   Tier B) -- pure lookup, no LLM call.
+4. Compute Penta badge labels (score >= 70, via PENTA_BADGE_THRESHOLDS).
+5. Generate profile_text via the SAME existing generate_onboarding_profile() GPT-4o-mini call,
+   now given the Penta badges as input (this call's own signature/logic is unchanged -- only what
+   badge_labels are computed from changes).
+6. Upsert learner_dna: the 9 existing behavioral dimension columns are left untouched (NULL if no
+   row exists yet -- dna_fusion.py's session-driven EMA seeds them on the first completed session,
+   exactly as it does today), the 5 NEW penta_* columns get the Step-3 scores, badge_labels = Step-4
+   Penta badges, profile_text = Step-5 text, session_count = existing value if a row already exists
+   (D137 reassessment convention, unchanged) else 0.
+7. Return OnboardingResult(badge_labels=<Penta badges>, profile_text=<LLM text>, session_count=...).
 ```
 
-No LLM call, no `learner_dna` write, no rollback-on-LLM-failure complexity (that entire failure mode
-is deleted along with the LLM call it existed to guard). Router-level idempotency
-(`user:{id}:onboarding_done` Redis SET NX) and the reassessment bypass are **unchanged** — both are
-format-agnostic.
+The existing LLM-call-failure rollback logic (delete the just-inserted rows, return 503) is **kept**,
+now guarding the Step-5 call instead of the old dimension-scoring call it guarded before — same
+failure mode, same recovery path, just a different (cheaper, deterministic) input feeding it. Router-
+level idempotency (`user:{id}:onboarding_done` Redis SET NX) and the reassessment bypass are
+**unchanged** — both are format-agnostic.
 
 **Dev Note, not fixed in this story:** re-reading `process_onboarding()`'s current (pre-this-story)
 insert path confirms it uses a plain `.insert()`, not an upsert, for `onboarding_responses` — meaning
@@ -241,6 +330,9 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 - **AC1** — New migration `supabase/migrations/<ts>_onboarding_answers_v2.sql` creates
   `onboarding_answers_v2` exactly as specified in Design §2, with `UNIQUE(user_id, question_id)`.
   `onboarding_responses` and its own migrations are untouched (frozen).
+- **AC1b** — New migration `supabase/migrations/<ts>_learner_dna_penta_intelligence.sql` adds the 5
+  nullable `penta_*` columns to `learner_dna` per Design §2. The frozen `initial_schema.sql` is not
+  touched; the existing 9 behavioral dimension columns are not altered.
 - **AC2** — `onboarding_questions.py`: `QUESTION_SUBDIMENSION_MAP` and its onboarding-scoring usage
   removed; new `Q_SPEC`/`MCQ_OPTION_COUNTS`/`ALL_QUESTION_IDS` added, matching the PDF's 30 questions
   exactly (20 MCQ across Q1-Q20 with correct per-question option counts including the two 4-option
@@ -251,9 +343,14 @@ section 3, and can land in the **same** PR (same review, same reviewers).
   (frozen Assessment-API contract) — this story's PR is not mergeable on Dev 3 approval alone.
 - **AC4** — `process_onboarding()` rewritten per Design §5: validates all 30 question_ids
   present/known/non-duplicate and format-matched (422 on violation), bulk-inserts into
-  `onboarding_answers_v2`, performs **no** dimension scoring, **no** LLM call, **no** `learner_dna`
-  write. Returns `OnboardingResult(badge_labels=[], profile_text=<static message>, session_count=
-  <read-only, existing or 0>)`.
+  `onboarding_answers_v2`, computes the 5 Penta-Intelligence scores from Q16-20 via `PENTA_SCORING`
+  (no LLM call for this part — pure answer-key lookup), computes Penta badge labels (≥ 70),
+  generates `profile_text` via the existing `generate_onboarding_profile` LLM call seeded with the
+  Penta badges, and upserts `learner_dna` with the 5 new `penta_*` columns + `badge_labels` +
+  `profile_text` — **the existing 9 behavioral dimension columns are never written by this path**
+  (left `NULL` for a first-time user; `dna_fusion.py`'s session-driven EMA seeds them after the first
+  completed session, exactly as today). Returns `OnboardingResult(badge_labels=<Penta badges>,
+  profile_text=<LLM text>, session_count=<existing or 0>)`.
 - **AC5** — `POST /onboarding/submit` router: idempotency (Redis SET NX) and reassessment-bypass logic
   unchanged; a fresh `test_onboarding_endpoint.py` test proves 30 valid answers succeed end-to-end and
   a 409 still fires on a second submission attempt.
@@ -271,19 +368,23 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 - **AC9** — `OnboardingFlow.tsx`: `answers` state and `handleSubmit()` updated per Design §7;
   `STORAGE_KEY` bumped to `onboarding_progress_v2`; `canProceed` correctly distinguishes "unanswered"
   from "answered false" / "answered index 0" for every format.
-- **AC10** — Explicit test (`DNAResultCard.test.tsx` or `OnboardingFlow.test.tsx`) proving the result
-  screen renders correctly with `badge_labels: []` and a non-empty generic `profile_text` — i.e. this
-  story does NOT silently regress the post-onboarding screen into an error or blank state.
+- **AC10** — Explicit test proving `process_onboarding()` produces real, spec-derived Penta badges
+  (e.g. a submission answering Q16-20 with all top-scoring options yields all 5 Penta badges;
+  answering with all lowest-scoring options yields zero) and that `DNAResultCard.tsx` renders them
+  correctly with no component change needed — i.e. this story does NOT regress the post-onboarding
+  screen, and the badges shown are now genuinely earned from Tier B answers, not empty/fabricated.
 - **AC11** — `dna_fusion.py`, `dna_profile.py`, and the session-driven 9-dimension EMA/badge/
-  profile_text pipeline are **untouched** by this story — existing tests for those modules
-  (`test_dna_growth.py`/equivalents) pass unmodified, proving the session-driven path still works
-  identically with no onboarding-time seed.
+  profile_text pipeline are **untouched** by this story — existing tests for those modules pass
+  unmodified, and a new test proves the 9 behavioral columns stay `NULL` immediately after onboarding
+  (only the 5 `penta_*` columns are populated), then get correctly seeded from neutral 50 by
+  `dna_fusion.py` on the student's first completed session, exactly as today.
 - **AC12** — Existing guard/behavior tests referencing onboarding are updated, not deleted, for the
   new 30-question/3-format shape and pass: `test_onboarding_endpoint.py`,
   `test_onboarding_question_ordering.py`, `test_onboarding_content.py`,
-  `test_onboarding_llm_failure.py` (re-scoped: no LLM call exists in this path anymore, so this file's
-  purpose changes to proving the *removal* is intentional and doesn't crash, not proving fallback
-  behavior on LLM failure), `test_learner_dna_real_onboarding.py`, `test_reassessment_blend.py`,
+  `test_onboarding_llm_failure.py` (still relevant — the LLM call for `profile_text` is kept, now
+  seeded by Penta badges instead of behavioral ones; the existing failure/rollback test just needs its
+  fixture data updated to 30 Tier-B-shaped answers), `test_learner_dna_real_onboarding.py`,
+  `test_reassessment_blend.py`,
   `test_reassessment_flag.py`, `test_f2_1_learner_context.py` (AC6's new fields),
   `test_t28_dna_display_contract_dev2.py`, `test_openapi_spec.py`, `test_assessment_stub_contracts.py`.
   Named explicitly per CLAUDE.md's rule that a story touching a guarded module must list that
@@ -348,6 +449,7 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 ## File List
 
 - `supabase/migrations/<new-timestamp>_onboarding_answers_v2.sql` (new)
+- `supabase/migrations/<new-timestamp>_learner_dna_penta_intelligence.sql` (new)
 - `apps/api/app/modules/assessment/onboarding_questions.py`
 - `apps/api/app/modules/assessment/schemas.py`
 - `apps/api/app/modules/assessment/service.py`
