@@ -1,6 +1,6 @@
 """Unit tests for _split_into_caption_lines() — Story 4-29 (BR-6).
 
-Test count: 13
+Test count: 13 original + 5 from the PR #219 post-merge review (Dev 1)
 Coverage:
 - AC6a: Multi-sentence script splits at sentence boundaries and distributes
         duration proportionally by character count (not uniformly).
@@ -11,11 +11,19 @@ Coverage:
 - AC6e: Single sentence within line limit → one entry spanning [0, duration_ms].
 - AC6f: Last line's end_ms equals the input duration_ms exactly (no rounding gap
         even when total doesn't divide evenly across lines).
+- Review follow-up (PR #219, Dev 1, addressed in fix/4-29-br6-caption-lines-review-followup):
+    - `caption_max_chars_per_line` is a real, wired Settings field, not dead getattr config.
+    - A mid-word hard cut (no space within max_chars_per_line) is logged, not silent.
+    - No caption line can ever have start_ms == end_ms (zero-width window), even under
+      pathological proportional-rounding input.
+    - Non-finite duration_ms (NaN/inf) is treated the same as None — [].
 
 All tests are @pytest.mark.unit — pure function, no DB, no Redis, no network.
 """
 
 from __future__ import annotations
+
+import logging
 
 import pytest
 
@@ -196,3 +204,64 @@ def test_output_keys_match_captionline_shape() -> None:
         assert isinstance(item["text"], str)
         assert isinstance(item["start_ms"], int)
         assert isinstance(item["end_ms"], int)
+
+
+# ---------------------------------------------------------------------------
+# PR #219 post-merge review (Dev 1) — 3 confirmed findings addressed in
+# fix/4-29-br6-caption-lines-review-followup
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_non_finite_duration_returns_empty_list() -> None:
+    """Defence-in-depth, matching `_estimate_slide_timestamps`'s identical
+    guard: `_split_into_caption_lines` is a public module symbol other future
+    callers could reach directly. NaN/+-inf must be treated the same as
+    `None` (explicit []), never reach `round()`."""
+    script = "Entropy measures disorder. It only increases over time."
+    for bad_value in (float("nan"), float("inf"), float("-inf")):
+        assert _split_into_caption_lines(script, duration_ms=bad_value) == [], (
+            f"duration_ms={bad_value!r} must return [], not propagate into round()"
+        )
+
+
+@pytest.mark.unit
+def test_mid_word_hard_cut_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    """CLAUDE.md's silent-truncation rule: a fixed budget (max_chars_per_line)
+    meeting variable input (a single token longer than the cap) must not pass
+    silently. Matches `duration_ms_by_id`'s own bad-input normalisation,
+    which logs rather than silently coercing."""
+    overlong_token = "x" * 200  # single unbroken token, no space at all
+    with caplog.at_level(logging.WARNING):
+        result = _split_into_caption_lines(
+            overlong_token,
+            duration_ms=5000,
+            max_chars_per_line=50,
+            lesson_id="lesson-1",
+            segment_id="seg-1",
+        )
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("hard-cutting mid-word" in m for m in messages), messages
+    assert any("lesson-1" in m and "seg-1" in m for m in messages), (
+        "log line should carry the caller-supplied lesson/segment context"
+    )
+    # The cut still happened correctly despite being forced.
+    assert sum(len(line["text"]) for line in result) <= len(overlong_token)
+
+
+@pytest.mark.unit
+def test_no_line_ever_has_zero_width_window() -> None:
+    """Round-4 review (Dev 1): a line whose proportional share rounds down to
+    0ms must never produce start_ms == end_ms — a window a karaoke-highlight
+    consumer keyed on start_ms <= t < end_ms could never activate (the exact
+    feature BR-6 exists to unblock). Pathological input: many short lines
+    against a tiny total duration, where naive proportional rounding would
+    otherwise collapse several lines to zero width."""
+    script = " ".join(f"{chr(65 + i)}." for i in range(20))  # "A. B. C. ... T."
+    result = _split_into_caption_lines(script, duration_ms=1)
+    assert len(result) == 20
+    for line in result:
+        assert line["end_ms"] > line["start_ms"], f"Zero-width window: {line}"
+    # Still contiguous and still ending exactly at (the floored-up) total.
+    for i in range(1, len(result)):
+        assert result[i]["start_ms"] == result[i - 1]["end_ms"]
