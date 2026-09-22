@@ -1,6 +1,6 @@
 ---
 title: "Story 235 — Onboarding Form: Replace 20-Question Form with 30-Question Redesign"
-status: in-progress
+status: review
 owners: [Dev 2]
 sprint: platform-change
 ---
@@ -538,12 +538,12 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 
 ## File List
 
-- `supabase/migrations/<new-timestamp>_onboarding_answers_v2.sql` (new)
-- `supabase/migrations/<new-timestamp>_learner_dna_penta_intelligence.sql` (new)
+- `supabase/migrations/20260922010000_onboarding_answers_v2.sql` (new)
+- `supabase/migrations/20260922020000_learner_dna_penta_intelligence.sql` (new)
 - `apps/api/app/modules/assessment/onboarding_questions.py`
 - `apps/api/app/modules/assessment/schemas.py`
 - `apps/api/app/modules/assessment/service.py`
-- `apps/api/app/modules/assessment/router.py` (verify only — expected no logic change)
+- `apps/api/app/modules/assessment/router.py` (verified only — no logic change needed)
 - `apps/api/tests/test_onboarding_endpoint.py`
 - `apps/api/tests/unit/test_onboarding_question_ordering.py`
 - `apps/api/tests/test_onboarding_content.py`
@@ -553,24 +553,81 @@ section 3, and can land in the **same** PR (same review, same reviewers).
 - `apps/api/tests/test_reassessment_flag.py`
 - `apps/api/tests/unit/test_f2_1_learner_context.py`
 - `apps/api/tests/test_t28_dna_display_contract_dev2.py`
-- `apps/api/tests/test_openapi_spec.py`
+- `apps/api/tests/test_openapi_spec.py` (verified only — no changes needed)
 - `apps/api/tests/test_assessment_stub_contracts.py`
+- `apps/api/tests/test_posthog_events.py` (found during final sweep — module-level `OnboardingAnswer`
+  construction would have failed to import with the old fields)
+- `apps/api/tests/integration/test_migration_chapters_book_scoped.py` (live-Postgres RLS
+  expected-tables guard — added `onboarding_answers_v2`)
 - `apps/web/src/components/onboarding/questions.ts`
 - `apps/web/src/components/onboarding/QuestionCard.tsx`
 - `apps/web/src/components/onboarding/OnboardingFlow.tsx`
-- `apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx` (existing, per earlier session context)
-- New `apps/web/src/__tests__/components/onboarding/QuestionCard.test.tsx` (per-format rendering)
-- `apps/web/src/components/onboarding/DNAResultCard.tsx` (verify only, AC10)
+- `apps/web/src/types/assessment.ts` (`OnboardingAnswer` interface, frontend mirror of the backend
+  frozen-contract change)
+- `apps/web/src/__tests__/components/onboarding/OnboardingFlow.test.tsx`
+- `apps/web/src/__tests__/components/onboarding/QuestionCard.test.tsx` (per-format rendering)
+- `apps/web/src/__tests__/services/onboarding.service.test.ts` (fixture shape)
+- `apps/web/src/__tests__/types/assessment.test.ts` (fixture shape)
+- `apps/web/src/components/onboarding/DNAResultCard.tsx` (verified only, AC10 — no code change needed)
 
 ## Dev Agent Record
 
 ### Completion Notes
 
-_(filled in after implementation)_
+Implemented against the plan approved in PR #239 (all-4-dev sign-off obtained on the frozen-contract
+changes and the `learner_dna` Penta-Intelligence columns).
 
-### File List
+- **Backend**: `onboarding_questions.py` rewritten (`Q_SPEC`/`MCQ_OPTION_COUNTS`/`ALL_QUESTION_IDS`/
+  `PENTA_SCORING`/`PENTA_DIMENSIONS`/`PENTA_QUESTION_MAP`/`PENTA_BADGE_THRESHOLD`/
+  `PENTA_BADGE_THRESHOLDS`), `QUESTION_SUBDIMENSION_MAP` removed. `ALL_NINE_DIMENSIONS`/
+  `BADGE_THRESHOLDS` kept (still used by `dna_fusion.py`'s session-driven path, confirmed untouched).
+- **Schemas**: `OnboardingAnswer`/`OnboardingDiagnosticSubmission` rewritten to the 3-format shape
+  with a `model_validator` enforcing format-appropriate fields; `LearnerContextDNA` gained the 5
+  Tier A fields (`stated_goal`/`current_level`/`schooling_level`/`preferred_language`/
+  `preferred_tone`), all additive with `None` defaults.
+- **Migrations**: `20260922010000_onboarding_answers_v2.sql` (new table, RLS + 4 own-row policies)
+  and `20260922020000_learner_dna_penta_intelligence.sql` (5 nullable `penta_*` columns). Frozen
+  `initial_schema.sql` untouched.
+- **`process_onboarding()` rewrite**: new `_validate_onboarding_responses` guard (422 on any
+  question_id/format/index mismatch, runs before any DB call — verified via a dedicated test that
+  `supabase.table` is never called on an invalid submission), `_compute_penta_scores`/
+  `_compute_penta_badge_labels` replace the old dimension-scoring pair, bulk-insert now targets
+  `onboarding_answers_v2`. The 9 behavioral dimension columns are never written by this path —
+  verified by a dedicated test asserting they're absent from the upsert payload.
+- **Tier A wiring**: new `_read_onboarding_headline_answers` helper reads Q1-Q5 from
+  `onboarding_answers_v2`, wired into `get_learner_context`; `_build_learner_prompt_text` gained a
+  "Stated Preferences" line, omitted entirely when all 5 fields are `None`.
+- **`_VALID_BADGE_LABELS` fix**: now unions `BADGE_THRESHOLDS.values()` and
+  `PENTA_BADGE_THRESHOLDS.values()` — a real gap Dev 4 caught in review (Penta badges would have
+  rendered on `DNAResultCard.tsx` but been silently stripped from the tutor prompt).
+- **Frontend**: `questions.ts` rewritten with all 30 questions sourced verbatim from the PDF
+  (multi-line object format for readability — the Penta option-order guard test's parser was
+  rewritten to be format-agnostic rather than forcing single-line question objects).
+  `QuestionCard.tsx` now branches on `question.format`: MCQ unchanged, True/False reuses
+  `useRovingRadioGroup` with `optionCount: 2` (no second a11y implementation), One-Liner is a
+  1000-char-capped textarea with a live counter. `OnboardingFlow.tsx`'s `answers` state became a
+  discriminated union (`AnswerValue`), `STORAGE_KEY` bumped to `_v2`, `canProceed` correctly
+  distinguishes unanswered from answered-false/answered-index-0 for every format.
+- **Test updates**: 15 existing backend test files updated for the new shape (not deleted); 2 real
+  pre-existing test-mock bugs found and fixed along the way (a `_fetch_existing_dna` mock-sequencing
+  gap in `test_onboarding_llm_failure.py`, and a missing `onboarding_answers_v2` table branch in
+  `test_f2_1_learner_context.py`'s mock that would have crashed every DNA-present test) — both were
+  test-only artifacts, not production bugs. `test_migration_chapters_book_scoped.py`'s live-Postgres
+  RLS-table-set guard updated to include the new table.
+- **Verification**: `ruff`/`mypy` clean on all touched backend files; `tsc --noEmit`/`eslint` clean on
+  all touched frontend files. Full backend suite run (not just touched files, per CLAUDE.md binding
+  rule 1): 2708 passed, 75 failed — all 75 pre-existing and unrelated (missing optional deps
+  `tinytag`/`fpdf`/`jsonschema`, network-dependent LLM smoke tests, tutor-state-machine timing
+  flakiness, and a rate-limiter test-isolation issue in another PR's `chapter_context` tests); zero
+  onboarding/assessment/Learner DNA files appear in the failure list. Full frontend suite: 95 files /
+  1279 tests, zero regressions (baseline was 95/1254; net +25 new tests).
 
-_(see File List above — updated after implementation if scope shifts)_
+### Deviations from the design's illustrative pseudo-code (reasoned, not oversights)
+
+- Design §6's example `_build_learner_prompt_text` line format showed all 5 fields always present;
+  the actual implementation only includes populated fields (joined with `|`), omitting missing ones
+  inline rather than rendering e.g. "Schooling: None" — cleaner output, still satisfies AC6's "omit
+  the line entirely when all 5 are `None`" requirement.
 
 ## References
 

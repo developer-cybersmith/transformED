@@ -22,44 +22,36 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 _MIGRATIONS_DIR = _REPO_ROOT / "supabase" / "migrations"
 
 
-def _make_20_responses() -> list[dict[str, Any]]:
-    """Build 20 valid OnboardingAnswer-compatible dicts."""
+def _make_30_responses() -> list[dict[str, Any]]:
+    """Build 30 valid OnboardingAnswer-compatible dicts (Story 235: q1-q30, 3 formats)."""
+    from app.modules.assessment.onboarding_questions import MCQ_OPTION_COUNTS, Q_SPEC
+
     rows: list[dict[str, Any]] = []
-    for i in range(1, 9):
-        rows.append(
-            {
-                "question_id": f"c{i}",
-                "dimension": "cognitive",
-                "selected_index": 2,
-                "selected_text": "Option 2",
-            }
-        )
-    for i in range(1, 6):
-        rows.append(
-            {
-                "question_id": f"e{i}",
-                "dimension": "emotional",
-                "selected_index": 2,
-                "selected_text": "Option 2",
-            }
-        )
-    for i in range(1, 8):
-        rows.append(
-            {
-                "question_id": f"s{i}",
-                "dimension": "self_direction",
-                "selected_index": 2,
-                "selected_text": "Option 2",
-            }
-        )
+    for qid, fmt in Q_SPEC.items():
+        if fmt == "mcq":
+            index = min(1, MCQ_OPTION_COUNTS[qid] - 1)
+            rows.append(
+                {
+                    "question_id": qid,
+                    "format": "mcq",
+                    "selected_index": index,
+                    "response_text": f"Option {index}",
+                }
+            )
+        elif fmt == "one_liner":
+            rows.append(
+                {"question_id": qid, "format": "one_liner", "response_text": f"Answer for {qid}."}
+            )
+        else:
+            rows.append({"question_id": qid, "format": "true_false", "response_bool": True})
     return rows
 
 
 def _make_onboarding_answers():
-    """Return OnboardingAnswer objects matching _make_20_responses()."""
+    """Return OnboardingAnswer objects matching _make_30_responses()."""
     from app.modules.assessment.schemas import OnboardingAnswer
 
-    return [OnboardingAnswer(**r) for r in _make_20_responses()]
+    return [OnboardingAnswer(**r) for r in _make_30_responses()]
 
 
 def _supabase_insert_ok():
@@ -109,10 +101,11 @@ async def test_onboarding_llm_failure_raises_503_for_router_cleanup():
         ) as mock_gen,
         patch("app.modules.assessment.service.OpenAILLMProvider"),
     ):
-        # to_thread: first call = insert (success), second call = rollback delete
+        # to_thread call order: dna_select (_fetch_existing_dna), insert, rollback delete
         mock_thread.side_effect = [
-            MagicMock(error=None, data=[{}]),  # Step 3 insert succeeds
-            MagicMock(error=None),  # Step 4 rollback delete
+            MagicMock(error=None, data=None),  # dna_select: no prior row
+            MagicMock(error=None, data=[{}]),  # Step 2 insert succeeds
+            MagicMock(error=None),  # Step 5 rollback delete
         ]
         mock_gen.side_effect = Exception("openai: rate limit exceeded")
 
@@ -151,8 +144,9 @@ async def test_onboarding_llm_failure_returns_503():
         patch("app.modules.assessment.service.OpenAILLMProvider"),
     ):
         mock_thread.side_effect = [
-            MagicMock(error=None, data=[{}]),
-            MagicMock(error=None),
+            MagicMock(error=None, data=None),  # dna_select: no prior row
+            MagicMock(error=None, data=[{}]),  # insert succeeds
+            MagicMock(error=None),  # rollback delete
         ]
         mock_gen.side_effect = RuntimeError("timeout")
 

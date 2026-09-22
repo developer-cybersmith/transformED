@@ -805,6 +805,7 @@ def test_no_other_table_policy_changed(pg: object) -> None:  # noqa: ARG001
         "learner_dna",
         "lesson_jobs",
         "lessons",
+        "onboarding_answers_v2",  # Story 235 — new table, RLS enabled in the same migration
         "onboarding_responses",
         "quiz_attempts",
         "session_events",

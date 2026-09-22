@@ -18,12 +18,17 @@ from supabase import Client
 from app.config import Settings, get_settings
 from app.core.db import rows, single_row
 from app.core.posthog_client import capture_event
-from app.modules.assessment.dna_fusion import _apply_ema
 from app.modules.assessment.onboarding_questions import (
     ALL_NINE_DIMENSIONS,
-    BADGE_THRESHOLD,
+    ALL_QUESTION_IDS,
     BADGE_THRESHOLDS,
-    QUESTION_SUBDIMENSION_MAP,
+    MCQ_OPTION_COUNTS,
+    PENTA_BADGE_THRESHOLD,
+    PENTA_BADGE_THRESHOLDS,
+    PENTA_DIMENSIONS,
+    PENTA_QUESTION_MAP,
+    PENTA_SCORING,
+    Q_SPEC,
 )
 from app.modules.assessment.prompts import (
     _DIM_LABELS,
@@ -1600,48 +1605,100 @@ async def get_session_report(
 # ── Onboarding scoring ─────────────────────────────────────────────────────────
 
 
-def _compute_dimension_scores(responses: list[OnboardingAnswer]) -> dict[str, float]:
-    """Compute 9 learner_dna sub-dimension scores from 20 onboarding responses.
+def _validate_onboarding_responses(responses: list[OnboardingAnswer]) -> None:
+    """Story 235: degrade-not-fabricate validation guard for the 30-question submission.
 
-    Formula per question: normalized = (selected_index / 3) * 100
-    Formula per dimension: dim_score = round(mean(normalized_values), 2)
-
-    Returns dict mapping each of the 9 sub-dimension names to a 0-100 float.
+    Raises HTTPException 422 if: any question_id is unknown, any of the 30 is missing,
+    any question_id is duplicated, an answer's format doesn't match Q_SPEC, or an mcq
+    selected_index is out of range for that question's real option count. Applied to
+    client input (mirrors the pattern this codebase already uses for LLM-response
+    validation, here applied the other direction).
     """
-    bucket: dict[str, list[float]] = {dim: [] for dim in ALL_NINE_DIMENSIONS}
+    seen_ids = [ans.question_id for ans in responses]
+    id_set = set(seen_ids)
+
+    if len(seen_ids) != len(id_set):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Duplicate question_id in onboarding submission.",
+        )
+    if id_set != ALL_QUESTION_IDS:
+        missing = ALL_QUESTION_IDS - id_set
+        unknown = id_set - ALL_QUESTION_IDS
+        detail = "Onboarding submission must answer exactly the 30 known questions."
+        if missing:
+            detail += f" Missing: {sorted(missing)}."
+        if unknown:
+            detail += f" Unknown: {sorted(unknown)}."
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
     for ans in responses:
-        subdim = QUESTION_SUBDIMENSION_MAP.get(ans.question_id)
-        if subdim is None:
-            continue
-        # BOUNDED: denominator=3 matches OnboardingAnswer.selected_index le=3
-        normalized = (ans.selected_index / 3) * 100
-        bucket[subdim].append(normalized)
-    return {dim: round(sum(vals) / len(vals), 2) if vals else 0.0 for dim, vals in bucket.items()}
+        expected_format = Q_SPEC[ans.question_id]
+        if ans.format != expected_format:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"{ans.question_id} must be answered as '{expected_format}', "
+                    f"got '{ans.format}'."
+                ),
+            )
+        if ans.format == "mcq":
+            max_index = MCQ_OPTION_COUNTS[ans.question_id]
+            # selected_index is guaranteed non-None by OnboardingAnswer's own
+            # model_validator for format == "mcq".
+            if cast(int, ans.selected_index) >= max_index:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=(
+                        f"{ans.question_id} selected_index out of range "
+                        f"(0-{max_index - 1})."
+                    ),
+                )
 
 
-def _compute_badge_labels(scores: dict[str, float]) -> list[str]:
-    """Return plain-English badge labels for sub-dimensions scoring >= BADGE_THRESHOLD.
+def _compute_penta_scores(responses: list[OnboardingAnswer]) -> dict[str, float]:
+    """Story 235, Tier B: compute the 5 Penta-Intelligence baseline scores from Q16-Q20.
 
-    No IQ/EQ/SQ language — labels come from BADGE_THRESHOLDS (CLAUDE.md rule).
+    Pure answer-key lookup (PENTA_SCORING) — no LLM call, no blending across
+    submissions. Returns a dict mapping each of the 5 new learner_dna penta_* columns
+    to a 0-100 float. Every question in PENTA_QUESTION_MAP is guaranteed present and
+    mcq-shaped by _validate_onboarding_responses, which runs first.
+    """
+    by_id = {ans.question_id: ans for ans in responses}
+    scores: dict[str, float] = {}
+    for question_id, column in PENTA_QUESTION_MAP.items():
+        ans = by_id[question_id]
+        index = cast(int, ans.selected_index)
+        scores[column] = PENTA_SCORING[question_id][index]
+    return scores
+
+
+def _compute_penta_badge_labels(scores: dict[str, float]) -> list[str]:
+    """Return plain-English Penta badge labels for dimensions scoring >= threshold.
+
+    No raw IQ/EQ/SQ language — labels come from PENTA_BADGE_THRESHOLDS (CLAUDE.md rule).
     """
     return [
-        BADGE_THRESHOLDS[dim]
-        for dim in ALL_NINE_DIMENSIONS
-        if scores.get(dim, 0.0) >= BADGE_THRESHOLD
+        PENTA_BADGE_THRESHOLDS[dim]
+        for dim in PENTA_DIMENSIONS
+        if scores.get(dim, 0.0) >= PENTA_BADGE_THRESHOLD
     ]
 
 
 async def _fetch_existing_dna(*, user_id: str, supabase: Client) -> dict[str, Any] | None:
-    """Read the current learner_dna row for *user_id*, or None if absent.
+    """Read the current learner_dna row's session_count for *user_id*, or None if absent.
 
     # BOUNDED: learner_dna has UNIQUE(user_id) — at most 1 row (D137 fix).
     Returns None on any DB error (fallback to first-time write path, per AC7).
+    Story 235: no longer selects the 9 behavioral dimensions — process_onboarding
+    no longer blends against them (that scoring path was removed; see the story's
+    Design §1). Only session_count is needed, to preserve it across a reassessment.
     """
     try:
         resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("learner_dna")
-                .select(", ".join(["user_id", "session_count", *ALL_NINE_DIMENSIONS]))
+                .select("user_id, session_count")
                 .eq("user_id", user_id)
                 .maybe_single()
                 .execute()
@@ -1651,7 +1708,7 @@ async def _fetch_existing_dna(*, user_id: str, supabase: Client) -> dict[str, An
         return row  # None if no row exists
     except Exception as exc:
         logger.warning(
-            "onboarding: could not fetch existing learner_dna for reassessment blend "
+            "onboarding: could not fetch existing learner_dna session_count "
             "(user=%s, error=%s) — falling back to first-time write",
             user_id,
             str(exc).replace("\n", " "),
@@ -1665,59 +1722,70 @@ async def process_onboarding(
     user_id: str,
     supabase: Client,
 ) -> OnboardingResult:
-    """Process 20 onboarding answers: score, upsert learner_dna, generate profile.
+    """Process 30 onboarding answers (Story 235): validate, score Tier B, upsert
+    learner_dna's Penta-Intelligence columns, generate profile.
 
     Steps:
-    1. Compute 9 sub-dimension scores.
-    2. Compute badge labels (scores >= 70).
-    3. Bulk-insert rows to onboarding_responses.
-    4. Generate GPT-4o-mini profile_text (DPDP disclaimer appended).
-    5. Upsert learner_dna with scores, badges, profile_text, and session_count=0.
-    6. Return OnboardingResult (no raw scores to frontend).
+    1. Validate all 30 answers (known ids, no duplicates, format matches Q_SPEC,
+       mcq selected_index in range) — 422 on any violation, before any DB call.
+    2. Bulk-insert 30 rows to onboarding_answers_v2.
+    3. Compute the 5 Penta-Intelligence scores from Q16-Q20 (PENTA_SCORING lookup,
+       no LLM call).
+    4. Compute Penta badge labels (scores >= 70).
+    5. Generate GPT-4o-mini profile_text (DPDP disclaimer appended), seeded by the
+       Penta badges.
+    6. Upsert learner_dna with the 5 penta_* columns, badges, profile_text, and
+       session_count (existing value preserved on reassessment, else 0). The 9
+       existing behavioral dimension columns are never written by this path — they
+       stay NULL until dna_fusion.py's session-driven EMA seeds them after the
+       student's first completed session, exactly as today.
+    7. Return OnboardingResult (no raw scores to frontend).
 
     The supabase client is synchronous; all DB calls are wrapped in asyncio.to_thread.
 
     Args:
-        responses: 20 validated OnboardingAnswer objects.
+        responses: 30 validated OnboardingAnswer objects (3 formats: mcq/one_liner/
+            true_false).
         user_id: User UUID from JWT (for DB writes).
         supabase: Synchronous Supabase client from app.core.db.get_supabase().
 
     Raises:
-        HTTPException 409: onboarding_responses insert hits unique constraint
+        HTTPException 422: a response's question_id/format/selected_index doesn't
+            match the known 30-question spec.
+        HTTPException 409: onboarding_answers_v2 insert hits unique constraint
             (duplicate submission).
         HTTPException 500: Non-duplicate DB insert failure.
     """
-    # D137 fix — detect reassessment path before scoring
+    # Step 1 — validate before any DB call (degrade-not-fabricate guard on client input)
+    _validate_onboarding_responses(responses)
+
+    # D137 convention — preserve session_count across a reassessment resubmission
     existing_dna = await _fetch_existing_dna(user_id=user_id, supabase=supabase)
     existing_session_count = (
         int(existing_dna.get("session_count") or 0) if existing_dna is not None else 0
     )
 
-    # Step 1 — Compute dimension scores
-    scores = _compute_dimension_scores(responses)
+    # Step 3 — compute Penta-Intelligence scores (Tier B, pure answer-key lookup)
+    scores = _compute_penta_scores(responses)
 
-    # D137 fix — blend fresh self-report into existing scores on reassessment
-    if existing_dna is not None:
-        retain = get_settings().dna_ema_retain
-        for dim in ALL_NINE_DIMENSIONS:
-            scores[dim] = _apply_ema(existing_dna.get(dim), scores[dim], retain)
+    # Step 4 — compute Penta badge labels
+    badge_labels = _compute_penta_badge_labels(scores)
 
-    # Step 2 — Compute badge labels
-    badge_labels = _compute_badge_labels(scores)
-
-    # Step 3 — Bulk-insert onboarding_responses rows
+    # Step 2 — bulk-insert onboarding_answers_v2 rows
     rows = [
         {
             "user_id": user_id,
             "question_id": ans.question_id,
-            "response_value": ans.selected_index,
-            "dimension_tag": ans.dimension,
+            "format": ans.format,
+            "selected_index": ans.selected_index,
+            "response_text": ans.response_text,
+            "response_bool": ans.response_bool,
             "response_time_ms": ans.response_time_ms,
         }
         for ans in responses
     ]
     insert_resp = await asyncio.to_thread(
-        lambda: supabase.table("onboarding_responses").insert(rows).execute()
+        lambda: supabase.table("onboarding_answers_v2").insert(rows).execute()
     )
     insert_error = getattr(insert_resp, "error", None)
     if insert_error:
@@ -1729,7 +1797,7 @@ async def process_onboarding(
             )
         safe_err = str(insert_error).replace("\n", " ").replace("\r", " ")
         logger.error(
-            "onboarding_responses insert failed: user=%s error=%s",
+            "onboarding_answers_v2 insert failed: user=%s error=%s",
             user_id,
             safe_err,
         )
@@ -1738,11 +1806,11 @@ async def process_onboarding(
             detail="Failed to persist onboarding responses.",
         )
 
-    # Step 4 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
+    # Step 5 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
     # D71: provider.complete() already has @with_retry(max_attempts=3) for transient 429/5xx.
     # If all retries fail the raw exception must be caught here: convert to HTTPException(503)
     # so the router's `except HTTPException` cleanup fires and releases the Redis lock.
-    # Before raising we also delete the Step 3 rows so a retry can re-insert cleanly.
+    # Before raising we also delete the Step 2 rows so a retry can re-insert cleanly.
     provider = OpenAILLMProvider(lesson_id="onboarding")
     try:
         profile_text = await generate_onboarding_profile(
@@ -1756,7 +1824,7 @@ async def process_onboarding(
             try:
                 del_resp = await asyncio.to_thread(
                     lambda: (
-                        supabase.table("onboarding_responses")
+                        supabase.table("onboarding_answers_v2")
                         .delete()
                         .eq("user_id", user_id)
                         .in_("question_id", _question_ids)
@@ -1767,14 +1835,14 @@ async def process_onboarding(
                 _del_resp_error = getattr(del_resp, "error", None)
                 if _del_resp_error:
                     logger.warning(
-                        "onboarding: rollback of onboarding_responses failed user=%s error=%s — "
+                        "onboarding: rollback of onboarding_answers_v2 failed user=%s error=%s — "
                         "user may need manual cleanup to retry",
                         user_id,
                         str(_del_resp_error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "onboarding: rollback of onboarding_responses failed user=%s "
+                    "onboarding: rollback of onboarding_answers_v2 failed user=%s "
                     "(network/client error) — user may need manual cleanup to retry",
                     user_id,
                 )
@@ -1783,7 +1851,10 @@ async def process_onboarding(
             detail="Profile generation temporarily unavailable — please retry.",
         ) from None
 
-    # Step 5 — Upsert learner_dna (includes profile_text so the DB row is complete)
+    # Step 6 — Upsert learner_dna (penta_* columns + badges/profile_text only — the 9
+    # behavioral dimension columns are deliberately absent from this payload, so a
+    # Supabase upsert leaves them untouched: NULL for a first-time row, or whatever
+    # dna_fusion.py's session-driven EMA already wrote for a returning student).
     # D137: preserve session_count on reassessment; only reset to 0 for first-time onboarding.
     dna_row: dict[str, Any] = {
         "user_id": user_id,
@@ -1803,13 +1874,13 @@ async def process_onboarding(
             user_id,
             safe_upsert_err,
         )
-        # D71 variant: Step 5 failure also orphans Step 3 rows — roll back so retry can re-insert.
+        # D71 variant: Step 6 failure also orphans Step 2 rows — roll back so retry can re-insert.
         _question_ids = [r["question_id"] for r in rows]
         if _question_ids:
             try:
                 del_resp5 = await asyncio.to_thread(
                     lambda: (
-                        supabase.table("onboarding_responses")
+                        supabase.table("onboarding_answers_v2")
                         .delete()
                         .eq("user_id", user_id)
                         .in_("question_id", _question_ids)
@@ -1819,14 +1890,14 @@ async def process_onboarding(
                 _del_resp5_error = getattr(del_resp5, "error", None)
                 if _del_resp5_error:
                     logger.warning(
-                        "onboarding: step5 rollback of onboarding_responses failed "
+                        "onboarding: step6 rollback of onboarding_answers_v2 failed "
                         "user=%s error=%s",
                         user_id,
                         str(_del_resp5_error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "onboarding: step5 rollback of onboarding_responses failed "
+                    "onboarding: step6 rollback of onboarding_answers_v2 failed "
                     "user=%s (network error)",
                     user_id,
                 )
@@ -2155,8 +2226,13 @@ async def seed_personalized_ces_threshold(
 # R1: _dim_band is now a thin None-guard wrapper over prompts._dim_descriptor.
 
 # Valid badge label set for allowlist filtering in _build_learner_prompt_text.
-# BADGE_THRESHOLDS maps dim → badge_label; its values are the only valid labels.
-_VALID_BADGE_LABELS: frozenset[str] = frozenset(BADGE_THRESHOLDS.values())
+# BADGE_THRESHOLDS maps dim → badge_label; PENTA_BADGE_THRESHOLDS (Story 235) maps
+# penta dim → badge_label. Union of both — a Penta badge that isn't unioned in here
+# renders correctly on DNAResultCard.tsx (reads badge_labels unfiltered) but is
+# silently stripped from this exact prompt-injection surface (caught in review, Dev 4).
+_VALID_BADGE_LABELS: frozenset[str] = frozenset(BADGE_THRESHOLDS.values()) | frozenset(
+    PENTA_BADGE_THRESHOLDS.values()
+)
 
 
 def _dim_band(value: float | None) -> str:
@@ -2188,6 +2264,21 @@ def _build_learner_prompt_text(
             f"- Sessions completed: {dna.session_count}"
         )
 
+        # Story 235 (Tier A, Q1-5) — plain onboarding preference facts, read directly.
+        # Omitted entirely when all 5 are None (student hasn't onboarded via the new
+        # form, or the row doesn't exist).
+        prefs = [
+            ("Stated goal", dna.stated_goal),
+            ("Level", dna.current_level),
+            ("Schooling", dna.schooling_level),
+            ("Language preference", dna.preferred_language),
+            ("Tone preference", dna.preferred_tone),
+        ]
+        present = [(label, value) for label, value in prefs if value]
+        if present:
+            pref_str = " | ".join(f"{label}: {value}" for label, value in present)
+            parts.append(f"**Stated Preferences:**\n{pref_str}")
+
     session_lines: list[str] = []
     if session.quiz_accuracy is not None:
         label = _quiz_accuracy_label(session.quiz_accuracy, session.quiz_total)
@@ -2207,6 +2298,51 @@ def _build_learner_prompt_text(
 
     parts.append("Use this context to personalise your explanation for this student.")
     return "\n\n".join(parts)
+
+
+_HEADLINE_QUESTION_IDS: tuple[str, ...] = ("q1", "q2", "q3", "q4", "q5")
+_HEADLINE_FIELD_BY_QUESTION: dict[str, str] = {
+    "q1": "stated_goal",
+    "q2": "current_level",
+    "q3": "preferred_language",
+    "q4": "preferred_tone",
+    "q5": "schooling_level",
+}
+
+
+async def _read_onboarding_headline_answers(*, user_id: str, supabase: Client) -> dict[str, str]:
+    """Story 235 (Tier A): read Q1-Q5's response_text for *user_id* from
+    onboarding_answers_v2, keyed by LearnerContextDNA field name.
+
+    Bounded by construction: exactly 5 question_ids requested, .limit(5). Returns {}
+    on any DB error or if the student hasn't onboarded via the new form (non-fatal —
+    the caller treats a missing field as None, same as any other optional context).
+    """
+    try:
+        resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("onboarding_answers_v2")
+                .select("question_id, response_text")
+                .eq("user_id", user_id)
+                .in_("question_id", list(_HEADLINE_QUESTION_IDS))
+                .limit(5)
+                .execute()
+            )
+        )
+        found = rows(resp)
+    except Exception as exc:
+        logger.warning(
+            "onboarding: could not read headline answers for tutor context "
+            "(user=%s, error=%s)",
+            user_id,
+            str(exc).replace("\n", " "),
+        )
+        return {}
+    return {
+        _HEADLINE_FIELD_BY_QUESTION[r["question_id"]]: r["response_text"]
+        for r in found
+        if r.get("question_id") in _HEADLINE_FIELD_BY_QUESTION and r.get("response_text")
+    }
 
 
 async def get_learner_context(
@@ -2262,11 +2398,17 @@ async def get_learner_context(
     learner_dna: LearnerContextDNA | None = None
     if dna_row is not None:
         dim_labels = {dim: _dim_band(dna_row.get(dim)) for dim in ALL_NINE_DIMENSIONS}
+        headline = await _read_onboarding_headline_answers(user_id=user_id, supabase=supabase)
         learner_dna = LearnerContextDNA(
             badge_labels=dna_row.get("badge_labels") or [],
             profile_text=dna_row.get("profile_text"),
             session_count=int(dna_row.get("session_count") or 0),
             dimension_labels=dim_labels,
+            stated_goal=headline.get("stated_goal"),
+            current_level=headline.get("current_level"),
+            schooling_level=headline.get("schooling_level"),
+            preferred_language=headline.get("preferred_language"),
+            preferred_tone=headline.get("preferred_tone"),
         )
 
     # Step 3 — quiz attempts this session.

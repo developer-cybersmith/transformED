@@ -1,11 +1,11 @@
 """
-T18 Demo — Learner DNA profile generation with real onboarding data.
+T18 Demo — Learner DNA profile generation with real onboarding data (Story 235 rewrite).
 
-Validates the full onboarding pipeline with real question_ids (c1-c8, e1-e5, s1-s7):
-  QUESTION_SUBDIMENSION_MAP → 9 sub-dimension scores → badge labels →
-  generate_onboarding_profile → learner_dna upsert → OnboardingResult.
+Validates the full onboarding pipeline with real question_ids (q1-q30, 3 formats):
+  _validate_onboarding_responses -> _compute_penta_scores (Q16-Q20 answer-key lookup)
+  -> _compute_penta_badge_labels -> generate_onboarding_profile -> learner_dna upsert
+  -> OnboardingResult.
 
-9 tests: AC1 through AC9 (docs/stories/demo-t18-learner-dna-real-onboarding-data.md).
 All tests are @pytest.mark.unit — no real DB or LLM connections.
 asyncio_mode = "auto" (pyproject.toml) — no @pytest.mark.asyncio needed.
 """
@@ -19,7 +19,10 @@ import pytest
 
 from app.modules.assessment.onboarding_questions import (
     ALL_NINE_DIMENSIONS,
-    BADGE_THRESHOLD,
+    MCQ_OPTION_COUNTS,
+    PENTA_BADGE_THRESHOLD,
+    PENTA_DIMENSIONS,
+    Q_SPEC,
 )
 from app.modules.assessment.schemas import OnboardingAnswer
 
@@ -27,81 +30,91 @@ from app.modules.assessment.schemas import OnboardingAnswer
 
 _USER_UUID = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 
+# Q16-Q20 index choices producing the highest Penta score for every dimension —
+# mirrors PENTA_SCORING in onboarding_questions.py.
+_PENTA_TOP_INDEX = {"q16": 1, "q17": 1, "q18": 2, "q19": 2, "q20": 3}
+_PENTA_LOW_INDEX = {"q16": 0, "q17": 0, "q18": 0, "q19": 0, "q20": 0}
+
 
 # ── Fixture helpers ───────────────────────────────────────────────────────────
 
 
-def _build_real_onboarding_responses(selected_index: int = 3) -> list[OnboardingAnswer]:
-    """20 OnboardingAnswer objects with real question_ids (c1-c8, e1-e5, s1-s7)."""
-    questions = [
-        ("c1", "cognitive"),
-        ("c2", "cognitive"),
-        ("c3", "cognitive"),
-        ("c4", "cognitive"),
-        ("c5", "cognitive"),
-        ("c6", "cognitive"),
-        ("c7", "cognitive"),
-        ("c8", "cognitive"),
-        ("e1", "emotional"),
-        ("e2", "emotional"),
-        ("e3", "emotional"),
-        ("e4", "emotional"),
-        ("e5", "emotional"),
-        ("s1", "self_direction"),
-        ("s2", "self_direction"),
-        ("s3", "self_direction"),
-        ("s4", "self_direction"),
-        ("s5", "self_direction"),
-        ("s6", "self_direction"),
-        ("s7", "self_direction"),
-    ]
-    return [
-        OnboardingAnswer(
-            question_id=qid,
-            dimension=dim,
-            selected_index=selected_index,
-            selected_text="Option C",
-            response_time_ms=1500,
-        )
-        for qid, dim in questions
-    ]
+def _build_real_onboarding_responses(
+    penta_indices: dict[str, int] | None = None,
+) -> list[OnboardingAnswer]:
+    """30 OnboardingAnswer objects with real question_ids (q1-q30, 3 formats)."""
+    penta_indices = penta_indices or {}
+    answers: list[OnboardingAnswer] = []
+    for qid, fmt in Q_SPEC.items():
+        if fmt == "mcq":
+            index = penta_indices.get(qid, min(1, MCQ_OPTION_COUNTS[qid] - 1))
+            answers.append(
+                OnboardingAnswer(
+                    question_id=qid,
+                    format="mcq",
+                    selected_index=index,
+                    response_text="Option C",
+                    response_time_ms=1500,
+                )
+            )
+        elif fmt == "one_liner":
+            answers.append(
+                OnboardingAnswer(
+                    question_id=qid,
+                    format="one_liner",
+                    response_text=f"Honest answer for {qid}.",
+                    response_time_ms=1500,
+                )
+            )
+        else:
+            answers.append(
+                OnboardingAnswer(
+                    question_id=qid, format="true_false", response_bool=True, response_time_ms=1500
+                )
+            )
+    return answers
 
 
 def _build_supabase_process_onboarding(
     capture_upsert: dict[str, Any] | None = None,
 ) -> MagicMock:
-    """Supabase mock for process_onboarding — 2-call order:
-    1. onboarding_responses (insert)
-    2. learner_dna (upsert)
+    """Supabase mock for process_onboarding — 3-call order:
+    1. learner_dna (select — _fetch_existing_dna)
+    2. onboarding_answers_v2 (insert)
+    3. learner_dna (upsert)
     """
     mock = MagicMock()
 
-    # Call 1 — onboarding_responses insert
+    dna_select_table = MagicMock()
+    dna_select_resp = MagicMock()
+    dna_select_resp.data = None
+    dna_select_chain = dna_select_table.select.return_value.eq.return_value.maybe_single.return_value
+    dna_select_chain.execute.return_value = dna_select_resp
+
     insert_table = MagicMock()
     insert_resp = MagicMock()
     insert_resp.error = None
+    insert_resp.data = []
     insert_table.insert.return_value.execute.return_value = insert_resp
 
-    # Call 2 — learner_dna upsert
-    dna_table = MagicMock()
+    upsert_table = MagicMock()
     if capture_upsert is not None:
 
         def _spy_upsert(data: dict[str, Any], **kwargs: Any) -> MagicMock:
             capture_upsert.update(data)
             m = MagicMock()
             m.execute.return_value.error = None
+            m.execute.return_value.data = [{"user_id": _USER_UUID}]
             return m
 
-        dna_table.upsert.side_effect = _spy_upsert
+        upsert_table.upsert.side_effect = _spy_upsert
     else:
         upsert_resp = MagicMock()
         upsert_resp.error = None
-        dna_table.upsert.return_value.execute.return_value = upsert_resp
+        upsert_resp.data = [{"user_id": _USER_UUID}]
+        upsert_table.upsert.return_value.execute.return_value = upsert_resp
 
-    mock.table.side_effect = lambda name: {
-        "onboarding_responses": insert_table,
-        "learner_dna": dna_table,
-    }[name]
+    mock.table.side_effect = [dna_select_table, insert_table, upsert_table]
     return mock
 
 
@@ -110,11 +123,6 @@ def _build_supabase_process_onboarding(
 
 @pytest.fixture(autouse=True)
 def _mock_analytics_consent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Suppress analytics-consent DB call for all T18 tests.
-
-    process_onboarding() calls get_analytics_consent() after the upsert; patching it
-    here keeps supabase.table.side_effect at exactly 2 entries (insert + upsert).
-    """
     monkeypatch.setattr(
         "app.modules.assessment.service.get_analytics_consent",
         AsyncMock(return_value=False),
@@ -123,17 +131,11 @@ def _mock_analytics_consent(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _mock_capture_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Suppress PostHog capture_event for all T18 tests."""
-    monkeypatch.setattr(
-        "app.modules.assessment.service.capture_event",
-        MagicMock(),
-    )
+    monkeypatch.setattr("app.modules.assessment.service.capture_event", MagicMock())
 
 
 @pytest.fixture
 def mock_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Shim asyncio.to_thread to run synchronously for MagicMock chain compatibility."""
-
     async def _sync_shim(func: Any, *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)
 
@@ -141,83 +143,65 @@ def mock_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AC1 — _compute_dimension_scores maps real question_ids to correct sub-dimensions
+# AC1 — _compute_penta_scores maps real Q16-Q20 answers via the PDF answer key
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
-def test_compute_dimension_scores_maps_real_question_ids() -> None:
-    """AC1: c1,c5,c8→pattern_recognition (100.0); c2,c3,c7→logical_deduction (100.0);
-    e2 alone→persistence (100.0); all 9 sub-dimensions present."""
-    from app.modules.assessment.service import _compute_dimension_scores
+def test_compute_penta_scores_maps_real_question_ids() -> None:
+    """AC1: top-scoring indices for Q16-Q20 -> all 5 penta_* keys score 100.0."""
+    from app.modules.assessment.service import _compute_penta_scores
 
-    responses = _build_real_onboarding_responses(selected_index=3)
-    scores = _compute_dimension_scores(responses)
+    responses = _build_real_onboarding_responses(penta_indices=_PENTA_TOP_INDEX)
+    scores = _compute_penta_scores(responses)
 
-    assert len(scores) == 9, f"Expected 9 sub-dimensions, got {len(scores)}: {list(scores.keys())}"
-    assert scores["pattern_recognition"] == 100.0, (
-        f"c1,c5,c8 at index 3 → (3/3)×100=100.0 each → mean=100.0; "
-        f"got {scores['pattern_recognition']}"
-    )
-    assert scores["logical_deduction"] == 100.0, (
-        f"c2,c3,c7 at index 3 → mean=100.0; got {scores['logical_deduction']}"
-    )
-    assert scores["persistence"] == 100.0, (
-        f"e2 at index 3 is the only persistence question → mean=100.0; got {scores['persistence']}"
-    )
-    for dim in ALL_NINE_DIMENSIONS:
-        assert dim in scores, f"Missing sub-dimension key: {dim!r}"
-    # P8: all 9 dimension values must equal 100.0 when selected_index=3
-    for dim, score in scores.items():
-        assert score == 100.0, f"Expected 100.0 for {dim!r} with all selected_index=3; got {score}"
-    # P5: validate [0, 100] range to guard against denominator regression
-    assert all(0.0 <= v <= 100.0 for v in scores.values()), (
-        f"Score out of valid range [0, 100]: {scores}"
-    )
+    assert len(scores) == 5, f"Expected 5 penta dimensions, got {len(scores)}: {list(scores)}"
+    for dim in PENTA_DIMENSIONS:
+        assert dim in scores, f"Missing penta dimension key: {dim!r}"
+        assert scores[dim] == pytest.approx(100.0), f"{dim} should be 100.0, got {scores[dim]}"
+    assert all(0.0 <= v <= 100.0 for v in scores.values())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AC2 — _compute_badge_labels returns plain-English labels, no IQ/EQ/SQ
+# AC2 — _compute_penta_badge_labels returns plain-English labels, no IQ/EQ/SQ
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
-def test_compute_badge_labels_plain_english_no_iqeqsq() -> None:
-    """AC2: all 9 dims at 100.0 → badges awarded; 'Pattern Thinker' present;
-    no label contains 'IQ', 'EQ', or 'SQ'."""
-    from app.modules.assessment.service import _compute_badge_labels, _compute_dimension_scores
+def test_compute_penta_badge_labels_plain_english_no_iqeqsq() -> None:
+    """AC2: all 5 penta scores at 100.0 -> all 5 badges awarded; no label contains
+    'IQ', 'EQ', or 'SQ'."""
+    from app.modules.assessment.service import _compute_penta_badge_labels, _compute_penta_scores
 
-    responses = _build_real_onboarding_responses(selected_index=3)
-    scores = _compute_dimension_scores(responses)
-    labels = _compute_badge_labels(scores)
+    responses = _build_real_onboarding_responses(penta_indices=_PENTA_TOP_INDEX)
+    scores = _compute_penta_scores(responses)
+    labels = _compute_penta_badge_labels(scores)
 
-    assert len(labels) > 0, (
-        "Expected badges when all dimension scores are 100.0 "
-        f"(threshold={BADGE_THRESHOLD}), got empty list"
+    assert len(labels) == 5, (
+        f"Expected 5 badges when all penta scores are 100.0 "
+        f"(threshold={PENTA_BADGE_THRESHOLD}), got: {labels}"
     )
-    assert "Pattern Thinker" in labels, (
-        f"'Pattern Thinker' missing from badge_labels: {labels}. "
-        "Check BADGE_THRESHOLDS['pattern_recognition']."
-    )
+    assert "Sharp Reasoner" in labels, f"'Sharp Reasoner' missing from badge_labels: {labels}"
     for label in labels:
-        assert "IQ" not in label, f"Badge label contains 'IQ': {label!r}"
-        assert "EQ" not in label, f"Badge label contains 'EQ': {label!r}"
-        assert "SQ" not in label, f"Badge label contains 'SQ': {label!r}"
+        assert "IQ" not in label
+        assert "EQ" not in label
+        assert "SQ" not in label
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AC3 — process_onboarding upsert row contains all 9 dimension scores + profile_text
+# AC3 — process_onboarding upsert row contains all 5 penta_* scores + profile_text,
+# and NOT the 9 behavioral dimensions
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
-async def test_process_onboarding_upsert_row_contains_all_nine_dimensions(
+async def test_process_onboarding_upsert_row_contains_penta_not_behavioral(
     mock_to_thread: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC3: spy on learner_dna upsert; all 9 sub-dimension keys + profile_text must be
-    present in the upserted row. Mock returns a plain string (no DPDP_DISCLAIMER) to
-    prove the service stores exactly what generate_onboarding_profile returns (non-circular)."""
+    """AC3/AC4: spy on learner_dna upsert; all 5 penta_* keys + profile_text must be
+    present, and the 9 behavioral dimension keys must be ABSENT (they're seeded by
+    dna_fusion.py's session-driven path, not onboarding)."""
     from app.modules.assessment.service import process_onboarding
 
     captured_upsert: dict[str, Any] = {}
@@ -226,48 +210,35 @@ async def test_process_onboarding_upsert_row_contains_all_nine_dimensions(
     monkeypatch.setattr("app.modules.assessment.service.OpenAILLMProvider", MagicMock())
     monkeypatch.setattr(
         "app.modules.assessment.service.generate_onboarding_profile",
-        AsyncMock(return_value="You are a Pattern Thinker."),
+        AsyncMock(return_value="You are a Sharp Reasoner."),
     )
 
-    responses = _build_real_onboarding_responses(selected_index=3)
-    result = await process_onboarding(
-        responses=responses,
-        user_id=_USER_UUID,
-        supabase=supabase,
-    )
+    responses = _build_real_onboarding_responses(penta_indices=_PENTA_TOP_INDEX)
+    result = await process_onboarding(responses=responses, user_id=_USER_UUID, supabase=supabase)
 
     assert result is not None
+    for dim in PENTA_DIMENSIONS:
+        assert dim in captured_upsert, f"'{dim}' missing from learner_dna upsert row."
     for dim in ALL_NINE_DIMENSIONS:
-        assert dim in captured_upsert, (
-            f"Sub-dimension '{dim}' missing from learner_dna upsert row. "
-            f"Keys present: {list(captured_upsert.keys())}"
+        assert dim not in captured_upsert, (
+            f"Behavioral dimension '{dim}' must NOT be in the onboarding upsert row."
         )
-    assert "profile_text" in captured_upsert, "profile_text missing from learner_dna upsert row"
-    assert captured_upsert["profile_text"] == "You are a Pattern Thinker.", (
-        "profile_text in upsert row does not match generate_onboarding_profile return value. "
-        f"Got: {captured_upsert.get('profile_text')!r}"
-    )
-    # P7: user_id must be stored in the upsert row
-    assert captured_upsert.get("user_id") == _USER_UUID, (
-        f"user_id missing or wrong in learner_dna upsert row; "
-        f"got: {captured_upsert.get('user_id')!r}"
-    )
+    assert "profile_text" in captured_upsert
+    assert captured_upsert["profile_text"] == "You are a Sharp Reasoner."
+    assert captured_upsert.get("user_id") == _USER_UUID
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AC4 — DPDP_DISCLAIMER uses HIE, not TransformED (D72 regression guard)
+# AC4 — DPDP_DISCLAIMER uses HIE, not TransformED (D72 regression guard, unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
 def test_dpdp_disclaimer_uses_hie_not_transformed() -> None:
-    """AC4: D72 guard — DPDP_DISCLAIMER must contain 'HIE', not 'TransformED'."""
     from app.modules.assessment.prompts import DPDP_DISCLAIMER
 
-    assert "TransformED" not in DPDP_DISCLAIMER, (
-        "D72 regression: DPDP_DISCLAIMER still contains 'TransformED'. Replace with 'HIE'."
-    )
-    assert "HIE" in DPDP_DISCLAIMER, "DPDP_DISCLAIMER does not contain the brand name 'HIE'."
+    assert "TransformED" not in DPDP_DISCLAIMER
+    assert "HIE" in DPDP_DISCLAIMER
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -281,8 +252,7 @@ async def test_generate_onboarding_profile_receives_nonempty_badge_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """AC5: generate_onboarding_profile is called with len(badge_labels) >= 1 when all
-    9 dimension scores are >= BADGE_THRESHOLD (70.0). Prevents silent scoring error
-    where no badges are awarded despite high scores."""
+    5 penta scores are >= PENTA_BADGE_THRESHOLD."""
     from app.modules.assessment.prompts import DPDP_DISCLAIMER
     from app.modules.assessment.service import process_onboarding
 
@@ -299,24 +269,13 @@ async def test_generate_onboarding_profile_receives_nonempty_badge_labels(
     monkeypatch.setattr("app.modules.assessment.service.OpenAILLMProvider", MagicMock())
     monkeypatch.setattr("app.modules.assessment.service.generate_onboarding_profile", _spy_generate)
 
-    responses = _build_real_onboarding_responses(selected_index=3)
+    responses = _build_real_onboarding_responses(penta_indices=_PENTA_TOP_INDEX)
     await process_onboarding(responses=responses, user_id=_USER_UUID, supabase=supabase)
 
-    assert "badge_labels" in captured, "generate_onboarding_profile was never called"
-    assert len(captured["badge_labels"]) >= 1, (
-        f"generate_onboarding_profile received empty badge_labels when all scores=100.0. "
-        f"Check _compute_badge_labels threshold ({BADGE_THRESHOLD}). "
-        f"Got: {captured['badge_labels']!r}"
-    )
-    # P9: verify actual badge content, not just length
-    assert "Pattern Thinker" in captured["badge_labels"], (
-        f"'Pattern Thinker' not in badge_labels sent to generate_onboarding_profile: "
-        f"{captured['badge_labels']!r}"
-    )
-    # P11: guard against double-call
-    assert call_count == 1, (
-        f"generate_onboarding_profile should be called exactly once; called {call_count} times"
-    )
+    assert "badge_labels" in captured
+    assert len(captured["badge_labels"]) >= 1
+    assert "Sharp Reasoner" in captured["badge_labels"]
+    assert call_count == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -329,9 +288,7 @@ async def test_onboarding_result_has_no_raw_dimension_scores(
     mock_to_thread: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """AC6: OnboardingResult has exactly {badge_labels, profile_text, session_count}.
-    Raw dimension score attributes (pattern_recognition, etc.) must not be present
-    on the returned object — only descriptive output reaches the frontend."""
+    """AC6: OnboardingResult has exactly {badge_labels, profile_text, session_count}."""
     from app.modules.assessment.prompts import DPDP_DISCLAIMER
     from app.modules.assessment.service import process_onboarding
 
@@ -342,113 +299,88 @@ async def test_onboarding_result_has_no_raw_dimension_scores(
         AsyncMock(return_value=f"Profile.\n\n{DPDP_DISCLAIMER}"),
     )
 
-    responses = _build_real_onboarding_responses(selected_index=3)
+    responses = _build_real_onboarding_responses(penta_indices=_PENTA_TOP_INDEX)
     result = await process_onboarding(responses=responses, user_id=_USER_UUID, supabase=supabase)
 
-    assert hasattr(result, "badge_labels"), "OnboardingResult missing badge_labels"
-    assert hasattr(result, "profile_text"), "OnboardingResult missing profile_text"
-    assert hasattr(result, "session_count"), "OnboardingResult missing session_count"
-    for dim in ALL_NINE_DIMENSIONS:
-        assert not hasattr(result, dim), (
-            f"OnboardingResult exposes raw dimension score '{dim}' to the frontend. "
-            "Only badge_labels, profile_text, session_count are allowed (CLAUDE.md)."
-        )
-    # P2: exhaustive field check — no undeclared 4th field (e.g. raw_scores) may leak
+    assert hasattr(result, "badge_labels")
+    assert hasattr(result, "profile_text")
+    assert hasattr(result, "session_count")
+    for dim in [*ALL_NINE_DIMENSIONS, *PENTA_DIMENSIONS]:
+        assert not hasattr(result, dim), f"OnboardingResult exposes raw score '{dim}'"
     expected_fields = {"badge_labels", "profile_text", "session_count"}
-    assert set(type(result).model_fields.keys()) == expected_fields, (
-        f"OnboardingResult has unexpected fields: {set(type(result).model_fields.keys())}. "
-        "Only badge_labels, profile_text, session_count are allowed."
-    )
+    assert set(type(result).model_fields.keys()) == expected_fields
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AC7 — _compute_dimension_scores returns 0.0 for dimension with no matching responses
+# AC7 — a low-scoring Penta answer among otherwise-high ones only misses its own badge
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
-def test_compute_dimension_scores_missing_dimension_returns_zero() -> None:
-    """AC7: removing e2 (the only persistence question) → persistence=0.0.
-    All other dimensions remain unaffected."""
-    from app.modules.assessment.service import _compute_dimension_scores
+def test_compute_penta_scores_one_low_answer_only_affects_its_own_dimension() -> None:
+    """AC7: lowering only Q19 (CTQ) -> only penta_ctq drops; the other 4 stay at 100.0."""
+    from app.modules.assessment.service import _compute_penta_scores
 
-    responses = [r for r in _build_real_onboarding_responses() if r.question_id != "e2"]
-    assert len(responses) == 19, "Expected 19 responses after removing e2"
+    indices = {**_PENTA_TOP_INDEX, "q19": 0}  # q19 index 0 scores 0.0
+    responses = _build_real_onboarding_responses(penta_indices=indices)
+    scores = _compute_penta_scores(responses)
 
-    scores = _compute_dimension_scores(responses)
-
-    assert "persistence" in scores, (
-        "persistence key must still be present (from ALL_NINE_DIMENSIONS)"
-    )
-    assert scores["persistence"] == 0.0, (
-        f"persistence should be 0.0 when e2 is absent, got {scores['persistence']}"
-    )
-    # P3: verify all 8 non-persistence dims are unaffected by removing e2
-    for dim, score in scores.items():
-        if dim != "persistence":
-            assert score == 100.0, f"Removing e2 should not affect {dim!r}; got {score}"
+    assert scores["penta_ctq"] == pytest.approx(0.0)
+    for dim in PENTA_DIMENSIONS:
+        if dim != "penta_ctq":
+            assert scores[dim] == pytest.approx(100.0), f"{dim} should be unaffected, got {scores[dim]}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AC8 — _compute_badge_labels returns [] when all dimension scores are below threshold
+# AC8 — _compute_penta_badge_labels returns [] when all scores are below threshold
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
-def test_compute_badge_labels_empty_when_all_scores_below_threshold() -> None:
-    """AC8: selected_index=0 → all normalized scores=0.0 → no dim meets BADGE_THRESHOLD
-    (70.0) → badge_labels==[]."""
-    from app.modules.assessment.service import _compute_badge_labels, _compute_dimension_scores
+def test_compute_penta_badge_labels_empty_when_all_scores_below_threshold() -> None:
+    """AC8: lowest-scoring options for Q16-Q20 -> no dim meets PENTA_BADGE_THRESHOLD
+    (70.0) -> badge_labels == []."""
+    from app.modules.assessment.service import _compute_penta_badge_labels, _compute_penta_scores
 
-    responses = _build_real_onboarding_responses(selected_index=0)
-    scores = _compute_dimension_scores(responses)
+    responses = _build_real_onboarding_responses(penta_indices=_PENTA_LOW_INDEX)
+    scores = _compute_penta_scores(responses)
 
     for dim, score in scores.items():
-        assert score == 0.0, (
-            f"Expected 0.0 for {dim!r} with selected_index=0; formula: (0/3)×100=0.0; got {score}"
-        )
+        assert score < PENTA_BADGE_THRESHOLD, f"{dim} should be below threshold, got {score}"
 
-    labels = _compute_badge_labels(scores)
-    assert labels == [], (
-        f"Expected no badges when all scores=0.0 (threshold={BADGE_THRESHOLD}), got: {labels!r}"
-    )
+    labels = _compute_penta_badge_labels(scores)
+    assert labels == [], f"Expected no badges when all scores are low, got: {labels!r}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# AC9 — ONBOARDING_PROFILE_SYSTEM_PROMPT uses HIE, not TransformED (D72 regression guard)
+# AC9 — ONBOARDING_PROFILE_SYSTEM_PROMPT uses HIE, not TransformED (D72, unchanged)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
 def test_onboarding_system_prompt_uses_hie_not_transformed() -> None:
-    """AC9: D72 guard — ONBOARDING_PROFILE_SYSTEM_PROMPT must contain 'HIE',
-    not 'TransformED'."""
     from app.modules.assessment.prompts import ONBOARDING_PROFILE_SYSTEM_PROMPT
 
-    assert "TransformED" not in ONBOARDING_PROFILE_SYSTEM_PROMPT, (
-        "D72 regression: ONBOARDING_PROFILE_SYSTEM_PROMPT still contains 'TransformED'. "
-        "Replace with 'HIE'."
-    )
-    assert "HIE" in ONBOARDING_PROFILE_SYSTEM_PROMPT, (
-        "ONBOARDING_PROFILE_SYSTEM_PROMPT does not contain the brand name 'HIE'."
-    )
+    assert "TransformED" not in ONBOARDING_PROFILE_SYSTEM_PROMPT
+    assert "HIE" in ONBOARDING_PROFILE_SYSTEM_PROMPT
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# P10 — Intermediate score validates the /3 denominator
+# P10 — a specific Penta answer-key value validates against the PDF (regression guard)
 # ══════════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.unit
-def test_compute_dimension_scores_intermediate_score_validates_denominator() -> None:
-    """P10: selected_index=2 → (2/3)×100 ≈ 66.67; validates the /3 denominator.
-    A wrong denominator (e.g. 4) produces 50.0 at index=2, catching silent regression."""
-    from app.modules.assessment.service import _compute_dimension_scores
+def test_compute_penta_scores_specific_value_validates_answer_key() -> None:
+    """P10: Q18 (SQ dilemma) index 3 ('Hand it to the police / authority') is the PDF's
+    stated 'also high' answer, scored 85.0 — not the top score (100.0, index 2) and not
+    a low score. Catches a regression that flattens PENTA_SCORING's SQ dilemma tiers."""
+    from app.modules.assessment.service import _compute_penta_scores
 
-    responses = _build_real_onboarding_responses(selected_index=2)
-    scores = _compute_dimension_scores(responses)
+    responses = _build_real_onboarding_responses(penta_indices={**_PENTA_TOP_INDEX, "q18": 3})
+    scores = _compute_penta_scores(responses)
 
-    assert scores["pattern_recognition"] == pytest.approx(66.67, rel=1e-2), (
-        f"selected_index=2 → (2/3)×100 ≈ 66.67; got {scores['pattern_recognition']}. "
-        "If denominator changed from 3, this test catches the regression."
+    assert scores["penta_sq"] == pytest.approx(85.0), (
+        f"Q18 index 3 ('also high') should score 85.0 per the PDF answer key; "
+        f"got {scores['penta_sq']}"
     )
