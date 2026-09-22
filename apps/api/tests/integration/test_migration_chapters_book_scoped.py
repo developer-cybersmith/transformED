@@ -801,6 +801,7 @@ def test_no_other_table_policy_changed(pg: object) -> None:  # noqa: ARG001
     expected_tables = {
         "attention_events",
         "books",
+        "chapter_context",
         "learner_dna",
         "lesson_jobs",
         "lessons",
