@@ -1728,18 +1728,26 @@ async def process_onboarding(
     Steps:
     1. Validate all 30 answers (known ids, no duplicates, format matches Q_SPEC,
        mcq selected_index in range) — 422 on any violation, before any DB call.
-    2. Bulk-insert 30 rows to onboarding_answers_v2.
+    2. Fetch existing learner_dna (if any) to preserve session_count across a
+       reassessment resubmission.
     3. Compute the 5 Penta-Intelligence scores from Q16-Q20 (PENTA_SCORING lookup,
        no LLM call).
     4. Compute Penta badge labels (scores >= 70).
-    5. Generate GPT-4o-mini profile_text (DPDP disclaimer appended), seeded by the
+    5. Upsert (not insert) 30 rows to onboarding_answers_v2, keyed on
+       (user_id, question_id) — D173: a plain insert would collide with a prior
+       submission's rows on every reassessment resubmission, since the 30
+       question_ids are identical across attempts for a given user. Upserting
+       makes a legitimate reassessment resubmission (router.py's Redis
+       reassessment-bypass) actually succeed instead of dead-ending on the
+       table's own UNIQUE(user_id, question_id) constraint.
+    6. Generate GPT-4o-mini profile_text (DPDP disclaimer appended), seeded by the
        Penta badges.
-    6. Upsert learner_dna with the 5 penta_* columns, badges, profile_text, and
+    7. Upsert learner_dna with the 5 penta_* columns, badges, profile_text, and
        session_count (existing value preserved on reassessment, else 0). The 9
        existing behavioral dimension columns are never written by this path — they
        stay NULL until dna_fusion.py's session-driven EMA seeds them after the
        student's first completed session, exactly as today.
-    7. Return OnboardingResult (no raw scores to frontend).
+    8. Return OnboardingResult (no raw scores to frontend).
 
     The supabase client is synchronous; all DB calls are wrapped in asyncio.to_thread.
 
@@ -1752,14 +1760,15 @@ async def process_onboarding(
     Raises:
         HTTPException 422: a response's question_id/format/selected_index doesn't
             match the known 30-question spec.
-        HTTPException 409: onboarding_answers_v2 insert hits unique constraint
-            (duplicate submission).
-        HTTPException 500: Non-duplicate DB insert failure.
+        HTTPException 500: onboarding_answers_v2 or learner_dna write failure. A
+            (user_id, question_id) conflict on onboarding_answers_v2 no longer errors —
+            Step 5 upserts through it by design (D173) — duplicate *submission attempts*
+            are gated upstream by router.py's Redis SET NX, not by a DB-level 409 here.
     """
     # Step 1 — validate before any DB call (degrade-not-fabricate guard on client input)
     _validate_onboarding_responses(responses)
 
-    # D137 convention — preserve session_count across a reassessment resubmission
+    # Step 2 — D137 convention: preserve session_count across a reassessment resubmission
     existing_dna = await _fetch_existing_dna(user_id=user_id, supabase=supabase)
     existing_session_count = (
         int(existing_dna.get("session_count") or 0) if existing_dna is not None else 0
@@ -1771,7 +1780,9 @@ async def process_onboarding(
     # Step 4 — compute Penta badge labels
     badge_labels = _compute_penta_badge_labels(scores)
 
-    # Step 2 — bulk-insert onboarding_answers_v2 rows
+    # Step 5 — upsert onboarding_answers_v2 rows (D173 fix: was a plain insert, which
+    # collided with a prior submission's rows on every reassessment resubmission since
+    # the 30 question_ids repeat across attempts — see docstring Step 5).
     rows = [
         {
             "user_id": user_id,
@@ -1785,19 +1796,15 @@ async def process_onboarding(
         for ans in responses
     ]
     insert_resp = await asyncio.to_thread(
-        lambda: supabase.table("onboarding_answers_v2").insert(rows).execute()
+        lambda: supabase.table("onboarding_answers_v2")
+        .upsert(rows, on_conflict="user_id,question_id")
+        .execute()
     )
     insert_error = getattr(insert_resp, "error", None)
     if insert_error:
-        err_str = str(insert_error).lower()
-        if "duplicate" in err_str or "unique" in err_str:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Onboarding already submitted — duplicate responses detected.",
-            )
         safe_err = str(insert_error).replace("\n", " ").replace("\r", " ")
         logger.error(
-            "onboarding_answers_v2 insert failed: user=%s error=%s",
+            "onboarding_answers_v2 upsert failed: user=%s error=%s",
             user_id,
             safe_err,
         )
@@ -1806,11 +1813,11 @@ async def process_onboarding(
             detail="Failed to persist onboarding responses.",
         )
 
-    # Step 5 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
+    # Step 6 — Generate profile_text via GPT-4o-mini (must precede upsert so it is persisted)
     # D71: provider.complete() already has @with_retry(max_attempts=3) for transient 429/5xx.
     # If all retries fail the raw exception must be caught here: convert to HTTPException(503)
     # so the router's `except HTTPException` cleanup fires and releases the Redis lock.
-    # Before raising we also delete the Step 2 rows so a retry can re-insert cleanly.
+    # Before raising we also delete the Step 5 rows so a retry can re-insert cleanly.
     provider = OpenAILLMProvider(lesson_id="onboarding")
     try:
         profile_text = await generate_onboarding_profile(
@@ -1851,7 +1858,7 @@ async def process_onboarding(
             detail="Profile generation temporarily unavailable — please retry.",
         ) from None
 
-    # Step 6 — Upsert learner_dna (penta_* columns + badges/profile_text only — the 9
+    # Step 7 — Upsert learner_dna (penta_* columns + badges/profile_text only — the 9
     # behavioral dimension columns are deliberately absent from this payload, so a
     # Supabase upsert leaves them untouched: NULL for a first-time row, or whatever
     # dna_fusion.py's session-driven EMA already wrote for a returning student).
@@ -1874,7 +1881,7 @@ async def process_onboarding(
             user_id,
             safe_upsert_err,
         )
-        # D71 variant: Step 6 failure also orphans Step 2 rows — roll back so retry can re-insert.
+        # D71 variant: Step 7 failure also orphans Step 5 rows — roll back so retry can re-insert.
         _question_ids = [r["question_id"] for r in rows]
         if _question_ids:
             try:
@@ -1890,14 +1897,14 @@ async def process_onboarding(
                 _del_resp5_error = getattr(del_resp5, "error", None)
                 if _del_resp5_error:
                     logger.warning(
-                        "onboarding: step6 rollback of onboarding_answers_v2 failed "
+                        "onboarding: step7 rollback of onboarding_answers_v2 failed "
                         "user=%s error=%s",
                         user_id,
                         str(_del_resp5_error).replace("\n", " "),
                     )
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "onboarding: step6 rollback of onboarding_answers_v2 failed "
+                    "onboarding: step7 rollback of onboarding_answers_v2 failed "
                     "user=%s (network error)",
                     user_id,
                 )

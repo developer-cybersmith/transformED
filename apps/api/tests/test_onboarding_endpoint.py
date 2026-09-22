@@ -145,7 +145,7 @@ def _build_onboarding_supabase(
 ) -> MagicMock:
     """Build mock Supabase client for process_onboarding call order:
     1st call: learner_dna SELECT (_fetch_existing_dna — session_count only)
-    2nd call: onboarding_answers_v2 INSERT
+    2nd call: onboarding_answers_v2 UPSERT (D173: was INSERT — see service.py Step 5)
     3rd call: learner_dna UPSERT
     """
     mock = MagicMock()
@@ -156,11 +156,11 @@ def _build_onboarding_supabase(
     dna_select_chain = dna_select_mock.select.return_value.eq.return_value.maybe_single.return_value
     dna_select_chain.execute.return_value = dna_select_resp
 
-    insert_mock = MagicMock()
-    insert_resp = MagicMock()
-    insert_resp.data = []
-    insert_resp.error = insert_error
-    insert_mock.insert.return_value.execute.return_value = insert_resp
+    answers_v2_mock = MagicMock()
+    answers_v2_resp = MagicMock()
+    answers_v2_resp.data = []
+    answers_v2_resp.error = insert_error
+    answers_v2_mock.upsert.return_value.execute.return_value = answers_v2_resp
 
     upsert_mock = MagicMock()
     upsert_resp = MagicMock()
@@ -168,7 +168,7 @@ def _build_onboarding_supabase(
     upsert_resp.error = upsert_error
     upsert_mock.upsert.return_value.execute.return_value = upsert_resp
 
-    mock.table.side_effect = [dna_select_mock, insert_mock, upsert_mock]
+    mock.table.side_effect = [dna_select_mock, answers_v2_mock, upsert_mock]
     return mock
 
 
@@ -672,8 +672,8 @@ async def test_process_onboarding_9_behavioral_dims_absent_from_upsert(mock_to_t
     answers = _make_onboarding_answers()
     upsert_data_captured: dict = {}
 
-    insert_mock = MagicMock()
-    insert_mock.insert.return_value.execute.return_value = MagicMock(data=[], error=None)
+    answers_v2_mock = MagicMock()
+    answers_v2_mock.upsert.return_value.execute.return_value = MagicMock(data=[], error=None)
 
     upsert_mock = MagicMock()
 
@@ -692,7 +692,7 @@ async def test_process_onboarding_9_behavioral_dims_absent_from_upsert(mock_to_t
     dna_select_chain.execute.return_value = dna_select_resp
 
     supabase = MagicMock()
-    supabase.table.side_effect = [dna_select_mock, insert_mock, upsert_mock]
+    supabase.table.side_effect = [dna_select_mock, answers_v2_mock, upsert_mock]
 
     p1, p2, p3 = _patched_llm()
     with p1 as mock_provider_cls, p2 as mock_settings, p3 as mock_prompts_settings:
@@ -717,38 +717,62 @@ async def test_process_onboarding_9_behavioral_dims_absent_from_upsert(mock_to_t
 
 
 @pytest.mark.unit
-async def test_process_onboarding_insert_error_duplicate_returns_409(mock_to_thread) -> None:
-    """AC5: onboarding_answers_v2 insert with unique violation → HTTP 409."""
-    from fastapi import HTTPException
-
+async def test_process_onboarding_writes_onboarding_answers_v2_via_upsert_on_conflict(
+    mock_to_thread,
+) -> None:
+    """D173 fix: a resubmission (reassessment) must not dead-end on the table's own
+    UNIQUE(user_id, question_id) constraint. process_onboarding upserts on that exact
+    conflict target instead of inserting, so a second submission for the same 30
+    question_ids overwrites cleanly rather than raising a duplicate-key error."""
     from app.modules.assessment.service import process_onboarding
 
-    dup_error = MagicMock()
-    dup_error.__str__ = lambda s: "duplicate key value violates unique constraint"
-    supabase = _build_onboarding_supabase(insert_error=dup_error)
+    supabase = _build_onboarding_supabase()
     answers = _make_onboarding_answers()
 
-    with pytest.raises(HTTPException) as exc_info:
+    p1, p2, p3 = _patched_llm()
+    with p1 as mock_provider_cls, p2 as mock_settings, p3 as mock_prompts_settings:
+        mock_provider_inst = MagicMock()
+        mock_provider_inst.complete = AsyncMock(return_value="You reason carefully.")
+        mock_provider_cls.return_value = mock_provider_inst
+        mock_settings.return_value.llm_mini = "gpt-4o-mini"
+        mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
         await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
 
-    assert exc_info.value.status_code == 409
+    # _build_onboarding_supabase wires onboarding_answers_v2's table() call to a mock
+    # whose only configured write method is .upsert — if service.py regresses to
+    # .insert(), that call hits an unconfigured MagicMock chain whose .error is
+    # itself a (truthy) MagicMock, which process_onboarding would raise as a 500 for.
+    # The call completing without raising is itself the regression guard.
+    onboarding_calls = [
+        c for c in supabase.table.call_args_list if c.args == ("onboarding_answers_v2",)
+    ]
+    assert len(onboarding_calls) == 1
 
 
 @pytest.mark.unit
-async def test_process_onboarding_insert_error_non_duplicate_returns_500(mock_to_thread) -> None:
+async def test_process_onboarding_write_error_returns_500(mock_to_thread) -> None:
+    """Any onboarding_answers_v2 write failure — including a duplicate-key-shaped
+    error string — now surfaces as 500, not 409. Duplicate *submission attempts* are
+    gated upstream by router.py's Redis SET NX; a (user_id, question_id) conflict at
+    the DB layer is absorbed by Step 5's upsert (D173), so if an error reaches this
+    branch at all it is a genuine write failure, never an expected duplicate."""
     from fastapi import HTTPException
 
     from app.modules.assessment.service import process_onboarding
 
-    generic_error = MagicMock()
-    generic_error.__str__ = lambda s: "connection timeout — database unreachable"
-    supabase = _build_onboarding_supabase(insert_error=generic_error)
-    answers = _make_onboarding_answers()
+    for error_text in (
+        "connection timeout — database unreachable",
+        "duplicate key value violates unique constraint",  # no longer special-cased
+    ):
+        generic_error = MagicMock()
+        generic_error.__str__ = lambda s, _t=error_text: _t
+        supabase = _build_onboarding_supabase(insert_error=generic_error)
+        answers = _make_onboarding_answers()
 
-    with pytest.raises(HTTPException) as exc_info:
-        await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+        with pytest.raises(HTTPException) as exc_info:
+            await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
 
-    assert exc_info.value.status_code == 500
+        assert exc_info.value.status_code == 500
 
 
 @pytest.mark.unit
@@ -813,22 +837,27 @@ async def test_process_onboarding_returns_onboarding_result(mock_to_thread) -> N
 
 
 @pytest.mark.unit
-async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> None:
-    """All 30 onboarding_answers_v2 rows must carry the right format-specific fields."""
+async def test_process_onboarding_upsert_row_payload_mapping(mock_to_thread) -> None:
+    """All 30 onboarding_answers_v2 rows must carry the right format-specific fields,
+    and the write must be an upsert keyed on (user_id, question_id) — D173: a plain
+    insert dead-ends every reassessment resubmission on the table's own UNIQUE
+    constraint, since the 30 question_ids repeat across attempts for a given user."""
     from app.modules.assessment.service import process_onboarding
 
     answers = _make_onboarding_answers()
-    insert_rows_captured: list[dict] = []
+    upsert_rows_captured: list[dict] = []
+    on_conflict_captured: list[str] = []
 
-    insert_mock = MagicMock()
+    answers_v2_mock = MagicMock()
 
-    def _capture_insert(rows):
-        insert_rows_captured.extend(rows if isinstance(rows, list) else [rows])
+    def _capture_upsert(rows, on_conflict=None):
+        upsert_rows_captured.extend(rows if isinstance(rows, list) else [rows])
+        on_conflict_captured.append(on_conflict)
         m = MagicMock()
         m.execute.return_value = MagicMock(data=[], error=None)
         return m
 
-    insert_mock.insert.side_effect = _capture_insert
+    answers_v2_mock.upsert.side_effect = _capture_upsert
 
     upsert_mock = MagicMock()
     upsert_mock.upsert.return_value.execute.return_value = MagicMock(
@@ -842,7 +871,7 @@ async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> 
     dna_select_chain.execute.return_value = dna_select_resp
 
     supabase = MagicMock()
-    supabase.table.side_effect = [dna_select_mock, insert_mock, upsert_mock]
+    supabase.table.side_effect = [dna_select_mock, answers_v2_mock, upsert_mock]
 
     p1, p2, p3 = _patched_llm()
     with p1 as mock_provider_cls, p2 as mock_settings, p3 as mock_prompts_settings:
@@ -853,15 +882,16 @@ async def test_process_onboarding_insert_row_payload_mapping(mock_to_thread) -> 
         mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
         await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
 
-    assert len(insert_rows_captured) == 30
-    by_id = {r["question_id"]: r for r in insert_rows_captured}
+    assert on_conflict_captured == ["user_id,question_id"]
+    assert len(upsert_rows_captured) == 30
+    by_id = {r["question_id"]: r for r in upsert_rows_captured}
     assert by_id["q1"]["format"] == "mcq"
     assert by_id["q1"]["selected_index"] is not None
     assert by_id["q21"]["format"] == "one_liner"
     assert by_id["q21"]["response_text"]
     assert by_id["q26"]["format"] == "true_false"
     assert by_id["q26"]["response_bool"] is True
-    for r in insert_rows_captured:
+    for r in upsert_rows_captured:
         assert r["user_id"] == "user-onb-001"
 
 

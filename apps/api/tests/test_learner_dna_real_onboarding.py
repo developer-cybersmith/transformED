@@ -80,7 +80,7 @@ def _build_supabase_process_onboarding(
 ) -> MagicMock:
     """Supabase mock for process_onboarding — 3-call order:
     1. learner_dna (select — _fetch_existing_dna)
-    2. onboarding_answers_v2 (insert)
+    2. onboarding_answers_v2 (upsert — D173: was insert, dead-ended reassessment resubmits)
     3. learner_dna (upsert)
     """
     mock = MagicMock()
@@ -91,11 +91,11 @@ def _build_supabase_process_onboarding(
     dna_select_chain = dna_select_table.select.return_value.eq.return_value.maybe_single.return_value
     dna_select_chain.execute.return_value = dna_select_resp
 
-    insert_table = MagicMock()
-    insert_resp = MagicMock()
-    insert_resp.error = None
-    insert_resp.data = []
-    insert_table.insert.return_value.execute.return_value = insert_resp
+    answers_v2_table = MagicMock()
+    answers_v2_resp = MagicMock()
+    answers_v2_resp.error = None
+    answers_v2_resp.data = []
+    answers_v2_table.upsert.return_value.execute.return_value = answers_v2_resp
 
     upsert_table = MagicMock()
     if capture_upsert is not None:
@@ -114,7 +114,7 @@ def _build_supabase_process_onboarding(
         upsert_resp.data = [{"user_id": _USER_UUID}]
         upsert_table.upsert.return_value.execute.return_value = upsert_resp
 
-    mock.table.side_effect = [dna_select_table, insert_table, upsert_table]
+    mock.table.side_effect = [dna_select_table, answers_v2_table, upsert_table]
     return mock
 
 

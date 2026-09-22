@@ -201,8 +201,10 @@ class OnboardingAnswer(BaseModel):
 
     @model_validator(mode="after")
     def _validate_shape_matches_format(self) -> OnboardingAnswer:
-        if self.format == "mcq" and (self.selected_index is None or self.response_text is None):
-            raise ValueError("mcq answers require selected_index and response_text")
+        if self.format == "mcq" and (
+            self.selected_index is None or not (self.response_text or "").strip()
+        ):
+            raise ValueError("mcq answers require selected_index and non-blank response_text")
         if self.format == "one_liner" and not (self.response_text or "").strip():
             raise ValueError("one_liner answers require non-blank response_text")
         if self.format == "true_false" and self.response_bool is None:

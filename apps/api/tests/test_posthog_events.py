@@ -240,8 +240,9 @@ def _build_teachback_supabase() -> MagicMock:
 
 
 def _build_onboarding_supabase() -> MagicMock:
-    """3-call mock: learner_dna SELECT → onboarding_responses INSERT → learner_dna UPSERT.
-    D137 added _fetch_existing_dna() as first call in process_onboarding().
+    """3-call mock: learner_dna SELECT → onboarding_answers_v2 UPSERT (D173: was
+    INSERT) → learner_dna UPSERT. D137 added _fetch_existing_dna() as first call
+    in process_onboarding().
     """
     supabase = MagicMock()
 
@@ -252,8 +253,8 @@ def _build_onboarding_supabase() -> MagicMock:
     dna_select_chain.execute.return_value = dna_select_resp
 
     insert_m = MagicMock()
-    insert_m.insert.return_value.execute.return_value.data = []
-    insert_m.insert.return_value.execute.return_value.error = None
+    insert_m.upsert.return_value.execute.return_value.data = []
+    insert_m.upsert.return_value.execute.return_value.error = None
 
     upsert_m = MagicMock()
     upsert_m.upsert.return_value.execute.return_value.data = [{"user_id": USER_ID}]

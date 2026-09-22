@@ -55,13 +55,17 @@ def _make_onboarding_answers():
 
 
 def _supabase_insert_ok():
-    """Supabase mock whose .insert().execute() returns success (no error)."""
+    """Supabase mock whose .upsert().execute() (onboarding_answers_v2, D173) returns
+    success (no error). Note: every test using this helper patches
+    asyncio.to_thread directly with an ordered side_effect list, so this table
+    wiring is never actually exercised — the lambdas built around .upsert() in
+    service.py are intercepted before they run. Kept accurate for readability."""
     resp = MagicMock()
     resp.error = None
     resp.data = [{"id": "row-1"}]
 
     table = MagicMock()
-    table.insert.return_value.execute.return_value = resp
+    table.upsert.return_value.execute.return_value = resp
     delete_chain = table.delete.return_value.eq.return_value.in_.return_value
     delete_chain.execute.return_value = MagicMock(error=None)
     table.upsert.return_value.execute.return_value = MagicMock(error=None, data=[{"user_id": "u1"}])

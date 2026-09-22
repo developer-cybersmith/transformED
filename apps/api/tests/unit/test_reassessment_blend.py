@@ -77,8 +77,8 @@ def _make_supabase_mock(
     """Build a mock Supabase client for process_onboarding tests.
 
     Uses side_effect on table() to return table-specific mocks so that
-    learner_dna SELECT, onboarding_answers_v2 INSERT, and learner_dna UPSERT
-    can be independently configured.
+    learner_dna SELECT, onboarding_answers_v2 UPSERT (D173: was INSERT — see
+    service.py Step 5), and learner_dna UPSERT can be independently configured.
     """
     mock = MagicMock()
 
@@ -96,7 +96,7 @@ def _make_supabase_mock(
     ob_table = MagicMock()
     insert_resp = MagicMock()
     insert_resp.error = None if insert_ok else MagicMock()
-    ob_table.insert.return_value.execute.return_value = insert_resp
+    ob_table.upsert.return_value.execute.return_value = insert_resp
 
     users_table = MagicMock()
     consent_resp = MagicMock()
@@ -114,6 +114,53 @@ def _make_supabase_mock(
 
     mock.table.side_effect = _table_side_effect
     return mock
+
+
+class _FakeOnboardingAnswersTable:
+    """In-memory fake that actually enforces UNIQUE(user_id, question_id) semantics,
+    unlike a MagicMock configured to unconditionally succeed. Used by
+    test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint
+    below to prove the D173 fix (upsert, not insert) works against real
+    conflict behavior — a plain .insert() call here on a colliding key produces
+    the same "duplicate key value violates unique constraint" error Postgres
+    would, so a regression back to .insert() fails this test for a real reason,
+    not because a mock was told what to return.
+    """
+
+    def __init__(self, store: dict[tuple[str, str], dict[str, Any]]) -> None:
+        self._store = store
+        self._op: str | None = None
+        self._rows: list[dict[str, Any]] | None = None
+
+    def insert(self, rows: list[dict[str, Any]]) -> _FakeOnboardingAnswersTable:
+        self._op = "insert"
+        self._rows = rows
+        return self
+
+    def upsert(
+        self, rows: list[dict[str, Any]], on_conflict: str | None = None
+    ) -> _FakeOnboardingAnswersTable:
+        self._op = "upsert"
+        self._rows = rows
+        return self
+
+    def execute(self) -> MagicMock:
+        resp = MagicMock()
+        rows = self._rows or []
+        if self._op == "insert":
+            for row in rows:
+                key = (row["user_id"], row["question_id"])
+                if key in self._store:
+                    err = MagicMock()
+                    err.__str__ = lambda s: "duplicate key value violates unique constraint"
+                    resp.error = err
+                    resp.data = None
+                    return resp
+        for row in rows:
+            self._store[(row["user_id"], row["question_id"])] = row
+        resp.error = None
+        resp.data = rows
+        return resp
 
 
 def _existing_row(*, session_count: int, penta_scores: dict[str, float] | None = None) -> dict[str, Any]:
@@ -255,7 +302,11 @@ async def test_existing_row_fetch_error_falls_back_to_first_time_write(caplog: A
 
 @pytest.mark.asyncio
 async def test_onboarding_answers_written_on_reassessment() -> None:
-    """AC9: INSERT to onboarding_answers_v2 runs on both first-time and reassessment."""
+    """AC9: UPSERT to onboarding_answers_v2 runs on both first-time and reassessment
+    (D173: a plain INSERT here is exactly what dead-ends a legitimate reassessment
+    resubmission against the table's own UNIQUE(user_id, question_id) constraint —
+    see test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint
+    below for a test that enforces that constraint itself rather than mocking around it)."""
     existing = _existing_row(session_count=8)
     supabase = _make_supabase_mock(existing_dna_row=existing)
     responses = _all_responses(_PENTA_LOW_INDEX)
@@ -269,10 +320,11 @@ async def test_onboarding_answers_written_on_reassessment() -> None:
         await process_onboarding(responses=responses, user_id=_VALID_USER_ID, supabase=supabase)
 
     ob_table = supabase.table("onboarding_answers_v2")
-    insert_calls = ob_table.insert.call_args_list
-    assert insert_calls, "onboarding_answers_v2 INSERT was never called on reassessment"
-    inserted_rows = insert_calls[0].args[0]
-    assert len(inserted_rows) == 30
+    upsert_calls = ob_table.upsert.call_args_list
+    assert upsert_calls, "onboarding_answers_v2 UPSERT was never called on reassessment"
+    upserted_rows = upsert_calls[0].args[0]
+    assert len(upserted_rows) == 30
+    assert upsert_calls[0].kwargs.get("on_conflict") == "user_id,question_id"
 
 
 # ── AC4 — badge_labels driven by the fresh submission, not stale history ─────
@@ -301,3 +353,83 @@ async def test_reassessment_badge_labels_reflect_fresh_submission_only() -> None
         f"Expected no badges (fresh submission scored below "
         f"{PENTA_BADGE_THRESHOLD}), got {result.badge_labels}"
     )
+
+
+# ── D173 regression guard — enforces the real constraint, doesn't mock around it ──
+
+
+@pytest.mark.asyncio
+async def test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint() -> None:
+    """D173: a genuine reassessment resubmission must not dead-end on
+    onboarding_answers_v2's own UNIQUE(user_id, question_id) constraint. Every
+    other test in this file mocks the table's write to unconditionally succeed,
+    which would pass identically whether process_onboarding used insert or
+    upsert — this test uses _FakeOnboardingAnswersTable, which actually raises
+    a duplicate-key error on a colliding .insert() the way Postgres would, so it
+    fails for a real reason if Step 5 ever regresses from upsert back to insert."""
+    store: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def _build_supabase(existing_dna_row: dict[str, Any] | None) -> MagicMock:
+        mock = MagicMock()
+
+        dna_table = MagicMock()
+        maybe_single_resp = MagicMock()
+        maybe_single_resp.error = None
+        maybe_single_resp.data = existing_dna_row
+        (
+            dna_table.select.return_value.eq.return_value.maybe_single.return_value.execute.return_value
+        ) = maybe_single_resp
+        upsert_resp = MagicMock()
+        upsert_resp.error = None
+        dna_table.upsert.return_value.execute.return_value = upsert_resp
+
+        ob_table = _FakeOnboardingAnswersTable(store)
+
+        users_table = MagicMock()
+        consent_resp = MagicMock()
+        consent_resp.error = None
+        consent_resp.data = None
+        _chain = users_table.select.return_value.eq.return_value.maybe_single.return_value
+        _chain.execute.return_value = consent_resp
+
+        def _table_side_effect(name: str) -> MagicMock:
+            if name == "learner_dna":
+                return dna_table
+            if name == "onboarding_answers_v2":
+                return ob_table
+            return users_table
+
+        mock.table.side_effect = _table_side_effect
+        return mock
+
+    with patch(
+        "app.modules.assessment.service.generate_onboarding_profile",
+        new=AsyncMock(return_value="Profile. HIE."),
+    ):
+        from app.modules.assessment.service import process_onboarding
+
+        # First-time onboarding: 30 rows land in the fake store, keyed by
+        # (user_id, question_id).
+        first = await process_onboarding(
+            responses=_all_responses(_PENTA_TOP_INDEX),
+            user_id=_VALID_USER_ID,
+            supabase=_build_supabase(existing_dna_row=None),
+        )
+        assert first.session_count == 0
+        assert len(store) == 30
+
+        # Reassessment resubmission: identical 30 (user_id, question_id) keys.
+        # Pre-D173-fix (a plain .insert()), this raises the same duplicate-key
+        # error Postgres's real UNIQUE constraint would, which process_onboarding
+        # would surface as an HTTPException — the resubmission would never reach
+        # this assertion. Post-fix (.upsert()), it must succeed and overwrite.
+        second = await process_onboarding(
+            responses=_all_responses(_PENTA_LOW_INDEX),
+            user_id=_VALID_USER_ID,
+            supabase=_build_supabase(existing_dna_row=_existing_row(session_count=5)),
+        )
+
+    assert second.session_count == 5
+    assert len(store) == 30, "reassessment must overwrite the 30 existing rows, not duplicate them"
+    overwritten_q16 = store[(_VALID_USER_ID, "q16")]
+    assert overwritten_q16["selected_index"] == _PENTA_LOW_INDEX["q16"]

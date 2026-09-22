@@ -345,15 +345,27 @@ failure mode, same recovery path, just a different (cheaper, deterministic) inpu
 level idempotency (`user:{id}:onboarding_done` Redis SET NX) and the reassessment bypass are
 **unchanged** — both are format-agnostic.
 
-**Registered as D173** (`docs/DEFECT-REGISTER.md`) — not fixed in this story. Re-reading
-`process_onboarding()`'s current (pre-this-story) insert path confirms it uses a plain `.insert()`,
-not an upsert, for `onboarding_responses` — meaning a reassessment resubmission would already hit the
-`UNIQUE(user_id, question_id)` constraint and be misreported as a 409 "duplicate submission" today,
-independent of this story. This story's new table carries the identical shape/behavior forward
-unchanged (not a regression introduced here). Caught in review (Dev 3): the first draft of this note
-said "flagging for whoever touches it next" without an actual register entry — that phrasing is
-itself the silent-comment-with-no-ID pattern CLAUDE.md binding rule 5 prohibits, not an exemption from
-it. D173 is now open with an owner and trigger condition.
+**Registered as D173** (`docs/DEFECT-REGISTER.md`), **later FIXED in this story's own implementation
+(2026-09-22)**, following the `/bmad-code-review` of PR #239. Re-reading `process_onboarding()`'s
+current (pre-fix) insert path confirmed it used a plain `.insert()`, not an upsert, for
+`onboarding_responses`/`onboarding_answers_v2` — meaning a reassessment resubmission hit the
+`UNIQUE(user_id, question_id)` constraint and was misreported as a 409 "duplicate submission,"
+independent of this story's own scope (this table carried the identical shape/behavior forward
+unchanged from `onboarding_responses`, not a regression this story introduced). The review also
+surfaced a compounding gap: `OnboardingFlow.tsx`'s 409-handler treats any 409 as "already onboarded"
+and silently shows the student's stale pre-reassessment profile, masking the backend 409 into a false
+success with no indication anything failed.
+
+Step 5 above now reads **upsert, not insert** — `.upsert(rows, on_conflict="user_id,question_id")` —
+so a reassessment resubmission overwrites the prior 30 rows cleanly instead of colliding with them.
+The dead "duplicate key" 409-mapping branch was removed; any remaining `onboarding_answers_v2` write
+error is now a genuine 500, since duplicate *submission attempts* are already gated upstream by
+`router.py`'s Redis `SET NX`, not by a DB-level conflict here. Guarded by
+`test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint`
+(`tests/unit/test_reassessment_blend.py`), which enforces the real `UNIQUE(user_id, question_id)`
+constraint itself via an in-memory fake table (rather than a self-agreeing mock) and drives
+`process_onboarding` through a genuine first-time-then-reassessment sequence. See D173's updated
+register entry for the full fix/guard writeup.
 
 ### 6. Wire all 5 Tier A fields into the tutor's existing learner-context prompt path
 
