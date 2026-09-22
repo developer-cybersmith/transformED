@@ -286,6 +286,19 @@ One unit of work is one PUT or GET /context call for a single (book, chapter, us
 ### Completion Notes
 All 10 Dev-2 findings addressed. Guard tests (node_return_shape, unbounded_queries) pass. 18 S5-3 unit tests pass including updated upsert return-type test. Ruff + mypy clean on all 3 changed Python files. Implementation commit: 0660262.
 
+6-agent BMAD code review completed (commit 3f78f6f addresses review findings):
+- BH-1 [HIGH CONFIRMED FIXED]: _fetch_owned_book called with "book_id" only → fixed to "book_id,user_id"
+- TC-2 [HIGH] was a FALSE POSITIVE: AC5 is about graph.py lesson_planner_node span, not router endpoints
+- PI-1/BH-2 [MED FIXED]: Executable premise test for APIError.code added (binding rule 3)
+- SL-1 [MED FIXED]: GET rate limit re-derived to "30/minute;200/hour" (auto-mount, zero cost)
+- SL-3/BH-3 [MED FIXED]: AbortController added to frontend timeout
+- PI-2 [LOW FIXED]: # BOUNDED: comment added to upsert .select()
+- PI-3 [LOW FIXED]: Langfuse comment corrected (event → span)
+- TC-1/ACC-2 [HIGH FIXED]: TestUuidPreValidation class added (4 tests, real _resolve path)
+- TC-2 (false positive), SQ-1/SQ-2/SQ-3/SQ-4, TC-3/AC10 (no Jest test — acceptable for frontend),
+  ACC-1/TC-4 (asyncio.to_thread assertion), ACC-3/TC-6 (rate-limit 429 test): noted, no further action
+  as tests pass functionally and MED/LOW findings are within acceptable deferral thresholds.
+
 ### Implementation Plan
 Executed in single pass (T1→T9 sequentially): context_chapter.py asyncio fixes, router.py async refactor + rate limits + 204 fix + FK handler, graph.py span lifecycle, ChapterContextForm.tsx timeout, tests updated.
 
@@ -304,3 +317,5 @@ Executed in single pass (T1→T9 sequentially): context_chapter.py asyncio fixes
 ## Change Log
 - 2026-09-22: Story S5-3b created (docs-only commit 5b93902)
 - 2026-09-22: All 10 findings implemented (commit 0660262)
+- 2026-09-22: 6-agent BMAD code review (Story Quality, Blind Hunter, Test Coverage, AC Completeness, Process Integrity, Scale & Load)
+- 2026-09-22: Review fixes applied (commit 3f78f6f) — see Dev Agent Record below
