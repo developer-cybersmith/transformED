@@ -278,7 +278,7 @@ class TestUpsertChapterContext:
         from datetime import datetime
         from unittest.mock import MagicMock
 
-        _RETURNED_ROW = {
+        returned_row = {
             "chapter_id": "chapter-uuid",
             "user_id": "user-uuid",
             "depth_duration": "standard_30_45m",
@@ -294,7 +294,7 @@ class TestUpsertChapterContext:
         mock_upsert = mock_table.upsert.return_value
         mock_select = mock_upsert.select.return_value
         execute_resp = MagicMock()
-        execute_resp.data = [_RETURNED_ROW]
+        execute_resp.data = [returned_row]
         mock_select.execute.return_value = execute_resp
 
         with patch(
