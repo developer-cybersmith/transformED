@@ -71,6 +71,7 @@ from pydantic import BaseModel
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
 from app.core.db import rows, single_row
 from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace, traced_node
+from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
@@ -133,6 +134,11 @@ class PipelineState(TypedDict, total=False):
 
     # Node 5: lesson_planner
     lesson_plan: dict[str, Any]  # {title, objectives: [], segments: [], total_duration_min}
+    # Story S5-1 (Issue #231): book-level personalization context, fetched once
+    # in lesson_planner_node and propagated to slide_generator and
+    # narration_generator via _FAN_OUT_STATE_KEYS. Empty string when the
+    # student submitted no context.
+    book_context: str
 
     # Node 6: slide_generator
     slides: list[
@@ -198,6 +204,14 @@ class PipelineState(TypedDict, total=False):
     section_truncations: Annotated[
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, node, original_chars, capped_chars}]
+
+    # S5-1/S5-9: set to True by any of the 3 book-context merge sites
+    # (lesson_planner_node, slide_generator_node, narration_generator_node)
+    # when merge_book_context() had to truncate the context block. Written to
+    # lesson_jobs.node_outputs by package_builder_node so admins can query for
+    # truncated lessons. Default False (most lessons have no book context at all).
+    # Last-write-wins (not a reducer) — True is sticky; once set it stays set.
+    book_context_truncated: bool
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
@@ -1355,14 +1369,21 @@ _TIER_PROMPT_FRAMING: dict[str, str] = {
 }
 
 
-def _planner_system_prompt(tier_framing: str, chapter_context: str = "") -> str:
+def _planner_system_prompt(
+    tier_framing: str, chapter_context: str = "", book_context: str = ""
+) -> tuple[str, bool]:
     """The lesson_planner system prompt, shared by the single-call and batched
     paths (Story 2-16 RC-3) so both issue an identical instruction.
 
+    Returns ``(system_prompt, was_book_context_truncated)``.
+
     S5-3: `chapter_context` appended after tier_framing at the 'chapter
     instructions' precedence slot (§5 strategy doc). Empty string is safe.
+    S5-1 (Issue #231): `book_context` merged via merge_book_context (2,000-char budget).
     """
-    return (
+    from app.modules.content.pipeline.prompt_context import merge_book_context
+
+    base = (
         "Produce a lesson plan outline from the section summaries below. "
         "Return an overall title, subject, 2-5 learning objectives, an "
         "overall complexity_level (low/medium/high), and return EXACTLY "
@@ -1381,6 +1402,7 @@ def _planner_system_prompt(tier_framing: str, chapter_context: str = "") -> str:
         + chapter_context
         + _UNTRUSTED_CONTENT_GUARD
     )
+    return merge_book_context(base, book_context)
 
 
 _PLANNER_BATCH_MAX_ATTEMPTS = 3
@@ -1393,6 +1415,7 @@ async def _run_planner_batch(
     tier_framing: str,
     lesson_id: str,
     chapter_context: str = "",
+    book_context: str = "",
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
@@ -1423,8 +1446,17 @@ async def _run_planner_batch(
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
+    _planner_prompt, _planner_ctx_truncated = _planner_system_prompt(
+        tier_framing, chapter_context, book_context
+    )
+    if _planner_ctx_truncated:
+        logger.warning(
+            "[%s] _run_planner_batch: book_context truncated to 2000 chars — "
+            "lesson plan will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
-        {"role": "system", "content": _planner_system_prompt(tier_framing, chapter_context)},
+        {"role": "system", "content": _planner_prompt},
         {"role": "user", "content": summaries_text},
     ]
 
@@ -1489,9 +1521,21 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     """
     from app.config import get_settings
     from app.core.db import get_supabase
+    from app.modules.content.context import get_book_context_prompt_context
     from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
+
+    # Story S5-1 (Issue #231): fetch book context BEFORE the idempotency cache
+    # check so the context is always returned in state — even on a cache hit,
+    # slide_generator and narration_generator (dispatched after this node)
+    # need it from state["book_context"] via _FAN_OUT_STATE_KEYS. Graceful
+    # on DB error: get_book_context_prompt_context never raises, returns "".
+    book_context = await get_book_context_prompt_context(
+        book_id=state.get("book_id", ""),
+        user_id=state.get("user_id", ""),
+    )
+
     segment_summaries = state.get("segment_summaries", [])
     logger.info(
         "[%s] lesson_planner_node: generating lesson plan from %d segment summaries",
@@ -1556,7 +1600,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-        return {"lesson_plan": cached, "progress_pct": 38.0}
+        return {"lesson_plan": cached, "progress_pct": 38.0, "book_context": book_context}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1669,6 +1713,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             tier_framing,
             lesson_id,
             chapter_context=chapter_ctx_block,
+            book_context=book_context,
         )
     else:
         batches = [
@@ -1694,6 +1739,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 tier_framing,
                 lesson_id,
                 chapter_context=chapter_ctx_block,
+                book_context=book_context,
             )
             if plan_head is None:
                 plan_head = batch_response
@@ -1841,7 +1887,20 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         has_chapter_context,
     )
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    return {"lesson_plan": lesson_plan, "progress_pct": 38.0}
+    _lp_ctx_truncated = len(book_context) > _BOOK_CONTEXT_MAX_CHARS
+    if _lp_ctx_truncated:
+        logger.warning(
+            "[%s] lesson_planner_node: book_context exceeded %d chars — "
+            "truncation occurred; setting book_context_truncated=True in state",
+            lesson_id,
+            _BOOK_CONTEXT_MAX_CHARS,
+        )
+    return {
+        "lesson_plan": lesson_plan,
+        "progress_pct": 38.0,
+        "book_context": book_context,
+        "book_context_truncated": _lp_ctx_truncated,
+    }
 
 
 class _SlideLLM(BaseModel):
@@ -2028,21 +2087,36 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         f"{budget_by_id[s['segment_id']][1]} slides for this segment)"
         for s in plan_segments
     )
+    # Story S5-1 (Issue #231): inject book context at the "book context"
+    # precedence slot via the shared merge helper.
+    from app.modules.content.pipeline.prompt_context import merge_book_context
+
+    _slide_book_context = state.get("book_context") or ""
+    _slide_base_prompt = (
+        "Produce a slide deck from the lesson plan segments below. "
+        "Each segment specifies its own slide-count range — respect "
+        "it exactly. Each slide has a short title and a list of "
+        "bullet points. Each bullet must be a single concise point "
+        f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
+        "a full sentence or paragraph; split a longer idea into "
+        "multiple bullets instead. Return EXACTLY one slide-set per "
+        "segment provided, echoing back each segment's segment_id "
+        "UNCHANGED — do not invent, merge, split, omit, or reorder "
+        "segment_ids." + _UNTRUSTED_CONTENT_GUARD
+    )
+    _slide_system_prompt, _slide_ctx_truncated = merge_book_context(
+        _slide_base_prompt, _slide_book_context
+    )
+    if _slide_ctx_truncated:
+        logger.warning(
+            "[%s] slide_generator_node: book_context truncated to 2000 chars — "
+            "slides will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
         {
             "role": "system",
-            "content": (
-                "Produce a slide deck from the lesson plan segments below. "
-                "Each segment specifies its own slide-count range — respect "
-                "it exactly. Each slide has a short title and a list of "
-                "bullet points. Each bullet must be a single concise point "
-                f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
-                "a full sentence or paragraph; split a longer idea into "
-                "multiple bullets instead. Return EXACTLY one slide-set per "
-                "segment provided, echoing back each segment's segment_id "
-                "UNCHANGED — do not invent, merge, split, omit, or reorder "
-                "segment_ids." + _UNTRUSTED_CONTENT_GUARD
-            ),
+            "content": _slide_system_prompt,
         },
         {"role": "user", "content": segments_text},
     ]
@@ -2228,7 +2302,11 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
-    return {"slides": slides_out, "progress_pct": 48.0}
+    return {
+        "slides": slides_out,
+        "progress_pct": 48.0,
+        "book_context_truncated": _slide_ctx_truncated,
+    }
 
 
 class _SegmentSummaryLLM(BaseModel):
@@ -3889,15 +3967,35 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # move the interpolation into the user-role message alongside the section
     # body — same trust level as every other untrusted value, covered by the
     # same guard.
+    # Story S5-1 (Issue #231): inject book context at the "book context"
+    # precedence slot via the shared merge helper. book_context arrives via
+    # _FAN_OUT_STATE_KEYS — added in this story so Send()-dispatched nodes
+    # receive it without re-querying the DB on every section dispatch.
+    from app.modules.content.pipeline.prompt_context import merge_book_context as _merge_bc
+
+    _narration_book_context = state.get("book_context") or ""
+    _narration_base_prompt = (
+        "Write a conversational narration script for this section, as "
+        "if a tutor is speaking it aloud to a learner. Keep it natural "
+        "and paced for spoken delivery."
+        f"{_UNTRUSTED_CONTENT_GUARD}"
+    )
+    _narration_system_prompt, _narration_ctx_truncated = _merge_bc(
+        _narration_base_prompt, _narration_book_context
+    )
+    # lesson_planner_node (Phase 2, sequential, runs before this fan-out) already
+    # logged the truncation warning with the same book_context string. Suppress
+    # the per-section repeat to avoid N identical warnings for N dispatched sections.
+    if _narration_ctx_truncated and not state.get("book_context_truncated"):
+        logger.warning(
+            "[%s] narration_generator_node: book_context truncated to 2000 chars — "
+            "narration will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
         {
             "role": "system",
-            "content": (
-                "Write a conversational narration script for this section, as "
-                "if a tutor is speaking it aloud to a learner. Keep it natural "
-                "and paced for spoken delivery."
-                f"{_UNTRUSTED_CONTENT_GUARD}"
-            ),
+            "content": _narration_system_prompt,
         },
         {
             "role": "user",
@@ -4030,7 +4128,15 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
     )
 
-    return {"narration_scripts": [result], "section_truncations": section_truncations}
+    return {
+        "narration_scripts": [result],
+        "section_truncations": section_truncations,
+        # book_context_truncated is NOT returned here: narration_generator runs
+        # in PARALLEL (N concurrent dispatches) and LangGraph raises
+        # InvalidUpdateError on concurrent writes to a non-reducer channel.
+        # lesson_planner_node (sequential, runs before this fan-out) already
+        # sets book_context_truncated — same book_context string, same result.
+    }
 
 
 # 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
@@ -6245,6 +6351,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # Phase 1 LLM call — sibling to package_builder_degraded above.
                 # Always written (empty list = none), never a missing key.
                 "section_truncations": state.get("section_truncations", []),
+                # S5-1/S5-9: True when any of the 3 book-context merge sites
+                # (lesson_planner, slide_generator, narration_generator) hit
+                # the 2,000-char budget. False / absent = context was not
+                # truncated. Admins can query lesson_jobs
+                # WHERE node_outputs->'book_context_truncated' = 'true'.
+                "book_context_truncated": state.get("book_context_truncated", False),
             },
         }
     ).eq("lesson_id", lesson_id).execute()
@@ -6267,7 +6379,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # _DEFAULT_TIER ("T2") regardless of the lesson's real tier — silently
 # disabling the S2-LM3/LM4/LM5 tier bands (e.g. quiz_generator_node's
 # _TIER_QUIZ_COUNT_BAND) for every T1 and T3 lesson.
-_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier")
+# Story S5-1 (Issue #231): "book_context" is a str key (last-write-wins, NOT
+# an Annotated[list, operator.add] reducer), so adding it does NOT risk the
+# reducer-channel duplication defect documented in CLAUDE.md. It is added here
+# so narration_generator_node (which is Send()-dispatched by
+# _fan_out_narration_after_planning) receives the context fetched once in
+# lesson_planner_node, without each narration dispatch re-querying the DB.
+_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier", "book_context")
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
 # once, before dispatch, while accumulated cost is still whatever it was
@@ -6365,6 +6483,10 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
 
     state_any: dict[str, Any] = cast("dict[str, Any]", state)
     base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    # book_context is optional (S5-1): lessons without a saved context have it
+    # absent from state. Always include it in the payload so Phase-1 nodes
+    # receive a consistent dict regardless of whether the student filled the form.
+    base.setdefault("book_context", "")
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
     # Uses _PHASE1_INSTRUMENTED_NODES (all 5 as of issue #236 — narration_generator
@@ -6451,6 +6573,10 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
 
     state_any: dict[str, Any] = cast("dict[str, Any]", state)
     base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    # book_context is optional (S5-1): always include it in the payload so
+    # narration_generator receives a consistent dict regardless of whether
+    # the student filled the per-book context form.
+    base.setdefault("book_context", "")
     base["_total_sections"] = len(plan_segments) * len(_POST_PLANNER_FAN_OUT_NODES)
 
     sends: list[Send] = []

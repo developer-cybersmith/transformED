@@ -124,6 +124,7 @@ MODULES_DIR = API_ROOT / "app" / "modules"
 REQUEST_PATH_FILENAMES = (
     "router.py",
     "service.py",
+    "context.py",  # S5-10 AC4: book-context service called from content router
     "dna_fusion.py",
     "dna_growth.py",
     "ces.py",
