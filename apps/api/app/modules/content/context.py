@@ -15,8 +15,7 @@ from __future__ import annotations
 
 import logging
 
-from app.core.db import get_supabase
-from app.core.db import single_row
+from app.core.db import get_supabase, single_row
 
 logger = logging.getLogger(__name__)
 

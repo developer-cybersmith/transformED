@@ -170,8 +170,6 @@ class BookResponse(BaseModel):
     created_at: str | None = None
 
 
-from typing import Literal
-
 # §4.2 MCQ enum types — validated server-side so invalid option strings are
 # rejected at the API boundary (422) before reaching the DB.
 _PurposeValue = Literal[

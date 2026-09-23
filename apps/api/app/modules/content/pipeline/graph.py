@@ -1368,7 +1368,9 @@ _TIER_PROMPT_FRAMING: dict[str, str] = {
 }
 
 
-def _planner_system_prompt(tier_framing: str, chapter_context: str = "", book_context: str = "") -> tuple[str, bool]:
+def _planner_system_prompt(
+    tier_framing: str, chapter_context: str = "", book_context: str = ""
+) -> tuple[str, bool]:
     """The lesson_planner system prompt, shared by the single-call and batched
     paths (Story 2-16 RC-3) so both issue an identical instruction.
 
@@ -1443,7 +1445,9 @@ async def _run_planner_batch(
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
-    _planner_prompt, _planner_ctx_truncated = _planner_system_prompt(tier_framing, chapter_context, book_context)
+    _planner_prompt, _planner_ctx_truncated = _planner_system_prompt(
+        tier_framing, chapter_context, book_context
+    )
     if _planner_ctx_truncated:
         logger.warning(
             "[%s] _run_planner_batch: book_context truncated to 2000 chars — "
@@ -6260,7 +6264,8 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # S5-1/S5-9: True when any of the 3 book-context merge sites
                 # (lesson_planner, slide_generator, narration_generator) hit
                 # the 2,000-char budget. False / absent = context was not
-                # truncated. Admins can query lesson_jobs WHERE node_outputs->'book_context_truncated' = 'true'.
+                # truncated. Admins can query lesson_jobs
+                # WHERE node_outputs->'book_context_truncated' = 'true'.
                 "book_context_truncated": state.get("book_context_truncated", False),
             },
         }

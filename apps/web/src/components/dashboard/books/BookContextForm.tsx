@@ -177,15 +177,18 @@ export function BookContextForm({ bookId, isProcessing = false }: BookContextFor
     const [savedAt, setSavedAt] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
 
-    // Reset dismissed state when bookId changes so a new book always shows the form.
-    useEffect(() => {
+    // Reset dismissed state when bookId changes — "adjust during render" pattern
+    // avoids calling setState synchronously inside a useEffect.
+    const [prevBookId, setPrevBookId] = useState(bookId);
+    if (prevBookId !== bookId) {
+        setPrevBookId(bookId);
         setDismissed(false);
-    }, [bookId]);
+    }
 
     useEffect(() => {
         let cancelled = false;
-        setLoading(true);
         (async () => {
+            setLoading(true);
             try {
                 const ctx = await booksService.getBookContext(bookId);
                 if (!cancelled && ctx) {

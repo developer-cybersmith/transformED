@@ -1730,6 +1730,11 @@ async def get_chapter_context(
 
 @router.get(
     "/books/{book_id}/context",
+    response_model=None,
+    responses={
+        200: {"model": BookContextResponse},
+        204: {"description": "No context row exists for this book"},
+    },
     summary="Get saved per-book learning context",
 )
 async def get_book_context(
@@ -1756,12 +1761,12 @@ async def get_book_context(
             book_id=_validated_book_id(book_id),
             user_id=user_id,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("get_book_context: failed for book_id=%s", book_id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to load book context — please retry",
-        )
+        ) from exc
     if row is None:
         # RFC 7230: 204 MUST NOT include a message body — return Response
         # directly to avoid FastAPI serializing None as "null".

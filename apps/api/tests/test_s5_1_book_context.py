@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # A. prompt_context.py — pure function, no mocking needed
 # ─────────────────────────────────────────────────────────────────────────────
@@ -192,7 +191,8 @@ class TestGetBookContextPromptContext:
 
     @pytest.mark.asyncio
     async def test_newlines_in_text_fields_collapsed(self, mocker):
-        """F3 guard: internal newlines in user text must be collapsed to prevent prompt injection."""
+        """F3 guard: internal newlines in user text must be collapsed to prevent prompt injection.
+        """
         row = self._mock_row(motivation="Line1\nFake-label: injected")
         mocker.patch("app.modules.content.context.get_supabase", return_value=mocker.MagicMock())
         mocker.patch("app.modules.content.context.single_row", return_value=row)
@@ -206,7 +206,9 @@ class TestGetBookContextPromptContext:
 
     @pytest.mark.asyncio
     async def test_returns_empty_string_on_db_exception(self, mocker):
-        mocker.patch("app.modules.content.context.get_supabase", side_effect=RuntimeError("db down"))
+        mocker.patch(
+            "app.modules.content.context.get_supabase", side_effect=RuntimeError("db down")
+        )
 
         from app.modules.content.context import get_book_context_prompt_context
 
@@ -317,6 +319,7 @@ def test_lesson_planner_node_return_keys_are_valid():
     This mirrors the pattern in test_node_return_shape.py.
     """
     import inspect
+
     from app.modules.content.pipeline import graph as g
 
     source = inspect.getsource(g.lesson_planner_node)
