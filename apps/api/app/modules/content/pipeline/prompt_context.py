@@ -58,7 +58,7 @@ def merge_book_context(base_prompt: str, book_context: str) -> tuple[str, bool]:
 
     budget_slice = book_context[:_BOOK_CONTEXT_MAX_CHARS]
     last_newline = budget_slice.rfind("\n")
-    if last_newline > 0:
+    if last_newline != -1:
         truncated = budget_slice[:last_newline]
     else:
         # No newline in the budget — hard cut; field-boundary guarantee lost.

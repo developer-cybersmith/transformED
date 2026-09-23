@@ -726,6 +726,20 @@ The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch 
 
 ---
 
+## D159 — Double `_validated_book_id` call in `PUT` and `GET /books/{book_id}/context` router endpoints
+
+**Status:** DEFERRED · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-10, Dev 2 code review F12 finding on PR #244)
+
+`router.py`'s `upsert_book_context` and `get_book_context` handlers call `_validated_book_id(book_id, user)` once to obtain a validated UUID, then pass the original `book_id` string to the service layer rather than the validated result. This means the UUID-format check runs twice on the happy path (once in `_validated_book_id`, once implicitly via Supabase's UUID column cast) and the returned validated UUID is discarded. The redundancy is harmless — Supabase will raise a 400-equivalent if a malformed UUID reaches the DB, and `_validated_book_id` raises 404/422 before that — but it is surprising and deviates from how other endpoints in the same router use the helper.
+
+**Rationale for deferral:** The fix (pass `validated_id` to the service call) requires matching the function signatures of `upsert_book_context` and `get_book_context_row` in `context.py`, which are used in tests. The refactor is low-risk but not zero-risk, and the current behaviour is never wrong — the service call receives a string that is either a valid UUID (normal case) or a string that would have already caused a 404/422 (if `_validated_book_id` had not raised). Fixing in a dedicated story when endpoint-level router tests (D155) exist to verify the change.
+
+**Resolution path:** In the endpoint handlers, replace the `book_id` string argument with the validated UUID returned by `_validated_book_id`. Add the D155 integration tests first so the change is verifiable.
+
+**Enforcement:** DISCIPLINE — no guard test. Tracked per binding rule 5.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent

@@ -391,7 +391,7 @@ export const booksService = {
             return response.status === 204 ? null : response.data;
         } catch (error: unknown) {
             const status = (error as { response?: { status?: number } })?.response?.status;
-            if (status === 204 || status === 404) return null;
+            if (status === 404) return null;
             throw error;
         }
     },
