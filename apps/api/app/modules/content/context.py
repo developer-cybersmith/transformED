@@ -13,10 +13,13 @@ but is intentionally independent (different table, different precedence slot).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import Any
 
 from app.core.db import get_supabase, single_row
+from app.core.db import rows as db_rows
 
 logger = logging.getLogger(__name__)
 
@@ -102,13 +105,11 @@ async def get_book_context_prompt_context(book_id: str, user_id: str) -> str:
         return ""
 
     try:
-        import asyncio
-
         supabase = get_supabase()
         resp = await asyncio.to_thread(
             lambda: (
                 supabase.table("book_context")
-                .select(_BOOK_CONTEXT_COLUMNS)
+                .select(_BOOK_CONTEXT_COLUMNS)  # BOUNDED: maybe_single() returns at most one row.
                 .eq("book_id", book_id)
                 .eq("user_id", user_id)
                 .maybe_single()
@@ -181,9 +182,6 @@ async def upsert_book_context(
     Uses ON CONFLICT (book_id, user_id) DO UPDATE SET — atomic at Postgres
     level, no check-then-act race (Scale & Load Q6). Never raises 409.
     """
-    import asyncio
-    from datetime import UTC, datetime
-
     supabase = get_supabase()
     payload: dict[str, Any] = {
         "book_id": book_id,
@@ -205,12 +203,10 @@ async def upsert_book_context(
         lambda: (
             supabase.table("book_context")
             .upsert(payload, on_conflict="book_id,user_id")
-            .select(_BOOK_CONTEXT_COLUMNS)
+            .select(_BOOK_CONTEXT_COLUMNS)  # BOUNDED: UNIQUE(book_id,user_id) — at most one row.
             .execute()
         )
     )
-    from app.core.db import rows as db_rows
-
     saved_rows = db_rows(resp)
     if not saved_rows:
         raise RuntimeError("book_context upsert returned no row")
@@ -219,8 +215,6 @@ async def upsert_book_context(
 
 async def get_book_context_row(book_id: str, user_id: str) -> dict[str, Any] | None:
     """Fetch the raw book_context row or None if not saved."""
-    import asyncio
-
     if not book_id or not user_id:
         return None
 
@@ -228,7 +222,7 @@ async def get_book_context_row(book_id: str, user_id: str) -> dict[str, Any] | N
     resp = await asyncio.to_thread(
         lambda: (
             supabase.table("book_context")
-            .select(_BOOK_CONTEXT_COLUMNS)
+            .select(_BOOK_CONTEXT_COLUMNS)  # BOUNDED: maybe_single() returns at most one row.
             .eq("book_id", book_id)
             .eq("user_id", user_id)
             .maybe_single()

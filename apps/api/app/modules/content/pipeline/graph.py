@@ -71,6 +71,7 @@ from pydantic import BaseModel
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
 from app.core.db import rows, single_row
 from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace, traced_node
+from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
@@ -1886,14 +1887,13 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         has_chapter_context,
     )
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    # 2_000 mirrors prompt_context._BOOK_CONTEXT_MAX_CHARS — same budget,
-    # avoids importing the private constant here.
-    _lp_ctx_truncated = len(book_context) > 2_000
+    _lp_ctx_truncated = len(book_context) > _BOOK_CONTEXT_MAX_CHARS
     if _lp_ctx_truncated:
         logger.warning(
-            "[%s] lesson_planner_node: book_context exceeded 2000 chars — "
+            "[%s] lesson_planner_node: book_context exceeded %d chars — "
             "truncation occurred; setting book_context_truncated=True in state",
             lesson_id,
+            _BOOK_CONTEXT_MAX_CHARS,
         )
     return {
         "lesson_plan": lesson_plan,
@@ -3983,7 +3983,10 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     _narration_system_prompt, _narration_ctx_truncated = _merge_bc(
         _narration_base_prompt, _narration_book_context
     )
-    if _narration_ctx_truncated:
+    # lesson_planner_node (Phase 2, sequential, runs before this fan-out) already
+    # logged the truncation warning with the same book_context string. Suppress
+    # the per-section repeat to avoid N identical warnings for N dispatched sections.
+    if _narration_ctx_truncated and not state.get("book_context_truncated"):
         logger.warning(
             "[%s] narration_generator_node: book_context truncated to 2000 chars — "
             "narration will use partial context; admin: check lesson_jobs.node_outputs",
