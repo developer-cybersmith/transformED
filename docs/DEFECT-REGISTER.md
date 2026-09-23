@@ -726,7 +726,7 @@ The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch 
 
 ---
 
-## D159 — Double `_validated_book_id` call in `PUT` and `GET /books/{book_id}/context` router endpoints
+## D167 — Double `_validated_book_id` call in `PUT` and `GET /books/{book_id}/context` router endpoints
 
 **Status:** DEFERRED · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-10, Dev 2 code review F12 finding on PR #244)
 

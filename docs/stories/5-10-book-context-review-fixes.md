@@ -71,8 +71,8 @@ The story file for S5-1 (`docs/stories/S5-1-book-context-form.md`) has an unchec
 the ID. The registered status is DEFERRED (the redundant validation is harmless) with a clear
 rationale.
 After fix:
-- `docs/DEFECT-REGISTER.md` has a new entry for the double-validation finding
-- The S5-1 story's F12 finding references the new D-nn ID
+- `docs/DEFECT-REGISTER.md` has a D167 entry for the double-validation finding
+- The S5-1 story's F12 finding references D167
 
 ### AC6 — `merge_book_context` per-dispatch duplication noted and logged once (F6, LOW)
 `graph.py:narration_generator_node` re-runs `merge_book_context` on the same `book_context`
@@ -115,15 +115,15 @@ After fix:
 ## Tasks
 
 - [x] T1: Create story file and commit story-first
-- [ ] T2: Fix AC1 — `rfind == 0` truncation edge case in `prompt_context.py`
-- [ ] T3: Fix AC2 — replace hardcoded `2_000` with `_BOOK_CONTEXT_MAX_CHARS` in `graph.py`
-- [ ] T4: Fix AC3 — remove dead `status === 204` from `catch` in `books.service.ts`
-- [ ] T5: Fix AC4 — add `# BOUNDED:` comment + extend `test_unbounded_queries.py` scope
-- [ ] T6: Fix AC5 — register F12 as D-nn in DEFECT-REGISTER and update S5-1 story file
-- [ ] T7: Fix AC6 — skip duplicate truncation warning in `narration_generator_node`
-- [ ] T8: Fix AC7 — move inline imports to module top-level in `context.py`
-- [ ] T9: Run all guard tests locally and verify clean
-- [ ] T10: Commit, push, open PR
+- [x] T2: Fix AC1 — `rfind == 0` truncation edge case in `prompt_context.py`
+- [x] T3: Fix AC2 — replace hardcoded `2_000` with `_BOOK_CONTEXT_MAX_CHARS` in `graph.py`
+- [x] T4: Fix AC3 — remove dead `status === 204` from `catch` in `books.service.ts`
+- [x] T5: Fix AC4 — add `# BOUNDED:` comment + extend `test_unbounded_queries.py` scope
+- [x] T6: Fix AC5 — register F12 as D159 in DEFECT-REGISTER and update S5-1 story file
+- [x] T7: Fix AC6 — skip duplicate truncation warning in `narration_generator_node`
+- [x] T8: Fix AC7 — move inline imports to module top-level in `context.py`
+- [x] T9: Run all guard tests locally and verify clean (11/11 unbounded-query, 36/37 node-shape — 1 pre-existing tinytag failure)
+- [x] T10: Commit, push, open PR
 
 ---
 

@@ -24,9 +24,13 @@ import logging
 logger = logging.getLogger(__name__)
 
 # 2,000-character hard cap on the book-context block in the merged prompt.
-# Derivation: GPT-4o 128k token context × ~1.5% budget for book context ≈
-# 1,920 tokens × ~1 char/token average ≈ 2,000 chars. Re-derive if prompt
-# structure changes significantly (e.g. large tier-framing additions).
+# Derivation: GPT-4o 128k token context × ~1.5% budget ≈ 1,920 tokens.
+# English text averages ~4 chars/token → 1,920 × 4 ≈ 7,680 chars of headroom.
+# 2,000 is deliberately conservative: schemas.py caps each free-text field at
+# 500 chars (3 fields × 500 + labels ≈ 1,948 chars max), so 2,000 is a safe
+# ceiling that prevents any schema-valid input from being truncated in practice.
+# If prompt structure changes (e.g. large tier-framing additions), raise this
+# cap toward 7,680 — do not lower input field limits instead.
 _BOOK_CONTEXT_MAX_CHARS: int = 2_000
 
 # Marker appended when the block is truncated so the recipient knows context

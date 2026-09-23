@@ -71,6 +71,7 @@ from pydantic import BaseModel
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
 from app.core.db import rows, single_row
 from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace, traced_node
+from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
 
@@ -1886,8 +1887,6 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         has_chapter_context,
     )
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
-
     _lp_ctx_truncated = len(book_context) > _BOOK_CONTEXT_MAX_CHARS
     if _lp_ctx_truncated:
         logger.warning(

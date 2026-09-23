@@ -83,6 +83,32 @@ class TestMergeBookContext:
         merge_book_context, max_chars, marker = self._import()
         assert "truncated" in marker.lower()
 
+    def test_rfind_zero_produces_empty_truncated_context(self):
+        """AC1 regression guard (S5-10): when the only newline in the budget window
+        is at index 0, rfind returns 0. The old guard (> 0) treated this as
+        "no newline found" and did a hard cut. The new guard (!= -1) correctly
+        detects the newline at position 0, producing budget_slice[:0] == "".
+        The function returns (merged, True) with the truncation marker — not
+        silent — but zero context chars reach the LLM in this edge case.
+
+        This test documents and guards the exact input shape: a book_context
+        whose first character is \\n with no subsequent newline within the budget.
+        Current callers of merge_book_context always produce context starting
+        with "[Book Context]" (never \\n), so this edge case is not triggered in
+        practice, but any future direct caller of merge_book_context must be aware.
+        """
+        merge_book_context, max_chars, marker = self._import()
+        # A context whose first char is a newline; the rest has no newlines.
+        # rfind("\n") on budget_slice returns 0 — the AC1 edge case.
+        ctx = "\n" + "x" * (max_chars + 10)
+        merged, was_truncated = merge_book_context("Base.", ctx)
+        assert was_truncated is True
+        assert marker in merged
+        # budget_slice[:0] == "" — zero context bytes reach the LLM.
+        # The marker contains the letter "x" (in "context"), so check for the
+        # repeated "xx" pattern that is only present in the book_context content.
+        assert "xx" not in merged
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # B. context.get_book_context_prompt_context — formatting
@@ -326,4 +352,32 @@ def test_lesson_planner_node_return_keys_are_valid():
     assert "**state" not in source, (
         "lesson_planner_node must not spread **state — this causes reducer-channel duplication. "
         "Return only the keys this node owns."
+    )
+
+
+def test_narration_generator_suppresses_duplicate_truncation_warning():
+    """AC6 guard (S5-10): narration_generator_node must not emit a second
+    truncation warning when book_context_truncated is already True in state
+    (set by lesson_planner_node which runs sequentially before the narration
+    fan-out).
+
+    We inspect the source to confirm the guard condition exists. A source-level
+    check mirrors the test_node_return_shape.py pattern and fails CI if the
+    guard is removed.
+    """
+    import inspect
+
+    from app.modules.content.pipeline import graph as g
+
+    source = inspect.getsource(g.narration_generator_node)
+    assert 'state.get("book_context_truncated")' in source, (
+        "narration_generator_node must guard the truncation warning with "
+        'not state.get("book_context_truncated") to suppress duplicate '
+        "warnings when lesson_planner_node already logged the truncation."
+    )
+    # Confirm the guard is used in conjunction with the truncation flag check,
+    # not as a standalone condition.
+    assert "_narration_ctx_truncated and not state.get" in source, (
+        "The guard must be: 'if _narration_ctx_truncated and not state.get(...)'"
+        " — the merge_book_context call must still run for the merged string."
     )
