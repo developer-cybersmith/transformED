@@ -13,6 +13,7 @@ import {
 
 interface BookContextFormProps {
     bookId: string;
+    isProcessing?: boolean;
 }
 
 // ── §4.2 MCQ option definitions ──────────────────────────────────────────────
@@ -168,7 +169,7 @@ function TrueFalseToggle({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function BookContextForm({ bookId }: BookContextFormProps) {
+export function BookContextForm({ bookId, isProcessing = false }: BookContextFormProps) {
     const [dismissed, setDismissed] = useState(false);
     const [values, setValues] = useState<FormValues>(EMPTY);
     const [loading, setLoading] = useState(true);
@@ -239,7 +240,9 @@ export function BookContextForm({ bookId }: BookContextFormProps) {
                         Tell us about this book
                     </h2>
                     <p className="mt-0.5 text-sm text-neutral-500">
-                        Optional — helps personalise every lesson we generate from it.
+                        {isProcessing
+                            ? "While your book is being analysed — tell us how you’ll use it."
+                            : "Optional — helps personalise every lesson we generate from it."}
                     </p>
                 </div>
                 <button

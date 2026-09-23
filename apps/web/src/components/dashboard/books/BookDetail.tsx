@@ -64,11 +64,16 @@ export function BookDetail({ bookId }: { bookId: string }) {
                 )}
             </div>
 
-            {/* Story S5-1 (Issue #231): per-book personalization form.
-                Shown only when the book is ready — never during processing or failed.
-                Fully optional; doesn't block chapter generation. */}
-            {book?.status === "ready" && (
-                <BookContextForm bookId={bookId} />
+            {/* S5-9: Show the form as soon as the book record exists, so the learner
+                can fill it while chapters are detecting — form-filling and chapter
+                detection run in parallel (industry-standard "upload + form during
+                processing" UX). Hidden only when the book failed to process (no
+                chapters will ever appear; the form context would be wasted). */}
+            {book != null && book.status !== "failed" && (
+                <BookContextForm
+                    bookId={bookId}
+                    isProcessing={book.status === "processing"}
+                />
             )}
 
             {/* A poll failure must not hide chapters the student can already see. */}
