@@ -72,7 +72,7 @@ processing spinner below → when chapters are ready, chapter list appears below
 - [x] **TR3** — HTTP 204 returns `Response(status_code=204)` not `None` (RFC 7230 compliance, Blind Hunter)
 - [x] **TR4** — `merge_book_context` returns `tuple[str, bool]`; truncation flag wired through 3 nodes and persisted in `lesson_jobs.node_outputs` via `package_builder_node` (Scale & Load — surfaced degradation requirement)
 - [x] **TR5** — `BookContextForm.test.tsx` added with 4 tests covering AC5, AC6, AC8 (Test Coverage)
-- [x] **TR6** — Deferred findings registered: D154 (PII in Langfuse), D155 (missing TestClient tests), D156 (branch stacking), D157 (no rate limit on upsert), D158 (no DB CHECK constraints)
+- [x] **TR6** — Deferred findings registered: D174 (PII in Langfuse), D175 (missing TestClient tests), D176 (branch stacking), D177 (no rate limit on upsert), D178 (no DB CHECK constraints)
 
 ## Dev Notes
 
@@ -130,7 +130,7 @@ This story modifies `BookDetail.tsx` and `BookContextForm.tsx`. Check before pus
 ### Debug Log
 
 - **2026-09-23**: All AC1–AC11 implemented; 6-agent BMAD review completed.
-- **Review findings**: 5 HIGH-severity findings fixed inline (MCQ sanitization, try/except on GET, RFC 7230 204 fix, truncation flag wired through package_builder, AC5/AC6/AC8 frontend tests). 5 MEDIUM/LOW findings deferred to D154–D158.
+- **Review findings**: 5 HIGH-severity findings fixed inline (MCQ sanitization, try/except on GET, RFC 7230 204 fix, truncation flag wired through package_builder, AC5/AC6/AC8 frontend tests). 5 MEDIUM/LOW findings deferred to D174–D178.
 - **merge_book_context tuple refactor**: Changed return type from `str` to `tuple[str, bool]`; updated all 7 `TestMergeBookContext` test methods to unpack the tuple and assert `was_truncated`.
 - **AC5 regex issue**: `BookContextForm.tsx` uses `’` (curly apostrophe) in subtitle — regex with straight `'` won't match. Fixed by splitting into two assertions: `findByText(/While your book is being analysed/i)` + `toMatch(/tell us how you.*ll use it/i)`.
 - **AC8 fireEvent**: Raw DOM `.click()` doesn't trigger React synthetic events in jsdom. Fixed by using `fireEvent.click(element)` from `@testing-library/react`.
@@ -143,7 +143,7 @@ All acceptance criteria (AC1–AC11) satisfied. BMAD 6-agent review passed after
 - `tests/test_s5_1_book_context.py`: 26 passed
 - `apps/web` vitest: 55 passed (including 4 new BookContextForm.test.tsx tests)
 
-**Deferred to defect register**: D154 (PII Langfuse), D155 (missing TestClient tests), D156 (branch stacking process note), D157 (rate limiting), D158 (DB CHECK constraints).
+**Deferred to defect register**: D174 (PII Langfuse), D175 (missing TestClient tests), D176 (branch stacking process note), D177 (rate limiting), D178 (DB CHECK constraints).
 
 **Pending user action**: Apply `supabase/migrations/20260921000000_book_context.sql` to production Supabase (DB change rule — user must run this themselves).
 
@@ -158,7 +158,7 @@ All acceptance criteria (AC1–AC11) satisfied. BMAD 6-agent review passed after
 - `apps/api/app/modules/content/pipeline/prompt_context.py` — `merge_book_context` returns `tuple[str, bool]`
 - `apps/api/app/modules/content/pipeline/graph.py` — truncation flag wired through 3 nodes + package_builder
 - `apps/api/tests/test_s5_1_book_context.py` — updated for tuple return (7 TestMergeBookContext methods)
-- `docs/DEFECT-REGISTER.md` — D154–D158 registered
+- `docs/DEFECT-REGISTER.md` — D174–D178 registered
 - `docs/stories/5-9-book-context-processing-ux.md` — this file
 
 ### Change Log
