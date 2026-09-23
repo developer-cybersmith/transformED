@@ -4128,7 +4128,11 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     return {
         "narration_scripts": [result],
         "section_truncations": section_truncations,
-        "book_context_truncated": _narration_ctx_truncated,
+        # book_context_truncated is NOT returned here: narration_generator runs
+        # in PARALLEL (N concurrent dispatches) and LangGraph raises
+        # InvalidUpdateError on concurrent writes to a non-reducer channel.
+        # lesson_planner_node (sequential, runs before this fan-out) already
+        # sets book_context_truncated — same book_context string, same result.
     }
 
 
@@ -6390,6 +6394,10 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
 
     state_any: dict[str, Any] = cast("dict[str, Any]", state)
     base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    # book_context is optional (S5-1): lessons without a saved context have it
+    # absent from state. Always include it in the payload so Phase-1 nodes
+    # receive a consistent dict regardless of whether the student filled the form.
+    base.setdefault("book_context", "")
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
     # Uses _PHASE1_INSTRUMENTED_NODES (all 5 as of issue #236 — narration_generator
@@ -6476,6 +6484,10 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
 
     state_any: dict[str, Any] = cast("dict[str, Any]", state)
     base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    # book_context is optional (S5-1): always include it in the payload so
+    # narration_generator receives a consistent dict regardless of whether
+    # the student filled the per-book context form.
+    base.setdefault("book_context", "")
     base["_total_sections"] = len(plan_segments) * len(_POST_PLANNER_FAN_OUT_NODES)
 
     sends: list[Send] = []
