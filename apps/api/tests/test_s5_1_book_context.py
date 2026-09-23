@@ -25,6 +25,7 @@ class TestMergeBookContext:
             _TRUNCATION_MARKER,
             merge_book_context,
         )
+
         return merge_book_context, _BOOK_CONTEXT_MAX_CHARS, _TRUNCATION_MARKER
 
     def test_empty_context_returns_base_unchanged(self):
@@ -191,8 +192,7 @@ class TestGetBookContextPromptContext:
 
     @pytest.mark.asyncio
     async def test_newlines_in_text_fields_collapsed(self, mocker):
-        """F3 guard: internal newlines in user text must be collapsed to prevent prompt injection.
-        """
+        """F3 guard: newlines in user text must be collapsed to prevent prompt injection."""
         row = self._mock_row(motivation="Line1\nFake-label: injected")
         mocker.patch("app.modules.content.context.get_supabase", return_value=mocker.MagicMock())
         mocker.patch("app.modules.content.context.single_row", return_value=row)
