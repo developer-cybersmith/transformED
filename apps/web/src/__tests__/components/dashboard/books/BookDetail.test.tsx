@@ -1,13 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-const { useBookMock, useChaptersMock } = vi.hoisted(() => ({
+const { useBookMock, useChaptersMock, bookContextFormMock } = vi.hoisted(() => ({
     useBookMock: vi.fn(),
     useChaptersMock: vi.fn(),
+    bookContextFormMock: vi.fn(),
 }));
 
 vi.mock('@/hooks/useBooks', () => ({ useBook: useBookMock }));
 vi.mock('@/hooks/useChapters', () => ({ useChapters: useChaptersMock }));
+// S5-9: mock BookContextForm so we can assert mount/props without triggering
+// its own getBookContext fetch. Default returns null (same as the real
+// component's loading state) so existing tests are unaffected.
+vi.mock('@/components/dashboard/books/BookContextForm', () => ({
+    BookContextForm: bookContextFormMock,
+}));
 
 import { BookDetail } from '@/components/dashboard/books/BookDetail';
 import {
@@ -25,6 +32,10 @@ function ok<T>(data: T) {
 beforeEach(() => {
     useBookMock.mockReset();
     useChaptersMock.mockReset();
+    // Reset call history AND set default return value so existing chapter/text
+    // assertions are unaffected (same as real component's initial loading=true state).
+    bookContextFormMock.mockReset();
+    bookContextFormMock.mockReturnValue(null);
 });
 
 describe('BookDetail', () => {
@@ -96,5 +107,41 @@ describe('BookDetail', () => {
         render(<BookDetail bookId={BOOK_READY.book_id} />);
 
         expect(screen.getByText('Loading intelligence...')).not.toBeNull();
+    });
+
+    // ── S5-9: BookContextForm mount conditions ──────────────────────────────
+
+    it('S5-9 AC2: mounts BookContextForm with isProcessing=true when book is processing', () => {
+        useBookMock.mockReturnValue(ok(BOOK_PROCESSING));
+        useChaptersMock.mockReturnValue(ok([]));
+
+        render(<BookDetail bookId={BOOK_PROCESSING.book_id} />);
+
+        expect(bookContextFormMock).toHaveBeenCalledWith(
+            expect.objectContaining({ bookId: BOOK_PROCESSING.book_id, isProcessing: true }),
+            undefined,
+        );
+    });
+
+    it('S5-9 AC3/AC6: mounts BookContextForm with isProcessing=false when book is ready', () => {
+        useBookMock.mockReturnValue(ok(BOOK_READY));
+        useChaptersMock.mockReturnValue(ok(CHAPTERS_CAPTURED));
+
+        render(<BookDetail bookId={BOOK_READY.book_id} />);
+
+        expect(bookContextFormMock).toHaveBeenCalledWith(
+            expect.objectContaining({ bookId: BOOK_READY.book_id, isProcessing: false }),
+            undefined,
+        );
+    });
+
+    it('S5-9 AC4: does NOT mount BookContextForm when book has failed', () => {
+        const failedBook = { ...BOOK_READY, status: 'failed' as const };
+        useBookMock.mockReturnValue(ok(failedBook));
+        useChaptersMock.mockReturnValue(ok([]));
+
+        render(<BookDetail bookId={failedBook.book_id} />);
+
+        expect(bookContextFormMock).not.toHaveBeenCalled();
     });
 });
