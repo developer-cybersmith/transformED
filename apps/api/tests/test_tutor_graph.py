@@ -992,6 +992,9 @@ async def test_quizzing_node_writes_quiz_deadline_at(mocker) -> None:
     deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
     assert len(deadline_calls) == 1, "quiz_deadline_at must be written exactly once"
     written = int(deadline_calls[0].args[1])
+    # 300 is this test's OWN Redis value, deliberately not the T2 default
+    # (S5-4 moved that to 180): the property here is "the stored value is
+    # honoured", which is only meaningful if it differs from the fallback.
     assert before + 300 <= written <= after + 300
     assert deadline_calls[0].kwargs.get("ex") == 86400
 
@@ -1019,7 +1022,20 @@ async def test_quizzing_node_uses_t1_qa_seconds(mocker) -> None:
 
 @pytest.mark.unit
 async def test_quizzing_node_fallback_300_when_qa_seconds_missing(mocker) -> None:
-    """AC1: missing qa_phase_seconds key → quizzing_node falls back to 300 s (T2 default)."""
+    """AC1: missing qa_phase_seconds key -> quizzing_node falls back to the T2 default.
+
+    Story S5-4 rebased that default from 300 s to 180 s: the tier's minutes are
+    now TOTAL SEAT TIME and the Q&A phase is the 10% share of it, subtracted
+    from the advertised duration instead of added on top. This Redis-miss
+    fallback was a hardcoded 300 — a fourth independent copy of the same
+    number that the "one source of truth" consolidation would have left
+    behind, silently handing a 5-minute window to any session whose key
+    expired. Derived from the shared table here so the test cannot drift from
+    the value it is asserting.
+    """
+    from app.schemas.lesson import DEFAULT_TIER, qa_budget_seconds
+
+    expected = qa_budget_seconds(DEFAULT_TIER)
     import time as _time
 
     sid = "s-qdl-fb"
@@ -1035,7 +1051,7 @@ async def test_quizzing_node_fallback_300_when_qa_seconds_missing(mocker) -> Non
     deadline_calls = [c for c in redis.set.call_args_list if "quiz_deadline_at" in c.args[0]]
     assert len(deadline_calls) == 1
     written = int(deadline_calls[0].args[1])
-    assert before + 300 <= written <= after + 300
+    assert before + expected <= written <= after + expected
 
 
 @pytest.mark.unit

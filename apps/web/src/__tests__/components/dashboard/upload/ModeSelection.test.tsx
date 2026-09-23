@@ -79,8 +79,12 @@ describe('ModeSelection', () => {
     // disclaimer says content is PLANNED to fit the time rather than trimmed to
     // it after the fact. The property under test is unchanged — Balanced must
     // still warn that choosing less time means covering less.
+    //
+    // Deliberately matches ONLY the new wording: an OR across both spellings
+    // would admit the pre-S5-4 copy too, and this is the only test standing
+    // between AC19 and a silent revert of it.
     const balancedCard = screen.getByText('Balanced').closest('button')!;
-    expect(balancedCard.textContent).toMatch(/planned to fit|trimmed|condensed/i);
+    expect(balancedCard.textContent).toMatch(/planned to fit/i);
     expect(balancedCard.textContent).toMatch(/time/i);
   });
 

@@ -395,10 +395,18 @@ async def test_narration_fan_out_payload_carries_every_declared_key_plus_plan_se
             assert k in send.arg, f"{send.node} payload missing {k}"
         plan_segment = send.arg["_plan_segment"]
         # S5-4 (AC9) adds duration_min: this segment's share of the lesson's
-    # narration budget, which narration_generator_node turns into an explicit
-    # word target. It rides _plan_segment rather than _FAN_OUT_STATE_KEYS
-    # precisely so no new fan-out key is introduced.
-    assert set(plan_segment) == {"segment_id", "title", "continuity_notes", "duration_min"}
+        # narration budget, which narration_generator_node turns into an
+        # explicit word target. It rides _plan_segment rather than
+        # _FAN_OUT_STATE_KEYS precisely so no new fan-out key is introduced.
+        assert set(plan_segment) == {"segment_id", "title", "continuity_notes", "duration_min"}
+        # Presence is not enough: a None here silently disables the word budget
+        # for that segment (narration falls back to no length instruction at
+        # all), which is the pre-S5-4 behaviour wearing a post-S5-4 key.
+        assert isinstance(plan_segment["duration_min"], (int, float)), (
+            f"{send.arg['_plan_segment']['segment_id']}: duration_min must be a real "
+            "number — a missing/None value silently restores the unbudgeted narration"
+        )
+        assert plan_segment["duration_min"] > 0
 
 
 @pytest.mark.unit

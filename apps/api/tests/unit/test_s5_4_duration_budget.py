@@ -1,7 +1,12 @@
 """Story S5-4 — duration-driven lessons (enforced 15/30/45 min seat time).
 
-RED before implementation, GREEN after. Covers the pure/arithmetic ACs; the
-node-level wiring ACs are covered in test_s5_4_duration_pipeline.py.
+RED before implementation, GREEN after. Covers the pure/arithmetic ACs and the
+planner-prompt shape. The node-level wiring ACs are covered where the behaviour
+already has a home: test_fan_out_state_keys.py (budget threading through the
+real fan-out), test_lesson_planner_node.py (rescale + slide budgets),
+test_quiz_generator_tier.py (allocation + zero-allocation skip) and
+tests/integration/test_tier_differentiation_and_cost.py (lesson totals end to
+end).
 
 Everything here asserts an observable value (a constant, a returned budget, a
 prompt string), never a conversation with a mock — binding rule 2 of

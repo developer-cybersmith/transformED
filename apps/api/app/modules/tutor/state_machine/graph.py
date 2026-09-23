@@ -325,8 +325,15 @@ async def quizzing_node(state: TutorMachineState) -> TutorMachineState:
         from app.core.redis import get_redis  # noqa: PLC0415
 
         redis = get_redis()
+        from app.schemas.lesson import DEFAULT_TIER, qa_budget_seconds  # noqa: PLC0415
+
         qa_raw = await redis.get(f"session:{session_id}:qa_phase_seconds")
-        qa_secs = int(qa_raw) if qa_raw else 300  # T2 default
+        # S5-4: derived from the shared seat-time table rather than a literal.
+        # This Redis-miss fallback was a hardcoded 300 — a fourth independent
+        # copy of the Q&A default that the "one source of truth" consolidation
+        # would have left behind, silently handing a 5-minute window to any
+        # session whose Redis key expired after the table moved to 3 minutes.
+        qa_secs = int(qa_raw) if qa_raw else qa_budget_seconds(DEFAULT_TIER)
         qa_secs = max(
             30, min(3600, qa_secs)
         )  # clamp: prevent deadline backdating via Redis injection

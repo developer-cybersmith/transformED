@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.config import get_settings
-from app.modules.content.pipeline.graph import _quiz_budget_per_segment
+from app.schemas.lesson import quiz_budget_seconds
 
 # Force the submodule into sys.modules so patch("app.providers.llm.openai...")
 # resolves (graph.py uses lazy in-function imports).
@@ -491,23 +491,30 @@ async def test_howto_runs_through_real_graph_and_produces_valid_package() -> Non
     # What still catches reducer-channel duplication is the LESSON total: any
     # re-append multiplies it by a power of two, which the exact-total assertion
     # below rejects just as sharply as the old per-segment band did.
-    t2_total = sum(
-        _quiz_budget_per_segment(
-            "T2",
-            [float(len(sec.get("body", "") or "")) for sec in segments],
-            get_settings().quiz_seconds_per_question,
-        )
-    )
     qids = [q["question_id"] for seg in segments for q in seg["quiz"]]
     assert len(qids) == len(set(qids)), (
         f"duplicate question_id across the package: {len(qids)} total vs "
         f"{len(set(qids))} unique — reducer-channel duplication"
     )
+    # EXACT equality, not a ceiling. An earlier version of this S5-4 rewrite
+    # asserted `actual_total <= budget`, which is blind in the direction that
+    # matters most: a lesson that shipped ZERO questions, or half of them,
+    # passes a ceiling silently — the "cheap wrong, not expensive" class the
+    # Scale Contract exists for. Any reducer re-append multiplies the total by
+    # a power of two and any under-allocation reduces it; exact equality
+    # rejects both.
+    #
+    # The expected total is the tier's whole lesson budget, which is what the
+    # fan-out allocates and is independent of how the sections are weighted —
+    # deliberately NOT recomputed from `segments`, because PACKAGE segments
+    # carry no `body` key, so weighting off them silently yields all-zero
+    # weights and an allocation that is only right by accident.
+    t2_total = int(quiz_budget_seconds("T2") // get_settings().quiz_seconds_per_question)
     actual_total = sum(len(s["quiz"]) for s in segments)
-    assert actual_total <= t2_total, (
+    assert actual_total == t2_total, (
         f"package holds {actual_total} quiz questions against T2's lesson budget of "
-        f"{t2_total}; an exact multiple means a reducer channel was re-appended "
-        "(see Story 2-28)"
+        f"{t2_total} — a multiple means a reducer channel was re-appended (Story "
+        "2-28); a shortfall means the allocation silently under-delivered (S5-4)"
     )
     # glossary comes from the jargon_extractor operator.add channel — the fixture
     # emits one term per section, so duplication shows up here too.

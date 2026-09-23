@@ -75,6 +75,7 @@ from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import (
     TIER_SEAT_MINUTES,
     narration_budget_minutes,
+    qa_budget_seconds,
     quiz_budget_seconds,
 )
 from app.schemas.lesson import VALID_TIERS as _VALID_TIERS
@@ -1366,6 +1367,13 @@ _SOURCE_CHARS_PER_WORD = 6.0
 # guardrails exist to prevent (S5-4/D-E: short chapters run SHORT, never padded).
 _NARRATION_WORDS_PER_SOURCE_WORD = 1.0
 
+# Smallest narration budget worth instructing a model with. Below this the
+# prompt degenerates ("Aim for about 1 words") while the lesson still pays for
+# planning, slides, images and TTS. Floors the GENERATION target only — the
+# measured capacity is reported unfloored, so `duration_report.capacity_min`
+# still tells an admin what the source could genuinely support.
+_MIN_VIABLE_NARRATION_MIN = 1.0
+
 
 def _effective_narration_wpm(settings: Any) -> float:  # noqa: ANN401 — Settings, imported locally
     """Words of narration that occupy one minute of REAL audio.
@@ -1377,7 +1385,7 @@ def _effective_narration_wpm(settings: Any) -> float:  # noqa: ANN401 — Settin
     150 words occupy ~1.18 minutes, not 1.0. At T1 that is a ~5-minute miss on
     a 29.25-minute budget.
 
-    KNOWN ASSUMPTION (registered in the story's Scale & Load Q5, not hidden):
+    KNOWN ASSUMPTION — D175 (docs/DEFECT-REGISTER.md), not just a comment:
     this uses Sarvam's pace because Sarvam is the primary TTS tier. A lesson
     that falls back to Azure or browser speech synthesises at a different pace,
     so its measured duration can miss the target by more than the tolerance
@@ -1803,13 +1811,37 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     tier_budget_min = narration_budget_minutes(tier)
     # Mirrors `_get_section_body`'s own cap: capacity must reflect the text the
     # LLM will actually be shown, not the text the PDF holds.
+    _sections_for_capacity = state.get("sections") or []
     total_source_chars = sum(
         min(len(s.get("body", "") or ""), settings.section_body_max_chars)
-        for s in state.get("sections", [])
+        for s in _sections_for_capacity
     )
     capacity_min = _narration_capacity_minutes(total_source_chars, effective_wpm)
-    content_limited = 0 < capacity_min < tier_budget_min
-    narration_budget_min = capacity_min if content_limited else tier_budget_min
+    # `capacity_min == 0` means there is no extractable text at all (an
+    # image-only or failed-OCR chapter). Treating that as "not content
+    # limited" would hand it the FULL tier budget and later blame the
+    # generator (`target_missed`) for a lesson the source could never have
+    # filled — so it is the most content-limited case there is, not an
+    # exception to the rule. The pipeline still runs: structure_node's own
+    # zero-section guard is what rejects a genuinely empty chapter, and a
+    # chapter with sections but no usable body should surface as a recorded
+    # degradation rather than a silent full-length claim.
+    # "No sections to measure" is UNKNOWN capacity, not zero capacity — the
+    # gate only applies when there is something to measure. Without this
+    # distinction a state that simply doesn't carry `sections` (a resumed run
+    # whose checkpoint predates this, or any caller that passes summaries
+    # alone) would be declared content-limited on no evidence and planned to
+    # the floor. Sections present but empty IS zero capacity, and is handled.
+    content_limited = bool(_sections_for_capacity) and capacity_min < tier_budget_min
+    # Floor the GENERATION target (never the recorded capacity): a chapter that
+    # extracts to a few hundred characters gives a capacity of ~0.08 min, which
+    # would put "Aim for about 1 words" into every segment's prompt while the
+    # lesson still pays for planning, slides, images and TTS. The floor keeps
+    # the instruction coherent; `capacity_min` is reported unfloored so the
+    # duration_report shows what the source could actually support.
+    narration_budget_min = (
+        max(capacity_min, _MIN_VIABLE_NARRATION_MIN) if content_limited else tier_budget_min
+    )
     if content_limited:
         logger.warning(
             "[%s] lesson_planner_node: tier %s budgets %.2f min of narration but the "
@@ -3164,15 +3196,45 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
     # deploy, or a hand-built state in a test) falls back to an even share of
     # the tier budget rather than to the deleted band, so no caller has to know
     # about the allocation to get a sane count.
+    # `isinstance(True, int)` is True in Python, so bools are excluded
+    # explicitly — a stray True would otherwise be read as "1 question".
     _allocated = state.get("_quiz_count")
-    if isinstance(_allocated, int) and _allocated >= 0:
+    if isinstance(_allocated, int) and not isinstance(_allocated, bool) and _allocated >= 0:
         n_questions = _allocated
     else:
-        total_sections = max(1, len(state.get("sections", [])) or 1)
-        n_questions = max(
-            0,
-            int(quiz_budget_seconds(tier) // max(1, get_settings().quiz_seconds_per_question))
-            // total_sections,
+        # Fallback: run the SAME allocator over this state's sections and take
+        # this section's share. An earlier version divided the lesson total by
+        # the section count with integer division, which silently produced a
+        # QUIZ-FREE LESSON for two of three tiers at realistic sizes — T2 over
+        # 15 sections is 10 // 15 == 0 for every section, T3 over 6 is 5 // 6
+        # == 0 — a lesson that reports success with no assessment in it at all.
+        # Reusing the allocator keeps the lesson total correct (largest
+        # remainder) instead of rounding it away.
+        _sections = state.get("sections") or []
+        _cap = get_settings().section_body_max_chars
+        _weights = [float(min(len(s.get("body", "") or ""), _cap)) for s in _sections]
+        _idx = state.get("_section_index", 0)
+        if _weights and 0 <= _idx < len(_weights):
+            n_questions = _quiz_budget_per_segment(
+                tier, _weights, get_settings().quiz_seconds_per_question
+            )[_idx]
+        else:
+            # No section list to allocate over. `sections` is NOT in
+            # _FAN_OUT_STATE_KEYS and a Send() payload REPLACES state, so this
+            # is the normal shape of a real dispatch that predates `_quiz_count`
+            # — not an exotic hand-built case. Falling back to the whole-lesson
+            # budget here would give EVERY segment the full 16 (T1), i.e. 240
+            # questions for a 15-segment lesson: five times worse than the
+            # per-segment band this story removed. One question is the only
+            # safe floor when the lesson's shape is unknown.
+            n_questions = 1
+        logger.info(
+            "[%s] quiz_generator_node: %s — no _quiz_count in the dispatch payload "
+            "(pre-S5-4 resume or direct call); re-derived %d from tier %s's lesson budget",
+            lesson_id,
+            section_id,
+            n_questions,
+            tier,
         )
 
     # AC13: a zero allocation is a real, expected outcome — T3 buys 5 questions
@@ -3243,6 +3305,32 @@ async def quiz_generator_node(state: PipelineState) -> PipelineState:
         cached_tier = cached_batch.get("tier")
         if cached_tier is not None:
             if cached_tier == tier:
+                # S5-4: a matching tier stamp is no longer sufficient. Story
+                # 2-31's stamp proved WHICH TIER a batch was generated under,
+                # back when tier alone fixed the count (T1 => 3-5 per segment).
+                # Under S5-4 the count comes from a lesson-level budget divided
+                # across segments, so a checkpoint written before this deploy
+                # carries the right tier and the WRONG COUNT — T1's old band
+                # gave every section 3-5 questions where the budget now
+                # allocates 1-2. Serving it verbatim on an ARQ retry silently
+                # restores the pre-S5-4 quiz volume, i.e. exactly the seat-time
+                # overrun this story exists to remove, on the one path nobody
+                # watches. Oversized batches are truncated by the caller
+                # (`questions[:n_max]`); anything larger than the allocation is
+                # therefore safe to accept, but a batch that is too LARGE for
+                # the budget must not be served whole.
+                if len(cached_batch["questions"]) > n_max:
+                    logger.warning(
+                        "[%s] quiz_generator_node: %s — cached batch has %d questions "
+                        "but tier %s now allocates %d for this section (pre-S5-4 "
+                        "per-segment band); truncating to the allocated count",
+                        lesson_id,
+                        section_id,
+                        len(cached_batch["questions"]),
+                        tier,
+                        n_max,
+                    )
+                    cached_batch["questions"] = cached_batch["questions"][:n_max]
                 return True
             logger.warning(
                 "[%s] quiz_generator_node: %s — cached batch was generated under "
@@ -6437,19 +6525,47 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
     # so one missing MP3 does not make the whole lesson unmeasurable.
     _budget = lesson_plan.get("duration_budget") or {}
     _narration_target_min = float(_budget.get("narration_target_min") or 0.0)
-    _measured_ms = [v for v in duration_ms_by_id.values() if v is not None and math.isfinite(v)]
-    _measured_narration_min: float | None = sum(_measured_ms) / 60_000.0 if _measured_ms else None
-    if _measured_narration_min is None:
-        # No measured audio at all: fall back to the word-count estimate so the
-        # report still carries a number, flagged as estimated below.
-        _total_words = sum(
-            int(n.get("word_count") or 0) for n in (narration_script_by_id or {}).values()
-        )
-        _eff_wpm = _effective_narration_wpm(settings)
-        _measured_narration_min = (_total_words / _eff_wpm) if (_total_words and _eff_wpm) else None
+
+    # The fallback is PER SEGMENT, not all-or-nothing. The TTS chain never hard
+    # fails — it degrades to browser speech, which produces no server-side MP3
+    # and therefore no measured duration — so partial measurement is the
+    # designed degradation, not a rare edge. Summing only the measured segments
+    # would under-report the lesson in proportion to how many fell back: 12 of
+    # 15 segments measured reads as a 20% shortfall, lands as a spurious
+    # `target_missed` (blaming the generator for a TTS outage), and writes a
+    # student-facing `estimated_duration_mins` that is simply wrong.
+    _eff_wpm = _effective_narration_wpm(settings)
+    _measured_count = 0
+    _estimated_count = 0
+    _total_min = 0.0
+    for _seg in segments_out:
+        _sid = str(_seg.get("segment_id") or "")
+        _ms = duration_ms_by_id.get(_sid)
+        if _ms is not None and math.isfinite(_ms):
+            _total_min += _ms / 60_000.0
+            _measured_count += 1
+            continue
+        _entry = narration_script_by_id.get(_sid) or {}
+        # `word_count` is written by narration_generator_node, but a segment
+        # whose narration was RECOVERED by package_builder (the degraded path
+        # above) carries only a script. Count it rather than treating a
+        # recovered segment as contributing nothing — the whole point of this
+        # branch is that a segment without measured audio still has length.
+        _words = int(_entry.get("word_count") or 0) or len(str(_entry.get("script") or "").split())
+        if _words and _eff_wpm > 0:
+            _total_min += _words / _eff_wpm
+            _estimated_count += 1
+    _measured_narration_min: float | None = (
+        _total_min if (_measured_count or _estimated_count) else None
+    )
+    if _measured_count and not _estimated_count:
+        _measured_source = "measured_audio"
+    elif _measured_count:
+        _measured_source = "partly_measured_audio"
+    elif _estimated_count:
         _measured_source = "estimated_from_word_count"
     else:
-        _measured_source = "measured_audio"
+        _measured_source = "unmeasurable"
 
     duration_report: dict[str, Any] = {
         "tier": state.get("tier") if state.get("tier") in _VALID_TIERS else _DEFAULT_TIER,
@@ -6460,6 +6576,16 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         "tier_budget_min": round(float(_budget.get("tier_budget_min") or 0.0), 2),
         "capacity_min": round(float(_budget.get("capacity_min") or 0.0), 2),
         "content_limited": bool(_budget.get("content_limited")),
+        # `content_limited` means "the text the pipeline could SEE could not
+        # fill the budget" — and `_get_section_body` caps what it sees at
+        # section_body_max_chars. So a chapter that coalesced into one huge
+        # section reads as content-limited when OUR CAP, not the chapter, was
+        # the real limit. This flag says which: non-empty section_truncations
+        # means the cap was in play, and the two records must be read together.
+        # Without it, "thin chapter" and "we truncated the chapter" are the
+        # same signal, and the admin cannot tell a real short chapter from a
+        # structure-detection failure on a 1,151-page book.
+        "source_was_truncated": bool(state.get("section_truncations")),
         "planner_sum_before_rescale": round(
             float(_budget.get("planner_sum_before_rescale") or 0.0), 2
         ),
@@ -6468,6 +6594,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             round(_measured_narration_min, 2) if _measured_narration_min is not None else None
         ),
         "measured_source": _measured_source,
+        # How much of the figure above is real audio vs. word-count estimate.
+        # Without this, a lesson whose TTS mostly fell back to browser speech
+        # is indistinguishable from one the generator got wrong.
+        "measured_segments": _measured_count,
+        "estimated_segments": _estimated_count,
         "variance_pct": (
             round(
                 (_measured_narration_min - _narration_target_min) / _narration_target_min * 100, 1
@@ -6480,8 +6611,26 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             _measured_narration_min,
             content_limited=bool(_budget.get("content_limited")),
         ),
-        # Bounded by segment count (<= structure_max_sections), same as every
-        # other per-segment list in this record.
+        # D-A defines the tier as TOTAL SEAT TIME, so a report that measured
+        # narration alone would say "on_target" for a lesson whose quiz volume
+        # had blown the budget — the exact defect class this story exists to
+        # fix, invisible to the story's own instrument. These record the other
+        # two controllable components against their budgets.
+        "quiz_questions_shipped": sum(len(s.get("quiz") or []) for s in segments_out),
+        # A fixed budget (16/10/5) meeting a variable segment count means some
+        # segments legitimately get zero questions — but "legitimate" is not the
+        # same as "invisible". CLAUDE.md requires a surfaced, PERSISTED
+        # degradation, not a logger.info nobody reads: at T3 over 15 segments
+        # this is 10 of 15 segments with no assessment at all, which an admin
+        # must be able to see without reconstructing the allocation by hand.
+        "segments_without_quiz": sum(1 for s in segments_out if not (s.get("quiz") or [])),
+        "quiz_budget_questions": int(
+            quiz_budget_seconds(state.get("tier")) // max(1, settings.quiz_seconds_per_question)
+        ),
+        "qa_phase_seconds": qa_budget_seconds(state.get("tier")),
+        # Bounded by the Phase-1 fan-out cap (_MAX_PHASE1_SECTIONS = 60), not
+        # by structure_max_sections (15) — sections above the coalescing cap
+        # are truncated for dispatch, but 60 is the real ceiling on this list.
         "segment_word_variances": [
             {
                 "segment_id": sid,
@@ -6755,7 +6904,17 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
         tier_for_quiz = _DEFAULT_TIER
     from app.config import get_settings as _get_settings
 
-    section_weights = [float(len(s.get("body", "") or "")) for s in sections]
+    # Capped at section_body_max_chars, exactly as lesson_planner_node's
+    # capacity estimate is: the weight must reflect the text the quiz LLM will
+    # actually be SHOWN (`_get_section_body` truncates to this), not the text
+    # the section happens to hold. Uncapped, a chapter whose headings fail to
+    # split — one 500k-char section beside fourteen 3k ones — hands that
+    # section ~92% of the questions, generated from only its first 6,000
+    # characters, while every other section gets zero. That is the same
+    # "fixed budget meets variable input, silently wrong rather than loudly
+    # broken" shape this story exists to fix.
+    _body_cap = _get_settings().section_body_max_chars
+    section_weights = [float(min(len(s.get("body", "") or ""), _body_cap)) for s in sections]
     quiz_counts = _quiz_budget_per_segment(
         tier_for_quiz, section_weights, _get_settings().quiz_seconds_per_question
     )

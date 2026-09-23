@@ -154,15 +154,32 @@ still rejects.
 
 **AC12.** `_TIER_QUIZ_COUNT_BAND` (per-segment) is replaced by a lesson-level total
 `quiz_budget_seconds(tier) / settings.quiz_seconds_per_question` (new setting, default **25**),
-allocated across segments **in proportion to each segment's `duration_min`** — the same allocator
+allocated across segments **in proportion to each segment's teaching weight** — the same allocator
 shape as `_tier_slide_budget_per_segment` (the D87 fix). Totals: T1 = 16, T2 = 10, T3 = 5.
 
-**AC13.** When the total is smaller than the segment count, some segments are allocated **zero**
+**The weight is section body length, not `duration_min`.** `quiz_generator_node` is a Phase 1
+node, dispatched *before* `lesson_planner` runs, so per-segment durations do not exist at that
+point — an allocation keyed on `duration_min` is not implementable there without moving quiz
+generation after the planner, which is a larger change than this story carries. Body length,
+capped at `section_body_max_chars` (the text the quiz LLM is actually shown), is the available
+proxy. The lesson TOTAL is identical either way, which is the property that closes the seat-time
+overrun; the distribution is approximate, and a long-but-thin section can absorb questions from a
+short-but-dense one. Recorded here rather than left as a silent substitution.
+
+**AC13a.** When the total is smaller than the segment count, some segments are allocated **zero**
 questions. A zero-allocation segment **skips its quiz LLM call entirely** (cost saving, not a
 wasted call discarded afterwards), and `Segment.quiz` is an empty list — already schema-valid
-(`list[QuizQuestion]`). **The player and tutor FSM must be verified to tolerate an empty
-`Segment.quiz`** (no QUIZZING state entered, no stall at segment end); if they do not, that fix is
-in scope for this story, not a follow-up.
+(`list[QuizQuestion]`).
+
+**AC13b.** The **player** must tolerate an empty `Segment.quiz`: it must not enter the QUIZ status
+for a segment with no questions, and the lesson must still advance past that segment. Verified
+against the real code, not the schema — `AudioTimeline` calls `enterQuiz()` at every segment
+boundary unconditionally, and `QuizOverlay` renders `null` when there is no question at the current
+index, so an unguarded empty quiz pauses the audio behind a blank overlay whose only exit
+(`exitQuiz`) lives inside that overlay. A test must fail if the guard is removed.
+
+**AC13c.** The **tutor FSM** must not be left waiting on a submission that can never arrive for a
+zero-quiz segment. State what the FSM actually does in the Dev Agent Record rather than assuming it.
 
 **AC14.** The tier-stamped quiz checkpoint validation (Story 2-31 AC-3,
 `tests/unit/test_quiz_checkpoint_tier_stamp.py`) keeps working: a checkpoint written under the old
@@ -179,9 +196,20 @@ admin-visible surface, no migration), containing at minimum: `tier`, `seat_minut
 rather than a missing key.
 
 **AC16.** `outcome` distinguishes **`on_target`**, **`content_limited`** (the chapter genuinely
-could not fill the budget — expected, not a defect) and **`target_missed`** (adequate content, the
-generator undershot or overshot). One flag for both makes the admin signal useless, which is the
-whole reason this is two values.
+could not fill the budget — expected, not a defect), **`target_missed`** (adequate content, the
+generator undershot or overshot) and **`unknown`** (nothing could be measured at all). One flag for
+the first three makes the admin signal useless, which is the whole reason they are separate; the
+fourth exists so an unmeasurable lesson is never silently reported as on target.
+
+**AC16b.** `content_limited` means "the text the pipeline could SEE could not fill the budget",
+and what it sees is capped at `section_body_max_chars`. A chapter that coalesced into one huge
+section therefore reads as content-limited when **our cap**, not the chapter, was the real limit.
+The report must carry a `source_was_truncated` flag so the two are distinguishable; otherwise a
+structure-detection failure on a 1,151-page book is indistinguishable from a genuinely short chapter.
+
+**AC16c.** The report must cover the seat-time components it can measure, not narration alone —
+a report that measured narration only would read `on_target` for a lesson whose quiz volume had
+blown the budget, i.e. the story's own defect class invisible to the story's own instrument.
 
 **AC17.** `measured_narration_min` is computed from the **real** summed `duration_ms`
 (tinytag-derived in `tts_node`, already preferred by `_estimate_slide_timestamps` since S3-38), and
@@ -227,8 +255,12 @@ zero-allocation case (AC13) — and carries a comment naming this story as the r
 
 **Q1 — What is ONE unit of work, and what is its range?**
 One unit = one chapter lesson generation at one tier. Range: 1 segment (a thin chapter) to
-`structure_max_sections = 15` (the coalescing cap; the fan-out DoS cap `_MAX_PHASE1_SECTIONS = 60`
-sits above it). Narration budget per lesson: 9.75–29.25 min, i.e. **1,243–3,729 target words**,
+**60** — `structure_max_sections = 15` is the coalescing target, but `_MAX_PHASE1_SECTIONS = 60` is
+the real ceiling and its truncation branch exists precisely because `structure_node` is observed to
+produce more than 15. Sizing against 15 and inheriting 60 is how a cap gets re-derived against the
+wrong number. **A second unit matters here and was missing from the first draft: one NARRATION
+SEGMENT.** Its range is the lesson's narration budget divided across 1-60 segments — at T3 over 60
+segments that is 9.75/60 = 0.16 min, i.e. a ~21-word segment with its own TTS call. Narration budget per lesson: 9.75–29.25 min, i.e. **1,243–3,729 target words**,
 split across 1–15 segments. Quiz: **5–16 questions per lesson total** (was 5–75 — the change this
 story makes). Beyond 15 segments, sections are already merged upstream, unchanged here.
 **Explicit non-guarantee:** teach-back is student-triggered (`quiz_failed`) and unbounded in count,
@@ -247,6 +279,22 @@ a budget that silently excludes a variable component is the same defect class as
   guardrails.
 - `section_body_max_chars = 6000` is **inherited and unchanged** by this story; its existing
   `section_truncations` surfaced-degradation record continues to apply (see Q5).
+- **The slide budget, and through it image-generation spend — the budget this story moves without
+  naming it.** `_tier_slide_budget_per_segment` derives the lesson's slide total from
+  `sum(segment_durations)`, and this story replaces that sum (previously the planner's free-running
+  estimate) with the tier anchor. One image is generated per slide at ~$0.067 (Nano Banana) against
+  the $3.00/lesson ceiling, so the slide total is a cost budget, not just a presentation one.
+  Direction depends on chapter shape: on a SHORT chapter (3 segments) the rescale factor is >1 and
+  T1's slide band roughly doubles (12-19 slides to 22-24, about $1.47-1.61 of images); on a LONG
+  chapter (15 segments) the anchored total is smaller than the old free-running one and slide counts
+  fall. Worst observed case, T1 at 15 segments, is 30 images = ~$2.01 of the $3.00 ceiling before any
+  TTS or LLM spend. Past the ceiling the existing `check_ceiling` in `image_generator_node` degrades
+  the lesson to text-only, which is a surfaced degradation and not silent — but it is now reachable
+  from a duration choice, which it was not before.
+- **`_MAX_SLIDES_PER_SEGMENT = 8` meeting a rescaled duration.** At T1 on a short chapter the
+  per-segment ceiling binds (the story's own planner test shows two of three segments pinned at 8),
+  so the minutes-per-slide ratio is silently not honoured. Accepted for this story — the clamp is a
+  structural limit of `slide_generator`, not a duration budget — but recorded rather than discovered.
 
 **Q3 — What is the SCOPE of every limit?**
 `TIER_SEAT_MINUTES`, `SEAT_TIME_SHARES`, `quiz_seconds_per_question` and the narration rate are
@@ -278,6 +326,23 @@ update in `package_builder_node`. Its per-segment variance list is bounded by th
   `content_limited` (AC16) when the real limit is the cap, not the chapter. `duration_report` must
   therefore be read alongside the existing `section_truncations` record, and AC15's report includes
   enough to tell them apart.
+- `_TIER_MINUTES_PER_SLIDE_BAND` (D87): inherited, and its **input changed meaning** in this
+  story — D87 sized it against `total_duration` = the planner's unanchored guess; it is now the
+  enforced tier anchor. Re-derived rather than assumed: at 15 equal segments T2 yields
+  `19.5/1.8 = 10.8` to `19.5/1.2 = 16.25` slides across 15 segments, i.e. about one per segment,
+  which is arithmetically consistent with T2's own 1.2-1.8 min/slide ratio rather than a
+  re-run of D87's "everything pinned to the floor" symptom. It does mean the `_MIN_SLIDES_PER_SEGMENT
+  = 1` floor becomes the binding constraint at high segment counts, where the real slide count is
+  `n_segments` regardless of budget — accepted, and the reason the cost note in Q2 exists.
+- `_SOURCE_CHARS_PER_WORD = 6.0` and `_NARRATION_WORDS_PER_SOURCE_WORD = 1.0`: **new** in this
+  story, not inherited, and they decide `content_limited` for every lesson. Coarse by design — they
+  answer "can this chapter plausibly fill the budget at all", not any per-segment target. Their
+  weakness is stated in AC16b: because the per-section term saturates at `section_body_max_chars`,
+  capacity is effectively `n_sections x 7.84 min` for any chapter of ordinary density, so capacity
+  is partly a segment-count test. `source_was_truncated` is what keeps that honest in the report.
+- `_MIN_VIABLE_NARRATION_MIN = 1.0`: **new**. Floors the generation target so a chapter extracting
+  a few hundred characters does not put "aim for about 1 words" into every prompt while still paying
+  for planning, slides, images and TTS. Floors the target only — `capacity_min` is reported unfloored.
 - **Known assumption, registered not hidden:** `effective_wpm` uses `sarvam_narration_pace`. On the
   Azure/browser fallback tiers the real pace differs, so a fallback lesson's measured duration will
   vary from target by more than +/-15% without the generator being at fault. This is recorded in
@@ -329,3 +394,93 @@ must be requested explicitly in the invoking prompt.
 **Cross-team note:** this story edits `graph.py` (Dev 1's ownership area — content pipeline and all
 11 nodes) and `learnerMode.ts` (Dev 2's). Dev 1 is to be notified before implementation starts, per
 the ownership table in `CLAUDE.md` §21.
+
+---
+
+## Dev Agent Record
+
+**Implemented:** 2026-09-23, Dev 4. Branch `feature/230-duration-driven-lessons`, PR #243.
+
+### AC20 — duration surfaces for EXISTING lessons (the enumeration AC20 asked for)
+
+Every surface that renders a per-lesson duration, audited rather than assumed:
+
+| Surface | Renders | Verdict |
+|---|---|---|
+| `apps/web/src/components/player/Player.tsx:351` | `metadata.estimated_duration_mins` | **Changed.** Now labelled "min of teaching" — it is narration time, not the 15/30/45 seat time, and conflating them would make the player contradict the selector. |
+| `apps/web/src/components/dashboard/upload/ModeSelection.tsx:36` | `option.durationMinutes` | **Unchanged** — a forward-looking selector for a lesson not yet generated, which AC20 exempts. |
+| `apps/api/.../content/router.py` `_LIST_COLUMNS` | exposes `estimated_duration_mins` over the API | **No UI consumer** — no dashboard component renders it today. Stated here rather than left implied. |
+
+No other surface renders a duration for an existing lesson. Pre-S5-4 lessons carry the planner's
+old estimate in `estimated_duration_mins`; the "~N min of teaching" label is true of those too (it
+was always a narration estimate), so no enforced-minute claim is made for a lesson that never had
+one. `estimated_duration_mins` is nullable on the API — the player renders the `~ min` label with a
+gap in that case, which is pre-existing and unchanged by this story.
+
+### AC13c — what the tutor FSM does with a zero-quiz segment
+
+The backend FSM is unaffected: `segment_complete` routes IDLE/TEACHING → CHECKING_IN
+(`modules/tutor/state_machine/graph.py`), and QUIZZING is entered only on an explicit `quiz_trigger`
+event, which a zero-quiz segment never sends. The stall was entirely client-side and is fixed in
+`stores/player.machine.ts::enterQuiz` (AC13b).
+
+### Review record
+
+Six-agent adversarial review run 2026-09-23 (Story Quality, Blind Hunter, Test Coverage, AC
+Completeness, Process Integrity, Scale & Load). It rejected the first implementation. Fixed in
+response, with the finding that prompted each:
+
+1. **Player hard-stall on a zero-quiz segment** (3 layers, independently) — the AC13 verification
+   was never performed and the player did not tolerate the case S5-4 makes routine. Guarded in
+   `enterQuiz`, with tests that fail if the guard is removed.
+2. **`test_websocket_session.py::test_g9` failing in the GATING bucket** — an AC21-named guard test
+   that passes on `main`. Missed because the first verification ran `tests/unit` and
+   `tests/integration` but never `tests/` root. Updated, deriving from the shared table.
+3. **`_quiz_count` fallback produced a quiz-free lesson** — integer division by section count gave
+   `10 // 15 == 0` for every section at T2. Now re-runs the real allocator; and its own second
+   version, which fell back to the whole-lesson budget, would have given every segment 16.
+4. **Tier-stamped checkpoints from before this deploy served verbatim** (AC14) — a matching tier
+   stamp no longer implies a matching count; oversized cached batches are truncated.
+5. **Partial-TTS lessons under-reported** (AC17) — the fallback is now per segment, matching the
+   comment that already claimed it, with `measured_segments`/`estimated_segments` in the report.
+6. **Uncapped quiz weight** — one 500k-char section took ~92% of the questions. Capped at
+   `section_body_max_chars`, matching the capacity estimate.
+7. **`capacity_min == 0` escaped `content_limited`** — a chapter with no extractable text was handed
+   the full tier budget. Zero is now the most content-limited case, with a floor on the target.
+8. **Weakened guards** — a de-indented assertion in `test_fan_out_state_keys.py` (checking only the
+   last dispatch), an exact-equality reducer guard turned into a `<=` ceiling in
+   `test_howto_pipeline_e2e.py`, and a widened regex in `ModeSelection.test.tsx`. All restored.
+9. **A test comment claiming a guarantee the test could not give** — the batched-planner pro-rata
+   split; now guarded where it is actually visible, in the per-batch prompt.
+10. **D78 conflict and the capacity/truncation conflation** — registered as **D173** and **D174**
+    rather than resolved silently.
+
+---
+
+## Senior Developer Review — 6 agent layers (2026-09-23)
+
+| Layer | Source | Verdict | Blocking findings |
+|---|---|---|---|
+| **Story Quality** | invoking prompt | REJECT → addressed | AC13 conflated three obligations and its verification was never done; two guard tests edited outside the authorised list |
+| **Blind Hunter (Security)** | invoking prompt | BLOCK → addressed | Zero-quiz player stall (availability); quiz weight uncapped, letting one oversized section take ~92% of the questions |
+| **Test Coverage** | invoking prompt | REJECT → addressed | Reducer guard weakened to a one-sided bound; a test documenting a property it could not detect; the three most consequential behaviours had no test that would fail on deletion |
+| **AC Completeness** | invoking prompt | 5 of 22 ACs not satisfiable as written → addressed | AC13 not implemented, AC14 contradicted by its code, AC21 violated (gating-bucket regression), AC17 defective, AC20 paperwork unmet |
+| **Process Integrity** | invoking prompt | REJECT → addressed | Gating bucket red (`test_g9`); zero-quiz allocation not surfaced or persisted; `D-nn`-less assumption; promised register entry never opened |
+| **Scale & Load** | invoking prompt | REJECT → addressed + escalated | The D78 reversal (**D173**); Q2 missing the slide→image→cost-ceiling consequence; Q5 missing three inherited caps; the `_quiz_count` fallback |
+
+Note for future invocations: the shipped `bmad-code-review` skill supplies only Blind Hunter, Edge
+Case Hunter, Acceptance Auditor and Scale & Load. Story Quality, Test Coverage, AC Completeness and
+Process Integrity were requested explicitly in the invoking prompt, as CLAUDE.md's review-gate
+section requires.
+
+**Escalated rather than decided by the implementer:** **D173** (this story reverses D78's recorded
+"lesson length must be driven by the chapter's real content, not by any duration target" — at T2 an
+ordinary 29-page chapter now generates roughly a third of the narration it did before), **D174**
+(`content_limited` cannot distinguish a thin chapter from one our own `section_body_max_chars` cap
+truncated), **D175** (fallback-TTS lessons cannot meet a Sarvam-derived target), **D176** (the
+S5-3 chapter-context vs Gate 5 idempotency defect this story's Scale & Load Q6 promised to raise).
+
+**Known deviation, not a finding:** the branch is named `feature/230-duration-driven-lessons`
+(issue-led, matching `feature/236-narration-post-planner-ordering`) rather than
+`sprint5/s5-4-duration-driven-lessons`. Both conventions are live in this repo; the branch was
+created before the story was numbered S5-4, and renaming it now would orphan PR #243.

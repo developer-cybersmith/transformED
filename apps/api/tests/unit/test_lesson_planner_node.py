@@ -1197,11 +1197,15 @@ async def test_planner_batches_above_threshold_produces_full_plan() -> None:
     assert [s["segment_id"] for s in plan["segments"]] == [f"sec_{i}" for i in range(n)]
     # S5-4: the batched path's reassembled durations are rescaled onto the
     # lesson's narration budget exactly like the single-call path (20 segments
-    # x 3.0 = 60 min, well outside T2's 19.5 +/-15% band). This is also the
-    # test that would catch the batching-specific hazard: each batch is issued
-    # its own PRO-RATA share of the budget, so a regression that passed the
-    # whole-lesson figure to every batch would leave the reassembled total at
-    # budget x batch_count instead of budget.
+    # x 3.0 = 60 min, well outside T2's 19.5 +/-15% band).
+    #
+    # This test does NOT guard the pro-rata per-batch split, despite looking
+    # like it might: `_rescale_segment_durations` normalises the reassembled
+    # sum onto the budget either way, so passing the whole-lesson figure to
+    # every batch would still land on 19.5 here. That hazard is only visible
+    # in the per-batch PROMPT, and is guarded in
+    # tests/unit/test_s5_4_duration_wiring.py::
+    # test_each_planner_batch_is_given_its_own_share_of_the_budget.
     assert plan["total_duration_min"] == pytest.approx(narration_budget_minutes("T2"))
 
 
