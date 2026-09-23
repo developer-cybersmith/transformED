@@ -666,7 +666,7 @@ When `is_skip=True`, `grade_teachback` returns `ces_contribution=0.0` (Story F2-
 
 ---
 
-## D154 — Raw user book-context text flows into Langfuse LLM input traces (DPDP gap)
+## D174 — Raw user book-context text flows into Langfuse LLM input traces (DPDP gap)
 
 **Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Blind Hunter F4)
 
@@ -678,7 +678,7 @@ When `is_skip=True`, `grade_teachback` returns `ces_contribution=0.0` (Story F2-
 
 ---
 
-## D155 — No FastAPI TestClient integration tests for `PUT /books/{book_id}/context` and `GET /books/{book_id}/context`
+## D175 — No FastAPI TestClient integration tests for `PUT /books/{book_id}/context` and `GET /books/{book_id}/context`
 
 **Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Test Coverage)
 
@@ -690,7 +690,7 @@ Story S5-1 AC16 required `TestClient` tests for the two router endpoints. The ex
 
 ---
 
-## D156 — Branch `sprint5/s5-9-book-context-processing-ux` stacked on S5-1 rather than branched from `main`
+## D176 — Branch `sprint5/s5-9-book-context-processing-ux` stacked on S5-1 rather than branched from `main`
 
 **Status:** OPEN (process) · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Process Integrity)
 
@@ -702,7 +702,7 @@ The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch 
 
 ---
 
-## D157 — No rate limiting on `PUT /books/{book_id}/context` upsert endpoint
+## D177 — No rate limiting on `PUT /books/{book_id}/context` upsert endpoint
 
 **Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Scale & Load)
 
@@ -714,7 +714,7 @@ The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch 
 
 ---
 
-## D158 — No DB `CHECK` constraints on `motivation`, `end_goal`, `feared_section` text columns
+## D178 — No DB `CHECK` constraints on `motivation`, `end_goal`, `feared_section` text columns
 
 **Status:** OPEN · **Owner:** Dev 3 (schema) · **Detected:** 2026-09-23 (S5-9 BMAD review, Scale & Load)
 
@@ -726,7 +726,7 @@ The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch 
 
 ---
 
-## D167 — Double `_validated_book_id` call in `PUT` and `GET /books/{book_id}/context` router endpoints
+## D179 — Double `_validated_book_id` call in `PUT` and `GET /books/{book_id}/context` router endpoints
 
 **Status:** DEFERRED · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-10, Dev 2 code review F12 finding on PR #244)
 
@@ -734,7 +734,7 @@ The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch 
 
 **Rationale for deferral:** The fix (pass `validated_id` to the service call) requires matching the function signatures of `upsert_book_context` and `get_book_context_row` in `context.py`, which are used in tests. The refactor is low-risk but not zero-risk, and the current behaviour is never wrong — the service call receives a string that is either a valid UUID (normal case) or a string that would have already caused a 404/422 (if `_validated_book_id` had not raised). Fixing in a dedicated story when endpoint-level router tests (D155) exist to verify the change.
 
-**Resolution path:** In the endpoint handlers, replace the `book_id` string argument with the validated UUID returned by `_validated_book_id`. Add the D155 integration tests first so the change is verifiable.
+**Resolution path:** In the endpoint handlers, replace the `book_id` string argument with the validated UUID returned by `_validated_book_id`. Add the D175 integration tests first so the change is verifiable.
 
 **Enforcement:** DISCIPLINE — no guard test. Tracked per binding rule 5.
 
