@@ -1895,13 +1895,12 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             "truncation occurred; setting book_context_truncated=True in state",
             lesson_id,
         )
-    result: dict[str, Any] = {
+    result = {
         "lesson_plan": lesson_plan,
         "progress_pct": 38.0,
         "book_context": book_context,
+        "book_context_truncated": _lp_ctx_truncated,
     }
-    if _lp_ctx_truncated:
-        result["book_context_truncated"] = True
     return result
 
 
@@ -2304,9 +2303,11 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
-    _sg_result: dict[str, Any] = {"slides": slides_out, "progress_pct": 48.0}
-    if _slide_ctx_truncated:
-        _sg_result["book_context_truncated"] = True
+    _sg_result = {
+        "slides": slides_out,
+        "progress_pct": 48.0,
+        "book_context_truncated": _slide_ctx_truncated,
+    }
     return _sg_result
 
 
@@ -4126,12 +4127,11 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
     )
 
-    _nar_ret: dict[str, Any] = {
+    _nar_ret = {
         "narration_scripts": [result],
         "section_truncations": section_truncations,
+        "book_context_truncated": _narration_ctx_truncated,
     }
-    if _narration_ctx_truncated:
-        _nar_ret["book_context_truncated"] = True
     return _nar_ret
 
 

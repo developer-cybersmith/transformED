@@ -14,6 +14,7 @@ but is intentionally independent (different table, different precedence slot).
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from app.core.db import get_supabase, single_row
 
@@ -114,7 +115,7 @@ async def get_book_context_prompt_context(book_id: str, user_id: str) -> str:
                 .execute()
             )
         )
-        row: dict | None = single_row(resp)
+        row: dict[str, Any] | None = single_row(resp)
     except Exception:
         logger.warning(
             "[book_context] fetch failed for book_id=%s — returning empty context",
@@ -174,7 +175,7 @@ async def upsert_book_context(
     feared_section: str | None,
     prior_attempt: bool | None,
     outcome_clarity: bool | None,
-) -> dict:
+) -> dict[str, Any]:
     """Upsert one book_context row and return the saved row dict.
 
     Uses ON CONFLICT (book_id, user_id) DO UPDATE SET — atomic at Postgres
@@ -184,7 +185,7 @@ async def upsert_book_context(
     from datetime import UTC, datetime
 
     supabase = get_supabase()
-    payload: dict = {
+    payload: dict[str, Any] = {
         "book_id": book_id,
         "user_id": user_id,
         "purpose": purpose,
@@ -216,7 +217,7 @@ async def upsert_book_context(
     return saved_rows[0]
 
 
-async def get_book_context_row(book_id: str, user_id: str) -> dict | None:
+async def get_book_context_row(book_id: str, user_id: str) -> dict[str, Any] | None:
     """Fetch the raw book_context row or None if not saved."""
     import asyncio
 
