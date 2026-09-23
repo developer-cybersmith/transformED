@@ -130,10 +130,16 @@ async def get_book_context_prompt_context(book_id: str, user_id: str) -> str:
     lines: list[str] = ["[Book Context]"]
 
     # MCQ fields: map stored enum value to human-readable display label.
+    # When the stored value is not a known enum member (e.g. written directly
+    # via service-role client bypassing Pydantic), sanitize it the same way
+    # text fields are sanitized — collapse newlines, cap length — to prevent
+    # prompt injection via embedded newline + fake-label sequences.
     for col, label in _MCQ_LABELS:
         raw = row.get(col)
         if raw:
-            display = _MCQ_DISPLAY.get(col, {}).get(raw, raw)
+            display = _MCQ_DISPLAY.get(col, {}).get(raw)
+            if display is None:
+                display = " ".join(str(raw).splitlines())[:100]
             lines.append(f"{label}: {display}")
 
     # One-liner text fields: collapse internal newlines to prevent injection.

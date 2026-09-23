@@ -204,6 +204,14 @@ class PipelineState(TypedDict, total=False):
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, node, original_chars, capped_chars}]
 
+    # S5-1/S5-9: set to True by any of the 3 book-context merge sites
+    # (lesson_planner_node, slide_generator_node, narration_generator_node)
+    # when merge_book_context() had to truncate the context block. Written to
+    # lesson_jobs.node_outputs by package_builder_node so admins can query for
+    # truncated lessons. Default False (most lessons have no book context at all).
+    # Last-write-wins (not a reducer) — True is sticky; once set it stays set.
+    book_context_truncated: bool
+
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
     # for that one dispatched invocation.
@@ -1360,9 +1368,11 @@ _TIER_PROMPT_FRAMING: dict[str, str] = {
 }
 
 
-def _planner_system_prompt(tier_framing: str, chapter_context: str = "", book_context: str = "") -> str:
+def _planner_system_prompt(tier_framing: str, chapter_context: str = "", book_context: str = "") -> tuple[str, bool]:
     """The lesson_planner system prompt, shared by the single-call and batched
     paths (Story 2-16 RC-3) so both issue an identical instruction.
+
+    Returns ``(system_prompt, was_book_context_truncated)``.
 
     S5-3: `chapter_context` appended after tier_framing at the 'chapter
     instructions' precedence slot (§5 strategy doc). Empty string is safe.
@@ -1433,8 +1443,15 @@ async def _run_planner_batch(
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
+    _planner_prompt, _planner_ctx_truncated = _planner_system_prompt(tier_framing, chapter_context, book_context)
+    if _planner_ctx_truncated:
+        logger.warning(
+            "[%s] _run_planner_batch: book_context truncated to 2000 chars — "
+            "lesson plan will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
-        {"role": "system", "content": _planner_system_prompt(tier_framing, chapter_context, book_context)},
+        {"role": "system", "content": _planner_prompt},
         {"role": "user", "content": summaries_text},
     ]
 
@@ -1865,7 +1882,23 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         has_chapter_context,
     )
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    return {"lesson_plan": lesson_plan, "progress_pct": 38.0, "book_context": book_context}
+    # 2_000 mirrors prompt_context._BOOK_CONTEXT_MAX_CHARS — same budget,
+    # avoids importing the private constant here.
+    _lp_ctx_truncated = len(book_context) > 2_000
+    if _lp_ctx_truncated:
+        logger.warning(
+            "[%s] lesson_planner_node: book_context exceeded 2000 chars — "
+            "truncation occurred; setting book_context_truncated=True in state",
+            lesson_id,
+        )
+    result: dict[str, Any] = {
+        "lesson_plan": lesson_plan,
+        "progress_pct": 38.0,
+        "book_context": book_context,
+    }
+    if _lp_ctx_truncated:
+        result["book_context_truncated"] = True
+    return result
 
 
 class _SlideLLM(BaseModel):
@@ -2069,10 +2102,19 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         "UNCHANGED — do not invent, merge, split, omit, or reorder "
         "segment_ids." + _UNTRUSTED_CONTENT_GUARD
     )
+    _slide_system_prompt, _slide_ctx_truncated = merge_book_context(
+        _slide_base_prompt, _slide_book_context
+    )
+    if _slide_ctx_truncated:
+        logger.warning(
+            "[%s] slide_generator_node: book_context truncated to 2000 chars — "
+            "slides will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
         {
             "role": "system",
-            "content": merge_book_context(_slide_base_prompt, _slide_book_context),
+            "content": _slide_system_prompt,
         },
         {"role": "user", "content": segments_text},
     ]
@@ -2258,7 +2300,10 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
-    return {"slides": slides_out, "progress_pct": 48.0}
+    _sg_result: dict[str, Any] = {"slides": slides_out, "progress_pct": 48.0}
+    if _slide_ctx_truncated:
+        _sg_result["book_context_truncated"] = True
+    return _sg_result
 
 
 class _SegmentSummaryLLM(BaseModel):
@@ -3932,10 +3977,19 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         "and paced for spoken delivery."
         f"{_UNTRUSTED_CONTENT_GUARD}"
     )
+    _narration_system_prompt, _narration_ctx_truncated = _merge_bc(
+        _narration_base_prompt, _narration_book_context
+    )
+    if _narration_ctx_truncated:
+        logger.warning(
+            "[%s] narration_generator_node: book_context truncated to 2000 chars — "
+            "narration will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
         {
             "role": "system",
-            "content": _merge_bc(_narration_base_prompt, _narration_book_context),
+            "content": _narration_system_prompt,
         },
         {
             "role": "user",
@@ -4068,7 +4122,13 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
     )
 
-    return {"narration_scripts": [result], "section_truncations": section_truncations}
+    _nar_ret: dict[str, Any] = {
+        "narration_scripts": [result],
+        "section_truncations": section_truncations,
+    }
+    if _narration_ctx_truncated:
+        _nar_ret["book_context_truncated"] = True
+    return _nar_ret
 
 
 # 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
@@ -6197,6 +6257,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # Phase 1 LLM call — sibling to package_builder_degraded above.
                 # Always written (empty list = none), never a missing key.
                 "section_truncations": state.get("section_truncations", []),
+                # S5-1/S5-9: True when any of the 3 book-context merge sites
+                # (lesson_planner, slide_generator, narration_generator) hit
+                # the 2,000-char budget. False / absent = context was not
+                # truncated. Admins can query lesson_jobs WHERE node_outputs->'book_context_truncated' = 'true'.
+                "book_context_truncated": state.get("book_context_truncated", False),
             },
         }
     ).eq("lesson_id", lesson_id).execute()

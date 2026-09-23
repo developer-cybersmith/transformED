@@ -31,26 +31,32 @@ class TestMergeBookContext:
     def test_empty_context_returns_base_unchanged(self):
         merge_book_context, _, _ = self._import()
         base = "System prompt here."
-        assert merge_book_context(base, "") == base
+        merged, was_truncated = merge_book_context(base, "")
+        assert merged == base
+        assert was_truncated is False
 
     def test_none_like_empty_string_returns_base_unchanged(self):
         merge_book_context, _, _ = self._import()
         base = "System prompt."
-        assert merge_book_context(base, "") == base
+        merged, was_truncated = merge_book_context(base, "")
+        assert merged == base
+        assert was_truncated is False
 
     def test_short_context_appended_with_separator(self):
         merge_book_context, _, _ = self._import()
         base = "Base."
         ctx = "[Book Context]\nWhy uploaded: To study for exam"
-        result = merge_book_context(base, ctx)
-        assert result == base + "\n\n" + ctx
+        merged, was_truncated = merge_book_context(base, ctx)
+        assert merged == base + "\n\n" + ctx
+        assert was_truncated is False
 
     def test_context_at_exact_limit_not_truncated(self):
         merge_book_context, max_chars, marker = self._import()
         ctx = "x" * max_chars
-        result = merge_book_context("Base.", ctx)
-        assert marker not in result
-        assert ctx in result
+        merged, was_truncated = merge_book_context("Base.", ctx)
+        assert marker not in merged
+        assert ctx in merged
+        assert was_truncated is False
 
     def test_context_over_limit_truncated_at_newline_boundary(self):
         merge_book_context, max_chars, marker = self._import()
@@ -59,17 +65,19 @@ class TestMergeBookContext:
         prefix = "Field: value\n"
         suffix = "x" * (max_chars + 100)
         ctx = prefix + suffix
-        result = merge_book_context("Base.", ctx)
-        assert marker in result
+        merged, was_truncated = merge_book_context("Base.", ctx)
+        assert was_truncated is True
+        assert marker in merged
         # Truncated content must not exceed the budget + marker
-        assert len(result) <= len("Base.") + 2 + max_chars + len(marker) + 10
+        assert len(merged) <= len("Base.") + 2 + max_chars + len(marker) + 10
 
     def test_context_over_limit_no_mid_sentence_cut_when_no_newline(self):
         merge_book_context, max_chars, marker = self._import()
         # No newline in context — truncation falls back to the char boundary.
         ctx = "a" * (max_chars + 50)
-        result = merge_book_context("Base.", ctx)
-        assert marker in result
+        merged, was_truncated = merge_book_context("Base.", ctx)
+        assert was_truncated is True
+        assert marker in merged
 
     def test_truncation_marker_text_is_informative(self):
         merge_book_context, max_chars, marker = self._import()

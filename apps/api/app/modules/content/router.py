@@ -1736,7 +1736,7 @@ async def get_book_context(
     book_id: str,
     current_user: CurrentUser,
     response: Response,
-) -> BookContextResponse | None:
+) -> BookContextResponse | Response:
     """Return the learner's saved context for one book.
 
     Returns 200 + the saved row if context exists, or 204 No Content if the
@@ -1751,13 +1751,21 @@ async def get_book_context(
     supabase = get_supabase()
     _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
 
-    row = await get_book_context_row(
-        book_id=_validated_book_id(book_id),
-        user_id=user_id,
-    )
+    try:
+        row = await get_book_context_row(
+            book_id=_validated_book_id(book_id),
+            user_id=user_id,
+        )
+    except Exception:
+        logger.exception("get_book_context: failed for book_id=%s", book_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load book context — please retry",
+        )
     if row is None:
-        response.status_code = status.HTTP_204_NO_CONTENT
-        return None
+        # RFC 7230: 204 MUST NOT include a message body — return Response
+        # directly to avoid FastAPI serializing None as "null".
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return BookContextResponse(
         book_id=str(row["book_id"]),

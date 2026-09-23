@@ -34,36 +34,44 @@ _BOOK_CONTEXT_MAX_CHARS: int = 2_000
 _TRUNCATION_MARKER: str = "\n[Book context truncated]"
 
 
-def merge_book_context(base_prompt: str, book_context: str) -> str:
+def merge_book_context(base_prompt: str, book_context: str) -> tuple[str, bool]:
     """Append `book_context` to `base_prompt`, enforcing the 2,000-char budget.
 
-    Returns `base_prompt` unchanged when `book_context` is empty.
+    Returns ``(merged_prompt, was_truncated)``.
 
-    If `book_context` exceeds `_BOOK_CONTEXT_MAX_CHARS`, it is truncated at the
-    last newline boundary before the limit, and `_TRUNCATION_MARKER` is appended.
-    The truncation is logged at WARNING level so it appears in Langfuse traces
-    alongside the lesson_id (callers must include lesson_id in their log context).
+    ``was_truncated`` is ``True`` when ``book_context`` exceeded the budget and
+    was cut.  Callers MUST surface this as explicit degradation — write it to
+    a durable record (e.g. ``lesson_jobs.node_outputs``) or emit a Langfuse
+    warning span.  A bare ``logger.warning`` is insufficient per CLAUDE.md:
+    "not a logger.warning nobody reads."
 
-    This function is PURE (no DB calls, no side effects) — callers that need to
-    persist a truncation flag on the `lessons` row must detect the marker
-    themselves (e.g. `"[Book context truncated]" in merged`).
+    Truncation algorithm:
+    - Find the last newline within the budget so we never cut mid-field.
+    - When no newline exists in the budget slice, fall back to a hard character
+      cut (field boundary guarantee cannot be honoured) and log the deviation.
     """
     if not book_context:
-        return base_prompt
+        return base_prompt, False
 
     if len(book_context) <= _BOOK_CONTEXT_MAX_CHARS:
-        return base_prompt + "\n\n" + book_context
+        return base_prompt + "\n\n" + book_context, False
 
-    # Truncate at the last newline within the budget so we never cut mid-field.
     budget_slice = book_context[:_BOOK_CONTEXT_MAX_CHARS]
     last_newline = budget_slice.rfind("\n")
-    truncated = budget_slice[:last_newline] if last_newline > 0 else budget_slice
+    if last_newline > 0:
+        truncated = budget_slice[:last_newline]
+    else:
+        # No newline in the budget — hard cut; field-boundary guarantee lost.
+        truncated = budget_slice
+        logger.warning(
+            "merge_book_context: no newline in first %d chars — hard cut applied",
+            _BOOK_CONTEXT_MAX_CHARS,
+        )
     logger.warning(
         "merge_book_context: book_context exceeded %d chars (%d chars) — "
-        "truncated at field boundary (%d chars kept). "
-        "Callers should persist book_context_truncated=true on the lessons row.",
+        "truncated (%d chars kept). Surface this via Langfuse or durable record.",
         _BOOK_CONTEXT_MAX_CHARS,
         len(book_context),
         len(truncated),
     )
-    return base_prompt + "\n\n" + truncated + _TRUNCATION_MARKER
+    return base_prompt + "\n\n" + truncated + _TRUNCATION_MARKER, True
