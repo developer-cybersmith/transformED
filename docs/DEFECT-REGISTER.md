@@ -666,6 +666,66 @@ When `is_skip=True`, `grade_teachback` returns `ces_contribution=0.0` (Story F2-
 
 ---
 
+## D154 — Raw user book-context text flows into Langfuse LLM input traces (DPDP gap)
+
+**Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Blind Hunter F4)
+
+`lesson_planner_node`, `slide_generator_node`, and `narration_generator_node` all call Langfuse trace helpers that capture the full LLM `system` prompt — which now contains the merged book-context block after Story S5-1. The book-context block includes free-text fields filled by the student (motivation, end goal, feared section) that are personal data under the DPDP Act 2023. Langfuse Cloud is not a DPDP-compliant data processor under the current DPA. This was noted in D94 as the general Langfuse PII pattern; this entry specifically tracks the book-context injection point.
+
+**Resolution path:** Mask the `[Book Context]` block from Langfuse `system` prompt captures. Pattern: pass a sanitised prompt copy (context block stripped or replaced with `[REDACTED — personal book context]`) to Langfuse while passing the full prompt to the LLM. Sprint 5 / Sprint 6 privacy hardening.
+
+**Enforcement:** DISCIPLINE — no guard test. Tracked per binding rule 5.
+
+---
+
+## D155 — No FastAPI TestClient integration tests for `PUT /books/{book_id}/context` and `GET /books/{book_id}/context`
+
+**Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Test Coverage)
+
+Story S5-1 AC16 required `TestClient` tests for the two router endpoints. The existing `test_s5_1_book_context.py` covers `merge_book_context` (pure function), `get_book_context_prompt_context` (mocked DB), and schema validation — but has zero `TestClient` or `httpx.AsyncClient` calls against `router.py`. This means the auth wiring, Supabase RLS round-trip, HTTP 204 path, and 500-error path for both endpoints have never been exercised by CI.
+
+**Resolution path:** Add `TestClient` tests with a mocked Supabase client for: (1) `PUT` happy-path upsert → 200, (2) `GET` no-row → 204, (3) `GET` row-exists → 200 with correct fields, (4) `GET` DB exception → 500, (5) auth missing → 401. Story S5-1 was marked done without these; a follow-up story must add them before Sprint 6.
+
+**Enforcement:** DISCIPLINE — no guard test. Tracked per binding rule 5.
+
+---
+
+## D156 — Branch `sprint5/s5-9-book-context-processing-ux` stacked on S5-1 rather than branched from `main`
+
+**Status:** OPEN (process) · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Process Integrity)
+
+The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch based on `main`." `sprint5/s5-9-book-context-processing-ux` was based on `sprint5/s5-1-book-context-form` (which is itself unmerged into main) because S5-9 was a UX fix layer on top of S5-1's API work. The PR description must make this dependency explicit. When S5-1 merges to main, S5-9 must be rebased onto main before its own merge to ensure the history is clean.
+
+**Resolution path:** After S5-1 is merged to main, rebase `sprint5/s5-9-book-context-processing-ux` onto main (`git rebase main`) and force-push, then re-run CI before merging. This is the accepted deviation for a UX-layer story that depends on an unmerged API story — document in the PR description, not a new process rule.
+
+**Enforcement:** DISCIPLINE — the branching rule is prose-only; no guard test checks branch origin. Tracked per binding rule 5.
+
+---
+
+## D157 — No rate limiting on `PUT /books/{book_id}/context` upsert endpoint
+
+**Status:** OPEN · **Owner:** Dev 3 · **Detected:** 2026-09-23 (S5-9 BMAD review, Scale & Load)
+
+`PUT /books/{book_id}/context` has no per-user rate limit. An authenticated user could submit the 10-field form in a tight loop (e.g. 1,000 upserts/second), running up Supabase row-write quota and RLS cost. The existing global rate limiter (D49, D52) is unreliable and keys by IP when JWT parse fails — it is not a substitute for endpoint-level throttling on mutation routes.
+
+**Resolution path:** Apply `@limiter.limit("10/minute")` (or similar) to the upsert route, keyed by `user_id`. Consistent with the rate-limiting strategy once D49/D52 are resolved. Sprint 6.
+
+**Enforcement:** DISCIPLINE — no guard test. Tracked per binding rule 5.
+
+---
+
+## D158 — No DB `CHECK` constraints on `motivation`, `end_goal`, `feared_section` text columns
+
+**Status:** OPEN · **Owner:** Dev 3 (schema) · **Detected:** 2026-09-23 (S5-9 BMAD review, Scale & Load)
+
+`supabase/migrations/20260921000000_book_context.sql` declares `motivation`, `end_goal`, and `feared_section` as `TEXT` with no `CHECK (length(col) <= 500)` constraint. The 500-char limit is enforced only by Pydantic (`schemas.py` `max_length=500`) and frontend `maxLength` attributes. A direct DB write (admin tooling, migration script, or future API bypass) can insert rows exceeding 500 chars — those rows would then be injected verbatim into the LLM system prompt via `get_book_context_prompt_context`, bypassing the `[:500]` text-field truncation (which only trims at 500 chars, not enforces at schema level).
+
+**Resolution path:** Add a new migration (do not modify applied migrations) that `ALTER TABLE book_context ADD CONSTRAINT check_motivation_len CHECK (char_length(motivation) <= 500)` for all three text columns. Sprint 6.
+
+**Enforcement:** DISCIPLINE — no guard test. Tracked per binding rule 5.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent

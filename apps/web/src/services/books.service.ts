@@ -1,4 +1,45 @@
 import { api } from '@/lib/api';
+// Story S5-1 (Issue #231): per-book personalization context types.
+// Field labels are from AI_Learning_Product_Final_Strategy.pdf §4.2 — see
+// docs/proposals/2026-09-19-platform-changes-scope.md for the extracted wording.
+
+// §4.2 MCQ option types (Q31–Q35)
+export type PurposeValue = 'exam_prep' | 'project_job' | 'deep_mastery' | 'quick_reference' | 'recommended_reading';
+export type CoverageValue = 'complete_book' | 'selected_chapters' | 'difficult_sections' | 'exam_relevant' | 'ai_decide';
+export type DifficultyValue = 'theory_heavy' | 'numerical_formula' | 'case_studies' | 'dense_language' | 'dont_know';
+export type DeadlineValue = 'urgent_2wk' | 'one_month' | 'two_three_months' | 'no_deadline' | 'key_insights_only';
+export type StructureValue = 'follow_exactly' | 'reorganise_by_difficulty' | 'reorganise_by_goal' | 'hybrid' | 'ai_choose';
+
+export interface BookContextRequest {
+    // Q31–Q35: MCQ
+    purpose?: PurposeValue | null;
+    coverage_scope?: CoverageValue | null;
+    expected_difficulty?: DifficultyValue | null;
+    deadline_depth?: DeadlineValue | null;
+    structure_preference?: StructureValue | null;
+    // Q36–Q38: one-liners
+    motivation?: string | null;
+    end_goal?: string | null;
+    feared_section?: string | null;
+    // Q39–Q40: true/false
+    prior_attempt?: boolean | null;
+    outcome_clarity?: boolean | null;
+}
+
+export interface BookContextResponse {
+    book_id: string;
+    purpose?: string | null;
+    coverage_scope?: string | null;
+    expected_difficulty?: string | null;
+    deadline_depth?: string | null;
+    structure_preference?: string | null;
+    motivation?: string | null;
+    end_goal?: string | null;
+    feared_section?: string | null;
+    prior_attempt?: boolean | null;
+    outcome_clarity?: boolean | null;
+    updated_at?: string | null;
+}
 // W0 taught this the object-shaped `chapter_too_large` detail. There is exactly
 // ONE parser for API error bodies in this app -- importing it is deliberate, and
 // `upload.service.ts` is not otherwise touched by W3 (Story W3 dev note).
@@ -321,6 +362,38 @@ export const booksService = {
     listChapters: async (bookId: string): Promise<ChapterResponse[]> => {
         const { data } = await api.get<ChapterResponse[]>(`content/books/${bookId}/chapters`);
         return data;
+    },
+
+    /**
+     * Upsert per-book context (Story S5-1, Issue #231).
+     * Always returns 200 — never 409. The server uses ON CONFLICT DO UPDATE.
+     */
+    upsertBookContext: async (
+        bookId: string,
+        ctx: BookContextRequest
+    ): Promise<BookContextResponse> => {
+        const { data } = await api.put<BookContextResponse>(
+            `content/books/${bookId}/context`,
+            ctx
+        );
+        return data;
+    },
+
+    /**
+     * Fetch saved per-book context, or null if none saved yet (204 No Content).
+     */
+    getBookContext: async (bookId: string): Promise<BookContextResponse | null> => {
+        try {
+            const response = await api.get<BookContextResponse>(
+                `content/books/${bookId}/context`
+            );
+            // 204 No Content: data is empty
+            return response.status === 204 ? null : response.data;
+        } catch (error: unknown) {
+            const status = (error as { response?: { status?: number } })?.response?.status;
+            if (status === 204 || status === 404) return null;
+            throw error;
+        }
     },
 
     /**

@@ -46,6 +46,8 @@ from app.modules.content.context_chapter import (
 # Story 1-11: book/chapter read models live in this module, NOT packages/shared
 # (frozen contract, 4-dev review — CLAUDE.md §16).
 from app.modules.content.schemas import (
+    BookContextRequest,
+    BookContextResponse,
     BookResponse,
     ChapterContextRequest,
     ChapterContextResponse,
@@ -1613,6 +1615,77 @@ async def put_chapter_context(
     )
 
 
+# ── Book context endpoints (Story S5-1, Issue #231) ───────────────────────────
+
+
+@router.put(
+    "/books/{book_id}/context",
+    response_model=BookContextResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Save (upsert) per-book learning context",
+)
+async def upsert_book_context(
+    book_id: str,
+    body: BookContextRequest,
+    current_user: CurrentUser,
+) -> BookContextResponse:
+    """Save or update the learner's context for one book.
+
+    All six fields are optional — the student may fill any subset or submit
+    an entirely empty body to clear previously saved answers.
+
+    Returns 200 on both first save and subsequent saves. Never returns 409.
+    The upsert is ON CONFLICT (book_id, user_id) DO UPDATE at the Postgres
+    level — no check-then-act race possible (Scale & Load Q6, Story S5-1).
+
+    Ownership: 404 (not 403) when the book does not exist or belongs to
+    another user, matching all other book endpoints.
+    """
+    from app.modules.content.context import upsert_book_context as _upsert
+
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+    # Ownership check — 404 if not found or another user's book.
+    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
+
+    try:
+        row = await _upsert(
+            book_id=_validated_book_id(book_id),
+            user_id=user_id,
+            purpose=body.purpose,
+            coverage_scope=body.coverage_scope,
+            expected_difficulty=body.expected_difficulty,
+            deadline_depth=body.deadline_depth,
+            structure_preference=body.structure_preference,
+            motivation=body.motivation,
+            end_goal=body.end_goal,
+            feared_section=body.feared_section,
+            prior_attempt=body.prior_attempt,
+            outcome_clarity=body.outcome_clarity,
+        )
+    except Exception as exc:
+        logger.exception("upsert_book_context: failed for book_id=%s", book_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save book context — please retry",
+        ) from exc
+
+    return BookContextResponse(
+        book_id=str(row["book_id"]),
+        purpose=row.get("purpose"),
+        coverage_scope=row.get("coverage_scope"),
+        expected_difficulty=row.get("expected_difficulty"),
+        deadline_depth=row.get("deadline_depth"),
+        structure_preference=row.get("structure_preference"),
+        motivation=row.get("motivation"),
+        end_goal=row.get("end_goal"),
+        feared_section=row.get("feared_section"),
+        prior_attempt=row.get("prior_attempt"),
+        outcome_clarity=row.get("outcome_clarity"),
+        updated_at=str(row["updated_at"]) if row.get("updated_at") else None,
+    )
+
+
 @router.get(
     "/books/{book_id}/chapters/{chapter_id}/context",
     response_model=ChapterContextResponse,
@@ -1652,4 +1725,64 @@ async def get_chapter_context(
         goal_and_skip=row.get("goal_and_skip"),
         prerequisites_done=row.get("prerequisites_done"),
         updated_at=str(row.get("updated_at")) if row.get("updated_at") else None,
+    )
+
+
+@router.get(
+    "/books/{book_id}/context",
+    response_model=None,
+    responses={
+        200: {"model": BookContextResponse},
+        204: {"description": "No context row exists for this book"},
+    },
+    summary="Get saved per-book learning context",
+)
+async def get_book_context(
+    book_id: str,
+    current_user: CurrentUser,
+    response: Response,
+) -> BookContextResponse | Response:
+    """Return the learner's saved context for one book.
+
+    Returns 200 + the saved row if context exists, or 204 No Content if the
+    student has never submitted context for this book.
+
+    Ownership: 404 (not 403) when the book does not exist or belongs to
+    another user.
+    """
+    from app.modules.content.context import get_book_context_row
+
+    user_id: str = current_user["sub"]
+    supabase = get_supabase()
+    _fetch_owned_book(supabase, _validated_book_id(book_id), user_id, "book_id,user_id")
+
+    try:
+        row = await get_book_context_row(
+            book_id=_validated_book_id(book_id),
+            user_id=user_id,
+        )
+    except Exception as exc:
+        logger.exception("get_book_context: failed for book_id=%s", book_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to load book context — please retry",
+        ) from exc
+    if row is None:
+        # RFC 7230: 204 MUST NOT include a message body — return Response
+        # directly to avoid FastAPI serializing None as "null".
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    return BookContextResponse(
+        book_id=str(row["book_id"]),
+        purpose=row.get("purpose"),
+        coverage_scope=row.get("coverage_scope"),
+        expected_difficulty=row.get("expected_difficulty"),
+        deadline_depth=row.get("deadline_depth"),
+        structure_preference=row.get("structure_preference"),
+        motivation=row.get("motivation"),
+        end_goal=row.get("end_goal"),
+        feared_section=row.get("feared_section"),
+        prior_attempt=row.get("prior_attempt"),
+        outcome_clarity=row.get("outcome_clarity"),
+        updated_at=str(row["updated_at"]) if row.get("updated_at") else None,
     )
