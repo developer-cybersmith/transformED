@@ -4,7 +4,7 @@ baseline_commit: ""
 
 # Story 5-10 — Book Context Review Fixes (Dev 2 Code Review Response)
 
-**Status:** in-progress  
+**Status:** review-complete  
 **Dev:** Dev 3  
 **Sprint:** Sprint 5  
 **Branch:** `sprint5/s5-10-book-context-review-fixes`
@@ -119,7 +119,7 @@ After fix:
 - [x] T3: Fix AC2 — replace hardcoded `2_000` with `_BOOK_CONTEXT_MAX_CHARS` in `graph.py`
 - [x] T4: Fix AC3 — remove dead `status === 204` from `catch` in `books.service.ts`
 - [x] T5: Fix AC4 — add `# BOUNDED:` comment + extend `test_unbounded_queries.py` scope
-- [x] T6: Fix AC5 — register F12 as D159 in DEFECT-REGISTER and update S5-1 story file
+- [x] T6: Fix AC5 — register F12 as D167 in DEFECT-REGISTER and update S5-1 story file
 - [x] T7: Fix AC6 — skip duplicate truncation warning in `narration_generator_node`
 - [x] T8: Fix AC7 — move inline imports to module top-level in `context.py`
 - [x] T9: Run all guard tests locally and verify clean (11/11 unbounded-query, 36/37 node-shape — 1 pre-existing tinytag failure)
@@ -142,7 +142,26 @@ then style (AC7). No migrations needed.
 - `docs/DEFECT-REGISTER.md` (AC5)
 - `docs/stories/S5-1-book-context-form.md` (AC5)
 
+### Senior Developer Review (AI) — 2026-09-23
+
+**Review outcome:** Changes Requested → Resolved (all items addressed in commit `b5be954`)
+
+**6-agent review layers run:** Blind Hunter · Story Quality · Process Integrity + Test Coverage · Acceptance Auditor · Edge Case Hunter · Scale & Load Hunter
+
+**Action Items addressed:**
+
+- [x] HIGH (Story Quality) — D159 register ID collision: renamed to D167 (D159 pre-existed as Ask Tutor stub, line 982)
+- [x] HIGH (Story Quality + Process Integrity) — No regression test for `rfind==0` edge case: `test_rfind_zero_produces_empty_truncated_context` added (binding rule 7: FIXED-UNGUARDED resolved)
+- [x] MEDIUM (Story Quality + Process Integrity) — No test for narration warning suppression: source-inspection guard test added (binding rule 7: FIXED-UNGUARDED resolved)
+- [x] MEDIUM (Process Integrity) — `_BOOK_CONTEXT_MAX_CHARS` imported inside function body: moved to graph.py module-level imports
+- [x] MEDIUM (Scale & Load) — Derivation comment wrong math (1 char/token → 7,680 chars headroom): corrected with full explanation of why 2,000 is safe despite higher headroom
+- [x] INVALID (Acceptance Auditor) — ruff I001 on split `app.core.db` imports: verified clean (`ruff check --select I context.py` → All checks passed)
+- [x] LOW (Edge Case Hunter) — `rfind==0` → empty string → 0 context bytes: documented in new regression test; not a code defect since all current callers produce context starting with `[Book Context]` (no leading `\n`)
+
+**Story-first ordering:** Confirmed — story commit `e00612b` precedes all implementation commits. ✓
+
 ### Change Log
 | Date | Change |
 |------|--------|
 | 2026-09-23 | Story created from Dev 2 PR #244 code review findings |
+| 2026-09-23 | 6-agent BMAD code review run; 5 valid findings addressed (commit `b5be954`) |
