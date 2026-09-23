@@ -1895,13 +1895,12 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             "truncation occurred; setting book_context_truncated=True in state",
             lesson_id,
         )
-    result = {
+    return {
         "lesson_plan": lesson_plan,
         "progress_pct": 38.0,
         "book_context": book_context,
         "book_context_truncated": _lp_ctx_truncated,
     }
-    return result
 
 
 class _SlideLLM(BaseModel):
@@ -2303,12 +2302,11 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
-    _sg_result = {
+    return {
         "slides": slides_out,
         "progress_pct": 48.0,
         "book_context_truncated": _slide_ctx_truncated,
     }
-    return _sg_result
 
 
 class _SegmentSummaryLLM(BaseModel):
@@ -4127,12 +4125,11 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
     )
 
-    _nar_ret = {
+    return {
         "narration_scripts": [result],
         "section_truncations": section_truncations,
         "book_context_truncated": _narration_ctx_truncated,
     }
-    return _nar_ret
 
 
 # 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
