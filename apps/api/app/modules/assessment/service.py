@@ -1649,10 +1649,7 @@ def _validate_onboarding_responses(responses: list[OnboardingAnswer]) -> None:
             if cast(int, ans.selected_index) >= max_index:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=(
-                        f"{ans.question_id} selected_index out of range "
-                        f"(0-{max_index - 1})."
-                    ),
+                    detail=(f"{ans.question_id} selected_index out of range (0-{max_index - 1})."),
                 )
 
 
@@ -1796,9 +1793,11 @@ async def process_onboarding(
         for ans in responses
     ]
     insert_resp = await asyncio.to_thread(
-        lambda: supabase.table("onboarding_answers_v2")
-        .upsert(rows, on_conflict="user_id,question_id")
-        .execute()
+        lambda: (
+            supabase.table("onboarding_answers_v2")
+            .upsert(rows, on_conflict="user_id,question_id")
+            .execute()
+        )
     )
     insert_error = getattr(insert_resp, "error", None)
     if insert_error:
@@ -2339,8 +2338,7 @@ async def _read_onboarding_headline_answers(*, user_id: str, supabase: Client) -
         found = rows(resp)
     except Exception as exc:
         logger.warning(
-            "onboarding: could not read headline answers for tutor context "
-            "(user=%s, error=%s)",
+            "onboarding: could not read headline answers for tutor context (user=%s, error=%s)",
             user_id,
             str(exc).replace("\n", " "),
         )

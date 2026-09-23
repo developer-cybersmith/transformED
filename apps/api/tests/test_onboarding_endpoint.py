@@ -218,7 +218,9 @@ def test_migration_unique_constraint_sql_content() -> None:
 @pytest.mark.unit
 def test_migration_onboarding_answers_v2_exists() -> None:
     """Story 235 AC1: onboarding_answers_v2 migration must exist, with RLS enabled."""
-    migration_path = _REPO_ROOT / "supabase" / "migrations" / "20260922010000_onboarding_answers_v2.sql"
+    migration_path = (
+        _REPO_ROOT / "supabase" / "migrations" / "20260922010000_onboarding_answers_v2.sql"
+    )
     assert migration_path.exists(), "Missing onboarding_answers_v2 migration."
     content = migration_path.read_text(encoding="utf-8")
     assert "CREATE TABLE public.onboarding_answers_v2" in content
@@ -230,7 +232,8 @@ def test_migration_onboarding_answers_v2_exists() -> None:
     ), "AC1c: onboarding_answers_v2 must have RLS enabled (CLAUDE.md: RLS on ALL tables)."
     for cmd in ("select", "insert", "update", "delete"):
         assert re.search(
-            rf'CREATE POLICY .*onboarding_answers_v2.*\n?\s*ON public\.onboarding_answers_v2 FOR {cmd.upper()}',
+            rf"CREATE POLICY .*onboarding_answers_v2.*\n?\s*"
+            rf"ON public\.onboarding_answers_v2 FOR {cmd.upper()}",
             content,
             re.IGNORECASE,
         ), f"AC1c: missing {cmd.upper()} own-row RLS policy on onboarding_answers_v2."
@@ -428,7 +431,7 @@ def test_mcq_option_counts_q6_q7_are_four_others_five() -> None:
 
 @pytest.mark.unit
 def test_all_question_ids_matches_q_spec_keys() -> None:
-    from app.modules.assessment.onboarding_questions import ALL_QUESTION_IDS, Q_SPEC
+    from app.modules.assessment.onboarding_questions import Q_SPEC
 
     assert ALL_QUESTION_IDS == frozenset(Q_SPEC)
 
@@ -703,7 +706,13 @@ def test_compute_penta_badge_labels_all_low_yields_zero_badges() -> None:
 def test_compute_penta_badge_labels_no_iq_eq_sq() -> None:
     from app.modules.assessment.service import _compute_penta_badge_labels
 
-    scores = {"penta_iq": 100.0, "penta_eq": 100.0, "penta_sq": 100.0, "penta_ctq": 100.0, "penta_rrq": 100.0}
+    scores = {
+        "penta_iq": 100.0,
+        "penta_eq": 100.0,
+        "penta_sq": 100.0,
+        "penta_ctq": 100.0,
+        "penta_rrq": 100.0,
+    }
     labels = _compute_penta_badge_labels(scores)
     for label in labels:
         label_lower = label.lower()
@@ -826,7 +835,9 @@ async def test_process_onboarding_write_error_returns_500(mock_to_thread) -> Non
 
 
 @pytest.mark.unit
-async def test_process_onboarding_rejects_invalid_responses_before_any_db_call(mock_to_thread) -> None:
+async def test_process_onboarding_rejects_invalid_responses_before_any_db_call(
+    mock_to_thread,
+) -> None:
     """AC4: validation runs first — an invalid submission never reaches the DB at all."""
     from fastapi import HTTPException
 
@@ -834,7 +845,9 @@ async def test_process_onboarding_rejects_invalid_responses_before_any_db_call(m
     from app.modules.assessment.service import process_onboarding
 
     answers = _make_onboarding_answers()
-    answers[0] = OnboardingAnswer(question_id="unknown_q", format="mcq", selected_index=0, response_text="x")
+    answers[0] = OnboardingAnswer(
+        question_id="unknown_q", format="mcq", selected_index=0, response_text="x"
+    )
     supabase = MagicMock()  # no side_effect configured — any table() call would raise StopIteration
 
     with pytest.raises(HTTPException) as exc_info:
@@ -858,7 +871,9 @@ async def test_process_onboarding_profile_text_has_dpdp_disclaimer(mock_to_threa
         mock_provider_cls.return_value = mock_provider_inst
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
         mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
-        result = await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+        result = await process_onboarding(
+            responses=answers, user_id="user-onb-001", supabase=supabase
+        )
 
     assert result.profile_text.endswith("— Pursuant to DPDP Act 2023.")
 
@@ -878,7 +893,9 @@ async def test_process_onboarding_returns_onboarding_result(mock_to_thread) -> N
         mock_provider_cls.return_value = mock_provider_inst
         mock_settings.return_value.llm_mini = "gpt-4o-mini"
         mock_prompts_settings.return_value.llm_mini = "gpt-4o-mini"
-        result = await process_onboarding(responses=answers, user_id="user-onb-001", supabase=supabase)
+        result = await process_onboarding(
+            responses=answers, user_id="user-onb-001", supabase=supabase
+        )
 
     assert isinstance(result, OnboardingResult)
     result_dict = result.model_dump()
@@ -1082,7 +1099,9 @@ def test_http_redis_set_called_after_success() -> None:
     mock_redis.set = AsyncMock(return_value=True)
 
     mock_result = OnboardingResult(
-        badge_labels=[], profile_text="Descriptive text. — Pursuant to DPDP Act 2023.", session_count=0
+        badge_labels=[],
+        profile_text="Descriptive text. — Pursuant to DPDP Act 2023.",
+        session_count=0,
     )
 
     with patch("app.core.redis.get_redis", return_value=mock_redis):

@@ -66,6 +66,7 @@ _SESSION_ROW: dict = {
     "lesson_id": LESSON_ID,
 }
 
+
 def _build_valid_onboarding_responses() -> list[OnboardingAnswer]:
     """30 valid OnboardingAnswer objects (Story 235 shape: q1-q30, 3 formats)."""
     from app.modules.assessment.onboarding_questions import MCQ_OPTION_COUNTS, Q_SPEC

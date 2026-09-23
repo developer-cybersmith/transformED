@@ -88,7 +88,9 @@ def _build_supabase_process_onboarding(
     dna_select_table = MagicMock()
     dna_select_resp = MagicMock()
     dna_select_resp.data = None
-    dna_select_chain = dna_select_table.select.return_value.eq.return_value.maybe_single.return_value
+    dna_select_chain = (
+        dna_select_table.select.return_value.eq.return_value.maybe_single.return_value
+    )
     dna_select_chain.execute.return_value = dna_select_resp
 
     answers_v2_table = MagicMock()
@@ -328,7 +330,9 @@ def test_compute_penta_scores_one_low_answer_only_affects_its_own_dimension() ->
     assert scores["penta_ctq"] == pytest.approx(0.0)
     for dim in PENTA_DIMENSIONS:
         if dim != "penta_ctq":
-            assert scores[dim] == pytest.approx(100.0), f"{dim} should be unaffected, got {scores[dim]}"
+            assert scores[dim] == pytest.approx(100.0), (
+                f"{dim} should be unaffected, got {scores[dim]}"
+            )
 
 
 # ══════════════════════════════════════════════════════════════════════════════

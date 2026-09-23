@@ -36,9 +36,7 @@ Q_SPEC: dict[str, QuestionFormat] = {
 
 # Per-question MCQ option count. All 5-option except Q6/Q7 (Bilingual Bridge inner-
 # voice/translation-gap questions), which the source PDF gives only 4 options each.
-MCQ_OPTION_COUNTS: dict[str, int] = {
-    f"q{i}": (4 if i in (6, 7) else 5) for i in range(1, 21)
-}
+MCQ_OPTION_COUNTS: dict[str, int] = {f"q{i}": (4 if i in (6, 7) else 5) for i in range(1, 21)}
 
 # The exact 30 valid question_ids — used to validate a submission is neither missing
 # nor carrying unknown/duplicate ids.

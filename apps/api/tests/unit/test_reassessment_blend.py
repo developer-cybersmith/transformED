@@ -163,7 +163,9 @@ class _FakeOnboardingAnswersTable:
         return resp
 
 
-def _existing_row(*, session_count: int, penta_scores: dict[str, float] | None = None) -> dict[str, Any]:
+def _existing_row(
+    *, session_count: int, penta_scores: dict[str, float] | None = None
+) -> dict[str, Any]:
     """A learner_dna DB row — session_count + optional prior penta scores.
 
     The 9 behavioral dimension columns are deliberately absent (they're never
