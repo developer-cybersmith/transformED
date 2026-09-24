@@ -31,6 +31,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.config import get_settings
+
 
 def _state(tier: str) -> dict[str, Any]:
     return {
@@ -157,10 +159,17 @@ async def test_stale_t2_cache_rejected_for_a_t1_lesson() -> None:
     """
     from app.modules.content.pipeline import graph as g
 
-    # Pin the premise: if this fixture ever falls outside T1's band, the test
-    # would pass via the count heuristic and prove nothing about the stamp.
-    n_min, n_max = g._TIER_QUIZ_COUNT_BAND["T1"]
-    assert n_min <= 3 <= n_max, "fixture must be in-band for T1, or this test is vacuous"
+    # Pin the premise: if this fixture ever exceeds T1's allocated count, the
+    # test would pass via the legacy count heuristic and prove nothing about the
+    # stamp. S5-4 replaced the per-segment band with a lesson-level allocation,
+    # so the ceiling is now this section's allocated share, computed the same
+    # way the fan-out computes it.
+    t1_allocation = g._quiz_budget_per_segment(
+        "T1",
+        [float(len(sec.get("body", ""))) for sec in _state("T1")["sections"]],
+        get_settings().quiz_seconds_per_question,
+    )[0]
+    assert 3 <= t1_allocation, "fixture must be within T1's allocation, or this test is vacuous"
 
     _, result, provider, write_mock = await _run(
         "T1",
@@ -251,8 +260,15 @@ async def test_rejected_cache_plus_failed_regeneration_salvages() -> None:
     _, result, _, write_mock = await _run("T3", lambda sid: _stamped(sid, 5, "T1"), fresh=None)
 
     assert result["quiz_questions"], "must salvage, not ship an empty quiz"
-    assert len(result["quiz_questions"]) <= g._TIER_QUIZ_COUNT_BAND["T3"][1], (
-        "salvage must respect this tier's ceiling"
+    # S5-4: the ceiling is the section's allocated share of T3's lesson-level
+    # budget, not the deleted per-segment band's maximum.
+    t3_allocation = g._quiz_budget_per_segment(
+        "T3",
+        [float(len(sec.get("body", ""))) for sec in _state("T3")["sections"]],
+        get_settings().quiz_seconds_per_question,
+    )[0]
+    assert len(result["quiz_questions"]) <= t3_allocation, (
+        "salvage must respect this tier's allocated count"
     )
     write_mock.assert_awaited()
     assert write_mock.await_args.args[2]["tier"] == "T3", (

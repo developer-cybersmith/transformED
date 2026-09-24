@@ -348,7 +348,16 @@ export default function Player({ lesson, onRefetchLesson }: PlayerProps) {
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6">
             <h2 className="font-serif text-xl font-semibold text-neutral-900">{lesson.metadata.title}</h2>
             <p className="text-neutral-500 text-sm">
-              {lesson.metadata.total_segments} segments · ~{lesson.metadata.estimated_duration_mins} min
+              {/* S5-4: estimated_duration_mins is the lesson's NARRATION time
+                  (measured from the real synthesised audio where available),
+                  not the 15/30/45 seat time the student picked — that budget
+                  also covers quizzes, teach-back and tutor Q&A. Labelled
+                  explicitly so the two numbers can't be read as the same
+                  claim. Lessons generated before S5-4 carry the old planner
+                  estimate here; it stays labelled the same way rather than
+                  being presented as an enforced duration. */}
+              {lesson.metadata.total_segments} segments · ~
+              {lesson.metadata.estimated_duration_mins} min of teaching
             </p>
           </div>
         )}

@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fish Audio TTS Pricing Research — 2026</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+    .container { max-width: 900px; margin: 0 auto; }
+
+    h1 { font-size: 1.7rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.3rem; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem; }
+
+    h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #7dd3fc;
+      margin: 2rem 0 0.75rem;
+      padding-bottom: 0.3rem;
+      border-bottom: 1px solid #1e293b;
+    }
+    h3 { font-size: 0.95rem; font-weight: 600; color: #cbd5e1; margin: 1rem 0 0.5rem; }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .kpi {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 1.1rem 1.2rem;
+    }
+    .kpi .label { font-size: 0.75rem; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+    .kpi .value { font-size: 1.6rem; font-weight: 700; color: #34d399; margin: 0.2rem 0; }
+    .kpi .detail { font-size: 0.78rem; color: #94a3b8; }
+
+    .highlight-box {
+      background: #132430;
+      border: 1px solid #0e7490;
+      border-left: 4px solid #06b6d4;
+      border-radius: 8px;
+      padding: 1rem 1.2rem;
+      margin: 1rem 0;
+      font-size: 0.88rem;
+      color: #bae6fd;
+    }
+    .highlight-box strong { color: #e0f2fe; }
+
+    .warn-box {
+      background: #1c1a0c;
+      border: 1px solid #854d0e;
+      border-left: 4px solid #f59e0b;
+      border-radius: 8px;
+      padding: 1rem 1.2rem;
+      margin: 1rem 0;
+      font-size: 0.88rem;
+      color: #fde68a;
+    }
+    .warn-box strong { color: #fef3c7; }
+
+    .table-wrap { overflow-x: auto; margin: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; min-width: 520px; }
+    thead tr { background: #1e293b; }
+    thead th {
+      text-align: left;
+      padding: 0.65rem 0.9rem;
+      color: #94a3b8;
+      font-weight: 600;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    tbody tr { border-bottom: 1px solid #1e293b; }
+    tbody tr:hover { background: #1a2233; }
+    tbody td { padding: 0.6rem 0.9rem; color: #e2e8f0; }
+    .highlight-row td { background: #0f2d1e; color: #86efac; font-weight: 600; }
+    .muted { color: #64748b; }
+    .green { color: #34d399; font-weight: 600; }
+    .red { color: #f87171; }
+    .amber { color: #fbbf24; }
+    .best-badge {
+      display: inline-block;
+      background: #065f46;
+      color: #6ee7b7;
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.1rem 0.4rem;
+      border-radius: 4px;
+      text-transform: uppercase;
+      margin-left: 0.4rem;
+    }
+
+    .sarvam-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.75rem;
+      margin: 1rem 0;
+    }
+    .sarvam-card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 0.9rem 1rem;
+      font-size: 0.85rem;
+    }
+    .sarvam-card .name { font-weight: 600; color: #c4b5fd; margin-bottom: 0.3rem; }
+    .sarvam-card .price { font-size: 1.2rem; font-weight: 700; color: #34d399; }
+    .sarvam-card .sub { color: #94a3b8; font-size: 0.78rem; margin-top: 0.2rem; }
+
+    .sources { margin-top: 2.5rem; border-top: 1px solid #1e293b; padding-top: 1.5rem; }
+    .sources h2 { color: #64748b; font-size: 0.9rem; }
+    .sources ul { list-style: none; margin-top: 0.5rem; }
+    .sources li { margin: 0.3rem 0; }
+    .sources a { color: #7dd3fc; text-decoration: none; font-size: 0.8rem; }
+    .sources a:hover { text-decoration: underline; }
+
+    .note { font-size: 0.78rem; color: #64748b; font-style: italic; margin-top: 0.4rem; }
+    .section-note { font-size: 0.82rem; color: #94a3b8; margin-bottom: 0.75rem; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Fish Audio TTS Pricing Research</h1>
+  <div class="subtitle">Compiled 2026-09-03 · Updated 2026-09-03 (deep research: 5 angles, 8 sources, adversarial verification) — Fish Audio vs ElevenLabs, Azure TTS, Sarvam AI, OpenAI, Amazon Polly, Google TTS</div>
+
+  <!-- KPI row -->
+  <div class="hero-grid">
+    <div class="kpi">
+      <div class="label">Fish Audio API</div>
+      <div class="value">$15</div>
+      <div class="detail">per 1M UTF-8 bytes (characters)</div>
+    </div>
+    <div class="kpi">
+      <div class="label">vs ElevenLabs Flash</div>
+      <div class="value">4×</div>
+      <div class="detail">cheaper ($60/1M vs $15/1M)</div>
+    </div>
+    <div class="kpi">
+      <div class="label">vs ElevenLabs v3/Multilingual</div>
+      <div class="value">11×</div>
+      <div class="detail">cheaper ($165/1M vs $15/1M)</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Sarvam Bulbul v3</div>
+      <div class="value">~$3.60</div>
+      <div class="detail">per 1M chars (₹30/10K chars)</div>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <strong>Billing unit:</strong> Fish Audio charges per UTF-8 <em>byte</em>, not character. For English (ASCII) text, 1 character = 1 byte, so $15/1M characters is accurate. For Indian scripts (Devanagari, Tamil, etc.) each character is 3–4 bytes, making effective cost <strong>$45–$60 per 1M characters</strong> — same tier as ElevenLabs Flash for Indic content.
+  </div>
+
+  <!-- Main comparison table -->
+  <h2>Full Provider Comparison — Cost per Million Characters</h2>
+  <p class="section-note">Sources: TextToLab, Gradium AI, Fish Audio Blog, Sarvam docs. Ranked cheapest to most expensive for English text.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Provider / Model</th>
+          <th>$/1M Characters</th>
+          <th>Billing Unit</th>
+          <th>Free Tier</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Google Cloud TTS — Standard</td>
+          <td class="green">$4</td>
+          <td>character</td>
+          <td>1M chars/mo</td>
+          <td>Standard voices only</td>
+        </tr>
+        <tr>
+          <td>Amazon Polly — Standard</td>
+          <td class="green">$4</td>
+          <td>character</td>
+          <td>5M chars (12 months)</td>
+          <td>Standard/NTTS voices</td>
+        </tr>
+        <tr>
+          <td>Grok TTS (beta)</td>
+          <td class="green">$4.20</td>
+          <td>character</td>
+          <td>—</td>
+          <td>Beta pricing, may change</td>
+        </tr>
+        <tr>
+          <td>Sarvam Bulbul v3</td>
+          <td class="green">~$3.60</td>
+          <td>character (₹30/10K)</td>
+          <td>₹100 free credits</td>
+          <td>Indian languages only; Bulbul v2 was ₹15/10K (~$1.80/1M)</td>
+        </tr>
+        <tr>
+          <td>Gemini Flash TTS</td>
+          <td class="green">~$12</td>
+          <td>character</td>
+          <td>—</td>
+          <td>Also cited as $36.6/1M by Gradium (model version variance)</td>
+        </tr>
+        <tr class="highlight-row">
+          <td>Fish Audio S2 Pro <span class="best-badge">Focus</span></td>
+          <td>$15</td>
+          <td>UTF-8 byte</td>
+          <td>8,000 credits (~7 min)</td>
+          <td>Indic scripts: ~$45–60/1M effective</td>
+        </tr>
+        <tr>
+          <td>OpenAI TTS-1</td>
+          <td class="amber">$15</td>
+          <td>character</td>
+          <td>None</td>
+          <td>Parity with Fish Audio for English</td>
+        </tr>
+        <tr>
+          <td>Amazon Polly — Neural</td>
+          <td class="amber">$16</td>
+          <td>character</td>
+          <td>5M chars (12 months)</td>
+          <td>Neural voices</td>
+        </tr>
+        <tr>
+          <td>Microsoft Azure TTS — Neural</td>
+          <td class="amber">$15–$22</td>
+          <td>character</td>
+          <td>500K chars/mo</td>
+          <td>Standard neural $15; HD 2.5 $22</td>
+        </tr>
+        <tr>
+          <td>OpenAI TTS-1-HD</td>
+          <td class="amber">$30</td>
+          <td>character</td>
+          <td>None</td>
+          <td>Higher quality HD variant</td>
+        </tr>
+        <tr>
+          <td>Deepgram Aura-2</td>
+          <td class="amber">$30 ($27 Growth)</td>
+          <td>character</td>
+          <td>—</td>
+          <td>Volume discount at Growth tier</td>
+        </tr>
+        <tr>
+          <td>Cartesia Sonic-3</td>
+          <td class="amber">$37–$50</td>
+          <td>character</td>
+          <td>—</td>
+          <td>Startup plan $39/mo (1.25M credits)</td>
+        </tr>
+        <tr>
+          <td>ElevenLabs Flash v2.5</td>
+          <td class="red">$50–$60</td>
+          <td>character</td>
+          <td>Limited (8,333 chars/mo equiv)</td>
+          <td>Fastest model; 4× Fish Audio</td>
+        </tr>
+        <tr>
+          <td>ElevenLabs Turbo v2.5</td>
+          <td class="red">$50</td>
+          <td>character</td>
+          <td>—</td>
+          <td>Low-latency optimized</td>
+        </tr>
+        <tr>
+          <td>ElevenLabs Multilingual v2</td>
+          <td class="red">$100–$120</td>
+          <td>character</td>
+          <td>—</td>
+          <td>Highest quality EL model; 7–8× Fish Audio</td>
+        </tr>
+        <tr>
+          <td>ElevenLabs Eleven v3</td>
+          <td class="red">$100–$165</td>
+          <td>character</td>
+          <td>—</td>
+          <td>Flagship; most cited at $165/1M</td>
+        </tr>
+        <tr>
+          <td>MiniMax Speech 2.8 HD</td>
+          <td class="red">$100</td>
+          <td>character</td>
+          <td>—</td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- API rate limits -->
+  <h2>Fish Audio API — Concurrent Request Rate Limits</h2>
+  <p class="section-note">Tiers unlock automatically when cumulative prepaid spend crosses the threshold. No manual upgrade needed.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Cumulative Spend Threshold</th>
+          <th>Max Concurrent Requests</th>
+          <th>Throughput Example</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Starter</td>
+          <td>&lt; $100</td>
+          <td>5</td>
+          <td>~150 QPM (2 s avg) / ~5 QPM (60 s avg)</td>
+        </tr>
+        <tr>
+          <td>Elevated</td>
+          <td>≥ $100</td>
+          <td>15</td>
+          <td>~450 QPM (2 s avg)</td>
+        </tr>
+        <tr>
+          <td>High Volume</td>
+          <td>≥ $1,000</td>
+          <td>50</td>
+          <td>~1,500 QPM (2 s avg)</td>
+        </tr>
+        <tr>
+          <td>Enterprise</td>
+          <td>Custom</td>
+          <td>Custom</td>
+          <td>—</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Other API services -->
+  <h2>Fish Audio — Other API Services (Verified from Official Docs)</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Service</th>
+          <th>Model</th>
+          <th>Price</th>
+          <th>Billing Unit</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>ASR / Speech-to-Text</td>
+          <td><code style="background:#1e293b;color:#f6ad55;padding:0.1em 0.35em;border-radius:3px;font-size:0.85em">transcribe-1</code></td>
+          <td>$0.36 / audio hour</td>
+          <td>Rounded up to nearest second</td>
+        </tr>
+        <tr>
+          <td>Voice Design</td>
+          <td><code style="background:#1e293b;color:#f6ad55;padding:0.1em 0.35em;border-radius:3px;font-size:0.85em">voice-design-1</code></td>
+          <td>$0.01 / successful request</td>
+          <td>Auth / validation errors not billed</td>
+        </tr>
+        <tr>
+          <td>Self-hosted / On-Premise</td>
+          <td>Custom deployment</td>
+          <td>$10,000 / month</td>
+          <td>~$120–150K/yr floor; includes research team access</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Free API tier -->
+  <h2>Free API Tier — <code style="background:#1e293b;color:#f6ad55;padding:0.1em 0.35em;border-radius:3px">s2.1-pro-free</code></h2>
+
+  <div class="highlight-box">
+    <strong>Real free tier exists at the API level</strong>, separate from the 8,000-credit web free tier. Model string <code style="background:#1e293b;color:#f6ad55;padding:0.1em 0.35em;border-radius:3px">s2.1-pro-free</code>, no credit card required, no waitlist.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td>Cost</td><td class="green">$0.00</td></tr>
+        <tr><td>Hard character cap</td><td>None published — Fair Use Policy governs (no number disclosed)</td></tr>
+        <tr><td>SLA / uptime</td><td class="muted">None — best-effort, no TTFA commitment</td></tr>
+        <tr><td>Data retention</td><td class="amber">Requests may be retained to improve model</td></tr>
+        <tr><td>Commercial use</td><td>&gt; $1M ARR must contact Fish Audio first</td></tr>
+        <tr><td>Free period confirmed</td><td>Announced ~June 2026, extended to 2026-08-31</td></tr>
+        <tr><td>Status after 2026-08-31</td><td class="amber">Not confirmed (research date: 2026-09-03)</td></tr>
+        <tr><td>Languages</td><td>83</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="warn-box">
+    <strong>Continuity risk:</strong> The free period was extended twice. As of 2026-09-03 (one day past the stated end date), no confirmation that the free tier persists was found. Do not build a production dependency on <code style="background:#1e293b;color:#f6ad55;padding:0.1em 0.35em;border-radius:3px">s2.1-pro-free</code> without confirming current status directly with Fish Audio.
+  </div>
+
+  <!-- CRITICAL: credits vs API -->
+  <h2>Critical Distinction: Subscription Credits ≠ API Credits</h2>
+
+  <div class="warn-box">
+    <strong>Common gotcha confirmed by multiple independent sources:</strong> Subscription plan credits (Free / Plus / Pro / Max) are for the <em>web studio UI only</em>. They cannot be used via the API. API billing is always pay-as-you-go per UTF-8 byte, completely separate from subscription tiers. A team buying the $100/mo Pro plan to use the API is paying for credits they cannot consume via API calls.
+  </div>
+
+  <!-- Fish Audio subscription plans -->
+  <h2>Fish Audio Subscription Plans (Web Studio — Not API Credits)</h2>
+  <p class="section-note">Annual billing saves ~33%. Unused credits do not roll over month-to-month.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Plan</th>
+          <th>Monthly Price</th>
+          <th>Credits</th>
+          <th>Audio Duration</th>
+          <th>Effective $/min</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Free</td>
+          <td>$0</td>
+          <td>8,000</td>
+          <td>~7 minutes</td>
+          <td>$0</td>
+        </tr>
+        <tr>
+          <td>Plus</td>
+          <td>$11</td>
+          <td>250,000</td>
+          <td>~200 minutes</td>
+          <td>~$0.055/min</td>
+        </tr>
+        <tr>
+          <td>Pro</td>
+          <td>$75</td>
+          <td>2,000,000</td>
+          <td>~27 hours</td>
+          <td>~$0.046/min</td>
+        </tr>
+        <tr>
+          <td>Max</td>
+          <td>$749</td>
+          <td>25,000,000</td>
+          <td>~104 hours</td>
+          <td>~$0.120/min</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="note">1 minute of generated audio ≈ 600–625 credits. API pay-as-you-go: ~$1.25 per hour of generated audio at $15/1M rate.</p>
+
+  <!-- Sarvam section -->
+  <h2>Sarvam AI — Bulbul Pricing (Indian Languages)</h2>
+
+  <div class="sarvam-grid">
+    <div class="sarvam-card">
+      <div class="name">Bulbul v2</div>
+      <div class="price">~$1.80/1M</div>
+      <div class="sub">₹15 per 10,000 characters<br>(legacy; may be deprecated)</div>
+    </div>
+    <div class="sarvam-card">
+      <div class="name">Bulbul v3</div>
+      <div class="price">~$3.60/1M</div>
+      <div class="sub">₹30 per 10,000 characters<br>Charged per character, rounded up per request</div>
+    </div>
+    <div class="sarvam-card">
+      <div class="name">Free Tier</div>
+      <div class="price">₹100</div>
+      <div class="sub">Free credits on signup<br>~33K characters at v3 rate</div>
+    </div>
+  </div>
+
+  <div class="highlight-box">
+    <strong>Sarvam vs Fish Audio for Indian content:</strong> Sarvam Bulbul v3 at ~$3.60/1M is ~4× cheaper than Fish Audio's $15/1M <em>nominal</em> rate. However, Fish Audio bills in UTF-8 bytes — Devanagari/Tamil are 3–4 bytes per character — so Fish Audio's <em>effective</em> rate for Indian language text is $45–$60/1M characters, making Sarvam 12–17× cheaper for Indic scripts. Sarvam is the correct choice for Hindi/Tamil/Telugu narration at any volume.
+  </div>
+
+  <!-- Real-world example -->
+  <h2>Real-World Cost Example</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Scenario</th>
+          <th>Characters</th>
+          <th>Fish Audio</th>
+          <th>ElevenLabs Flash</th>
+          <th>Azure Neural</th>
+          <th>Sarvam v3 (Indic)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Blog post (1,500 words)</td>
+          <td>~8,500</td>
+          <td>$0.13</td>
+          <td>$0.51</td>
+          <td>$0.19</td>
+          <td>$0.03</td>
+        </tr>
+        <tr>
+          <td>1 lesson (10 min narration)</td>
+          <td>~15,000</td>
+          <td>$0.23</td>
+          <td>$0.90</td>
+          <td>$0.33</td>
+          <td>$0.05</td>
+        </tr>
+        <tr>
+          <td>100 lessons/month</td>
+          <td>~1.5M</td>
+          <td>$22.50</td>
+          <td>$90</td>
+          <td>$33</td>
+          <td>$5.40</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Sarvam figures assume English-script input; Indic script would be the same dollar cost (Sarvam charges per character, not byte).</p>
+
+  <!-- Quality context -->
+  <h2>Quality Context (Independent Benchmarks)</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Provider / Model</th>
+          <th>Artificial Analysis ELO</th>
+          <th>Blind Test Win Rate</th>
+          <th>$/1M</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Google Gemini 3.1 Flash TTS</td>
+          <td>1,211</td>
+          <td>—</td>
+          <td>~$12–37</td>
+        </tr>
+        <tr>
+          <td>ElevenLabs Eleven v3</td>
+          <td>1,179</td>
+          <td>40% vs Fish Audio</td>
+          <td>$100–165</td>
+        </tr>
+        <tr class="highlight-row">
+          <td>Fish Audio S2 Pro</td>
+          <td>1,128</td>
+          <td>60% vs ElevenLabs (71K comparisons)</td>
+          <td>$15</td>
+        </tr>
+        <tr>
+          <td>Azure AI Speech HD 2.5</td>
+          <td>1,123</td>
+          <td>—</td>
+          <td>$22</td>
+        </tr>
+        <tr>
+          <td>OpenAI TTS-1</td>
+          <td>1,102</td>
+          <td>—</td>
+          <td>$15</td>
+        </tr>
+        <tr>
+          <td>ElevenLabs Turbo / Flash v2.5</td>
+          <td>~1,050–1,080</td>
+          <td>—</td>
+          <td>$50–60</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="warn-box">
+    <strong>TransformED relevance — Sarvam Bulbul v2 status:</strong> The project's TTS fallback chain is "Sarvam Bulbul v2 → Azure TTS → Browser Speech". Sarvam's public pricing page (docs.sarvam.ai) only documents Bulbul <em>v3</em> (₹30/10K chars). Bulbul v2 pricing is not publicly listed and may be deprecated or on legacy contracts. Confirm whether the Sarvam SDK still routes to v2 or silently upgrades to v3, and whether pricing has changed.
+  </div>
+
+  <!-- Sources -->
+  <div class="sources">
+    <h2>Sources</h2>
+    <ul>
+      <li><a href="https://texttolab.com/blog/fish-audio-pricing" target="_blank">TextToLab — Fish Audio Pricing: $15/1M, Up to 11x Cheaper vs ElevenLabs</a></li>
+      <li><a href="https://texttolab.com/blog/fish-audio-review" target="_blank">TextToLab — Fish Audio Review 2026: #1 in Blind Tests at 11x Less Than ElevenLabs</a></li>
+      <li><a href="https://texttolab.com/blog/fish-audio-vs-elevenlabs" target="_blank">TextToLab — Fish Audio vs ElevenLabs: Wins 60% of Blind Tests at 11x Lower Price (2026)</a></li>
+      <li><a href="https://gradium.ai/content/how-to-compare-tts-pricing-across-providers-2026" target="_blank">Gradium — How to Compare TTS Pricing Across Providers in 2026</a></li>
+      <li><a href="https://gradium.ai/content/best-elevenlabs-alternatives-2026-tts-apis-voice-quality-price" target="_blank">Gradium — Best ElevenLabs Alternatives in 2026: Top TTS APIs Ranked</a></li>
+      <li><a href="https://fish.audio/blog/cheapest-text-to-speech-api-developers/" target="_blank">Fish Audio Blog — Cheapest Text to Speech API for Developers in 2026</a></li>
+      <li><a href="https://fish.audio/blog/top-tts-apis-developer-comparison-2026/" target="_blank">Fish Audio Blog — Best TTS APIs for Developers: A Technical Comparison</a></li>
+      <li><a href="https://fish.audio/blog/best-text-to-speech-api-high-volume-usage/" target="_blank">Fish Audio Blog — Best TTS API for High-Volume Usage</a></li>
+      <li><a href="https://fish.audio/vs/elevenlabs-versus-fish-audio/" target="_blank">Fish Audio — Fish Audio vs ElevenLabs: Pricing &amp; Feature Comparison</a></li>
+      <li><a href="https://docs.sarvam.ai/api-reference-docs/pricing" target="_blank">Sarvam AI — Official API Pricing Documentation</a></li>
+      <li><a href="https://www.saasworthy.com/product/fish-audio/pricing" target="_blank">SaaSWorthy — Fish Audio Pricing: Cost and Pricing Plans</a></li>
+      <li><a href="https://toolchase.com/tool/fish-audio/" target="_blank">ToolChase — Fish Audio Review 2026: Pricing, Features &amp; Alternatives</a></li>
+      <li><a href="https://www.bitdoze.com/fish-audio-vs-elevenlabs/" target="_blank">Bitdoze — Fish Audio vs ElevenLabs 2026: I Switched and Saved $84/Year</a></li>
+      <li><a href="https://invideo.io/blog/sarvam-bulbul-indian-tts/" target="_blank">InVideo — Sarvam Bulbul v3: India's Own TTS Model, Explained (2026)</a></li>
+      <li><a href="https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits" target="_blank">Fish Audio — Official Pricing &amp; Rate Limits Docs (primary source — models, tiers, concurrency)</a></li>
+      <li><a href="https://fish.audio/developers/" target="_blank">Fish Audio — Developers Page (self-hosting $10K/mo figure)</a></li>
+      <li><a href="https://fish.audio/blog/s2-1-pro-free-api/" target="_blank">Fish Audio Blog — S2.1 Pro Free API Announcement &amp; Extension</a></li>
+      <li><a href="https://saascrmreview.com/fish-audio-review/" target="_blank">SaasCRMReview — Fish Audio Review 2026: Pricing, Limits &amp; Verdict</a></li>
+      <li><a href="https://www.toolcolumn.com/pricing/fish-audio-pricing" target="_blank">ToolColumn — Fish Audio Pricing: Plans and API Costs</a></li>
+      <li><a href="https://smallest.ai/blog/fish-audio-pricing-plans-api-billing-commercial-use-in-2026" target="_blank">Smallest.ai — Fish Audio Pricing: Plans, API Billing &amp; Commercial Use in 2026</a></li>
+      <li><a href="https://www.g2.com/products/fish-audio/pricing" target="_blank">G2 — Fish Audio Pricing 2026</a></li>
+      <li><a href="https://freeaiapi.org/provider/fish-audio" target="_blank">FreeAIAPI.org — Free Fish Audio AI APIs: Models, Quotas &amp; Signup</a></li>
+      <li><a href="https://alphasignal.ai/news/fish-audio-opens-s2-1-pro-to-developers-with-free-unlimited-api-access" target="_blank">AlphaSignal — Fish Audio Opens S2.1 Pro to Developers With Free Unlimited API Access</a></li>
+      <li><a href="https://openrouter.ai/fish-audio/s2.1-pro-free:free" target="_blank">OpenRouter — Fish Audio S2.1 Pro Free Listing</a></li>
+      <li><a href="https://artificialanalysis.ai/text-to-speech" target="_blank">Artificial Analysis — TTS Provider Comparison &amp; ELO Rankings (cited in HN discussions)</a></li>
+    </ul>
+  </div>
+
+</div>
+</body>
+</html>

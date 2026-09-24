@@ -45,6 +45,7 @@ from app.modules.assessment.schemas import (
     TutorQuestionSubmission,
 )
 from app.providers.llm.openai import OpenAILLMProvider
+from app.schemas.lesson import TIER_SEAT_MINUTES
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -111,7 +112,14 @@ _TIER_LABELS: dict[str, str] = {
 
 # Story F2-3 — explicit minute mapping so the 15/30/45 values are machine-checkable,
 # not just implied by the English label names.
-_TIER_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}
+#
+# Story S5-4: this was one of three independent hardcodes of the same 45/30/15
+# mapping (the others: apps/web/src/types/learnerMode.ts and config.py's
+# qa-seconds descriptions). It is now an ALIAS of the shared map, not a second
+# literal — an equal-but-separate dict is exactly the drift this fixes.
+# The values and `int` type are unchanged, so test_f2_3_tier_label_verify.py's
+# pin on them still holds.
+_TIER_MINUTES: dict[str, int] = TIER_SEAT_MINUTES
 
 
 def _quiz_accuracy_label(accuracy: float, total: int) -> str | None:

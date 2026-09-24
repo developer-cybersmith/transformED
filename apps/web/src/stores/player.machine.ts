@@ -370,6 +370,24 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (!segment) return;
     const next = new Set(quizFiredForSegment);
     next.add(segment.segment_id);
+
+    // Story S5-4: a segment can legitimately carry ZERO quiz questions. Quiz
+    // volume is now a lesson-level budget (T3 buys 5 questions, a chapter can
+    // have 15 segments), allocated across segments — so empty `quiz` is the
+    // normal case for several segments per lesson, not a malformed package.
+    //
+    // Entering QUIZ with nothing to ask is a dead end: QuizOverlay renders
+    // `null` when there is no question at the current index, and `exitQuiz()`
+    // is only reachable from inside that overlay — so the audio pauses, no UI
+    // appears, the controls are disabled for the QUIZ status, and the lesson
+    // can never advance. Skip straight to TEACH_BACK, which is where an
+    // answered quiz lands anyway, so segment advancement (exitTeachBack)
+    // stays on its single existing path.
+    if (segment.quiz.length === 0) {
+      set({ status: 'TEACH_BACK', quizFiredForSegment: next, cesScore: null });
+      get().saveProgress();
+      return;
+    }
     // cesScore cleared here (review fix, S3-04): PLAYING can resume minutes
     // later after quiz/teach-back, and the old score/band must not reappear
     // stale before a fresh ces_update arrives.

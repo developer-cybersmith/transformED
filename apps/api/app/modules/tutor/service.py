@@ -146,10 +146,22 @@ def compute_ces(signal: NormalizedSignal) -> float:
 def qa_phase_seconds(tier: str | None) -> int:
     """Map a learner tier string to Q&A phase duration in seconds.
 
-    T1 (beginner) → longest Q&A window (default 600 s / 10 min)
-    T2 (intermediate) → standard window (default 300 s / 5 min)
-    T3 (advanced) → shortest window (default 150 s / 2.5 min)
-    Unknown / None → T2 default (300 s)
+    The tier enum means DURATION and nothing else (Story S5-4): T1/T2/T3 are
+    45/30/15 minutes of total seat time, and the Q&A phase is the 10% share of
+    that budget (``SEAT_TIME_SHARES["qa"]``), not an extra window bolted on
+    after the lesson ends.
+
+    T1 (45-min lesson) → longest Q&A window (default 270 s / 4.5 min)
+    T2 (30-min lesson) → standard window (default 180 s / 3 min)
+    T3 (15-min lesson) → shortest window (default 90 s / 1.5 min)
+    Unknown / None → T2 default (180 s)
+
+    This docstring previously described the three tiers as learner ABILITY
+    levels — a third, unrelated reading of the same three values, sitting next
+    to the content pipeline's depth reading and the frontend's duration
+    reading. Corrected by S5-4, and pinned by
+    tests/unit/test_s5_4_duration_budget.py so it cannot drift back: the tier
+    says how long the session is, never how skilled the student is.
 
     All durations are env-var tunable via ``settings.learner_tier_*_qa_seconds``.
     """

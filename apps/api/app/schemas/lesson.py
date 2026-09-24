@@ -46,6 +46,75 @@ DEFAULT_TIER = "T2"  # Story S2-LM3/LM4/LM5 (2026-07-17) — single source of tr
 
 
 # ---------------------------------------------------------------------------
+# Seat-time budget (Story S5-4 — issue #230)
+# ---------------------------------------------------------------------------
+# NOT part of the lesson_package.schema.json mirror — these are shared
+# constants living alongside VALID_TIERS/DEFAULT_TIER by the same precedent
+# (one source of truth, imported rather than retyped). No packages/shared
+# change, so no 4-developer frozen-contract PR.
+#
+# The tier enum's meaning is DURATION (S5-4/D-C): T1/T2/T3 are 45/30/15 minutes
+# of TOTAL SEAT TIME — the whole session in the player, not narration alone.
+# Before S5-4 these minutes existed as three independent hardcodes (frontend
+# learnerMode.ts, assessment/service.py::_TIER_MINUTES, config.py's qa-seconds
+# descriptions) and were enforced by nothing at all.
+TIER_SEAT_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}
+
+# How one lesson's seat time is divided. Sums to exactly 1.0 (asserted by
+# tests/unit/test_s5_4_duration_budget.py) — a table that does not sum to 1
+# silently under- or over-books the session.
+#
+# `teachback` is an ALLOWANCE, not an enforced budget: teach-back is triggered
+# by the student failing a quiz and is unbounded in count, so the seat-time
+# contract is a nominal-path contract. Stated here rather than implied, because
+# a budget that silently excludes a variable component is the same defect class
+# as an unbounded query (SCALE-CONTRACT Q1).
+SEAT_TIME_SHARES: dict[str, float] = {
+    "narration": 0.65,
+    "quiz": 0.15,
+    "teachback": 0.10,
+    "qa": 0.10,
+}
+
+
+def _seat_minutes(tier: str | None) -> int:
+    """Seat minutes for *tier*, falling back to the default tier.
+
+    Soft fallback rather than a raise, matching `_tier_slide_budget_per_segment`'s
+    convention: a budget hint must never be the thing that crashes a lesson the
+    pipeline has already paid premium LLM spend for.
+    """
+    return TIER_SEAT_MINUTES.get(tier or "", TIER_SEAT_MINUTES[DEFAULT_TIER])
+
+
+def narration_budget_minutes(tier: str | None) -> float:
+    """Target minutes of spoken narration for *tier* (T1 29.25 / T2 19.5 / T3 9.75)."""
+    return _seat_minutes(tier) * SEAT_TIME_SHARES["narration"]
+
+
+def quiz_budget_seconds(tier: str | None) -> float:
+    """Seconds of the session *tier* budgets for quizzing (T1 405 / T2 270 / T3 135).
+
+    Divided by `settings.quiz_seconds_per_question` this becomes the lesson's
+    TOTAL question count, allocated across segments — replacing the pre-S5-4
+    per-segment band, which multiplied by segment count and at 15 segments
+    consumed 19-31 minutes of a 45-minute lesson on its own.
+    """
+    return _seat_minutes(tier) * SEAT_TIME_SHARES["quiz"] * 60.0
+
+
+def qa_budget_seconds(tier: str | None) -> int:
+    """Tutor Q&A phase length for *tier* (T1 270 / T2 180 / T3 90 seconds).
+
+    Returns `int` because it supplies `config.py`'s `learner_tier_*_qa_seconds`
+    defaults, which are typed `int`. Under S5-4 this window is SUBTRACTED from
+    the advertised duration; before S5-4 it was added on top of it (600 s of Q&A
+    after a nominally 45-minute lesson).
+    """
+    return round(_seat_minutes(tier) * SEAT_TIME_SHARES["qa"] * 60.0)
+
+
+# ---------------------------------------------------------------------------
 # LessonMetadata
 # ---------------------------------------------------------------------------
 

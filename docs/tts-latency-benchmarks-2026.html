@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TTS Latency Benchmarks 2026</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    line-height: 1.6;
+    padding: 2rem 1rem;
+  }
+  .page { max-width: 960px; margin: 0 auto; }
+
+  /* Header */
+  .header { margin-bottom: 2.5rem; }
+  .header h1 { font-size: 1.75rem; font-weight: 700; color: #f8fafc; letter-spacing: -0.02em; }
+  .header p.subtitle { color: #94a3b8; margin-top: 0.4rem; font-size: 0.95rem; }
+  .tag { display: inline-block; background: #1e293b; border: 1px solid #334155; border-radius: 4px;
+         padding: 2px 8px; font-size: 0.75rem; color: #64748b; margin-left: 0.5rem; vertical-align: middle; }
+
+  /* Alert box */
+  .alert { background: #1a1f2e; border-left: 3px solid #f59e0b; border-radius: 6px;
+           padding: 0.9rem 1.2rem; margin-bottom: 2rem; font-size: 0.88rem; color: #cbd5e1; }
+  .alert strong { color: #f59e0b; }
+
+  /* Section headers */
+  h2 { font-size: 1.15rem; font-weight: 600; color: #f1f5f9; margin: 2.5rem 0 1rem;
+       padding-bottom: 0.4rem; border-bottom: 1px solid #1e293b; }
+  h3 { font-size: 0.95rem; font-weight: 600; color: #94a3b8; margin: 1.5rem 0 0.6rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Master table */
+  .table-wrap { overflow-x: auto; margin-bottom: 0.5rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+  thead th { background: #1e293b; color: #94a3b8; font-weight: 600; text-align: left;
+             padding: 0.65rem 1rem; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; white-space: nowrap; }
+  tbody tr { border-bottom: 1px solid #1a2234; }
+  tbody tr:last-child { border-bottom: none; }
+  tbody td { padding: 0.65rem 1rem; vertical-align: top; }
+  tbody tr:hover td { background: #111827; }
+
+  /* Latency color coding */
+  .lat-fast   { color: #4ade80; font-weight: 600; }  /* < 200ms */
+  .lat-ok     { color: #facc15; font-weight: 600; }  /* 200–400ms */
+  .lat-slow   { color: #f87171; font-weight: 600; }  /* > 400ms */
+  .lat-na     { color: #475569; }
+
+  /* Provider cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; margin-bottom: 1rem; }
+  .card { background: #141b2d; border: 1px solid #1e293b; border-radius: 8px; padding: 1.1rem 1.2rem; }
+  .card-name { font-size: 0.95rem; font-weight: 700; color: #f1f5f9; margin-bottom: 0.3rem; }
+  .card-model { font-size: 0.78rem; color: #64748b; margin-bottom: 0.7rem; }
+  .card-stat { display: flex; justify-content: space-between; align-items: baseline; margin: 0.3rem 0; font-size: 0.85rem; }
+  .card-stat .label { color: #64748b; }
+  .card-stat .val { font-weight: 600; }
+  .card-badge { display: inline-block; font-size: 0.7rem; padding: 1px 7px; border-radius: 3px; margin-top: 0.6rem; }
+  .badge-green  { background: #14532d; color: #4ade80; }
+  .badge-yellow { background: #422006; color: #facc15; }
+  .badge-red    { background: #450a0a; color: #f87171; }
+  .badge-gray   { background: #1e293b; color: #64748b; }
+
+  /* Inline note */
+  .note { font-size: 0.8rem; color: #475569; margin-top: 0.3rem; }
+  .note em { color: #64748b; font-style: normal; }
+
+  /* Source list */
+  .sources { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid #1e293b; }
+  .sources h2 { font-size: 1rem; margin-top: 0; }
+  .sources ol { padding-left: 1.3rem; }
+  .sources li { font-size: 0.82rem; color: #64748b; margin: 0.4rem 0; }
+  .sources a { color: #60a5fa; text-decoration: none; }
+  .sources a:hover { text-decoration: underline; }
+
+  /* Divider */
+  .divider { border: none; border-top: 1px solid #1e293b; margin: 2rem 0; }
+
+  /* Pill legend */
+  .legend { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-bottom: 1rem; font-size: 0.78rem; }
+  .legend-item { display: flex; align-items: center; gap: 0.4rem; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+
+  /* Caveat box */
+  .caveat { background: #1a1f2e; border: 1px solid #334155; border-radius: 6px;
+            padding: 0.9rem 1.2rem; font-size: 0.85rem; color: #94a3b8; margin: 1rem 0; }
+  .caveat strong { color: #e2e8f0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <h1>TTS Latency Benchmarks 2026 <span class="tag">Research Report · Sep 2026</span></h1>
+    <p class="subtitle">Time-to-First-Audio (TTFA), streaming latency, and generation speed across Fish Audio, ElevenLabs, Azure TTS, Sarvam AI, and OpenAI TTS — with source attribution and methodology notes for every claim.</p>
+  </div>
+
+  <div class="alert">
+    <strong>Key finding:</strong> Vendor-published TTFA numbers are measured from the provider's nearest region under ideal load.
+    Independent benchmarks (Coval, Gradium, forasoft) consistently report real-world numbers <strong>50–150ms higher</strong>.
+    Metrics labelled "(vendor)" below are self-reported; those labelled "(Coval)" or "(independent)" reflect third-party testing.
+  </div>
+
+  <!-- ===== MASTER COMPARISON TABLE ===== -->
+  <h2>Master Latency Comparison Table</h2>
+  <p class="note" style="margin-bottom:0.8rem;">TTFA = Time-to-First-Audio (start of audible playback). P50 = median. IQR = interquartile range (P75−P25). All figures in milliseconds unless noted.</p>
+
+  <div class="legend">
+    <span class="legend-item"><span class="dot" style="background:#4ade80"></span> &lt;200ms — real-time ready</span>
+    <span class="legend-item"><span class="dot" style="background:#facc15"></span> 200–400ms — borderline conversational</span>
+    <span class="legend-item"><span class="dot" style="background:#f87171"></span> &gt;400ms — not real-time</span>
+    <span class="legend-item"><span class="dot" style="background:#475569"></span> No data</span>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Provider</th>
+          <th>Model</th>
+          <th>TTFA P50</th>
+          <th>IQR / Range</th>
+          <th>Transport</th>
+          <th>Source</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- ElevenLabs -->
+        <tr>
+          <td><strong>ElevenLabs</strong></td>
+          <td>Flash v2.5</td>
+          <td class="lat-ok">288 ms</td>
+          <td>28 ms</td>
+          <td>HTTP streaming</td>
+          <td>Coval, May 4 2026<br><span class="note">750–1,471 runs</span></td>
+          <td class="note">Vendor claims "~75ms" — that is inference time only, not end-to-end TTFA</td>
+        </tr>
+        <tr>
+          <td><strong>ElevenLabs</strong></td>
+          <td>Turbo v2.5</td>
+          <td class="lat-ok">264 ms</td>
+          <td>28 ms</td>
+          <td>HTTP streaming</td>
+          <td>Coval, May 4 2026</td>
+          <td class="note">Vendor claims "~75ms" (same inference-time figure); IQR of 28ms indicates very consistent latency</td>
+        </tr>
+        <tr>
+          <td><strong>ElevenLabs</strong></td>
+          <td>Flash v2.5</td>
+          <td class="lat-ok">~75ms</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Vendor-reported</td>
+          <td class="note">Inference time only; excludes network and application overhead. Independent tests reach 264–288ms P50</td>
+        </tr>
+        <tr>
+          <td><strong>ElevenLabs</strong></td>
+          <td>Multilingual v2</td>
+          <td class="lat-slow">1,232 ms</td>
+          <td>110 ms</td>
+          <td>HTTP streaming</td>
+          <td>Coval, May 4 2026</td>
+          <td class="note">Not suitable for real-time; legacy model</td>
+        </tr>
+
+        <!-- Fish Audio -->
+        <tr>
+          <td><strong>Fish Audio</strong></td>
+          <td>S2 Pro</td>
+          <td class="lat-ok">&lt;300 ms</td>
+          <td>—</td>
+          <td>Streaming API</td>
+          <td>Fish Audio (vendor), 2026</td>
+          <td class="note">Vendor marketing claim; no independent benchmark available. One source gives "~200ms" TTFA informally</td>
+        </tr>
+        <tr>
+          <td><strong>Fish Audio</strong></td>
+          <td>S2 Pro</td>
+          <td class="lat-ok">~200 ms</td>
+          <td>—</td>
+          <td>—</td>
+          <td>TextToLab (informal), May 2026</td>
+          <td class="note">"Verified against official documentation" — methodology not detailed</td>
+        </tr>
+
+        <!-- Azure TTS -->
+        <tr>
+          <td><strong>Azure Neural TTS</strong></td>
+          <td>HD 2.5 / DragonHD</td>
+          <td class="lat-ok">250–400 ms</td>
+          <td>—</td>
+          <td>WebSocket</td>
+          <td>Independent benchmark (FutureAGI / forasoft), 2026</td>
+          <td class="note">DragonHD models updated March 2026 with improved real-time latency. Azure does not publish official P50 TTFA data</td>
+        </tr>
+        <tr>
+          <td><strong>Azure Neural TTS</strong></td>
+          <td>Neural (general)</td>
+          <td class="lat-ok">~300–500 ms</td>
+          <td>—</td>
+          <td>WebSocket</td>
+          <td>Coval blog (vendor survey), 2026</td>
+          <td class="note">Wider range cited in Coval's provider survey; finish-latency focus rather than TTFA optimisation</td>
+        </tr>
+
+        <!-- Sarvam AI -->
+        <tr>
+          <td><strong>Sarvam AI</strong></td>
+          <td>Bulbul v2</td>
+          <td class="lat-fast">&lt;200 ms</td>
+          <td>—</td>
+          <td>WebSocket / streaming</td>
+          <td>Sarvam AI (vendor) via autointerviewai.com, 2026</td>
+          <td class="note">TTFB figure, not TTFA. Assumes same AWS/Azure India region. Hindi/Tamil 8kHz telephony test</td>
+        </tr>
+        <tr>
+          <td><strong>Sarvam AI</strong></td>
+          <td>Bulbul (production)</td>
+          <td class="lat-ok">300–400 ms</td>
+          <td>—</td>
+          <td>Streaming</td>
+          <td>GrowwStacks (production test), 2026</td>
+          <td class="note">Audio start delay before streaming. End-to-end Hindi turn: 2.5–4 s (includes LLM + TTS). Raw unoptimised API calls</td>
+        </tr>
+
+        <!-- OpenAI -->
+        <tr>
+          <td><strong>OpenAI TTS</strong></td>
+          <td>tts-1-hd</td>
+          <td class="lat-slow">2,295 ms</td>
+          <td>1,062 ms</td>
+          <td>HTTP POST (no WebSocket)</td>
+          <td>Coval, May 4 2026</td>
+          <td class="note">IQR of 1,062ms means extremely inconsistent. Not viable for real-time voice agents</td>
+        </tr>
+        <tr>
+          <td><strong>OpenAI TTS</strong></td>
+          <td>gpt-4o-mini-tts</td>
+          <td class="lat-slow">350–500 ms</td>
+          <td>—</td>
+          <td>Server-sent events</td>
+          <td>forasoft / FutureAGI, 2026</td>
+          <td class="note">Newer model; better than tts-1-hd but still mid-range. No WebSocket endpoint</td>
+        </tr>
+        <tr>
+          <td><strong>OpenAI Realtime</strong></td>
+          <td>gpt-realtime-1.5 / mini</td>
+          <td class="lat-ok">&lt;300 ms</td>
+          <td>—</td>
+          <td>WebSocket (speech-to-speech)</td>
+          <td>Coval blog, 2026</td>
+          <td class="note">Speech-to-speech end-to-end, not modular TTS. Bundles STT + LLM + TTS in one hop</td>
+        </tr>
+
+        <!-- Reference: Cartesia (context) -->
+        <tr style="opacity:0.65;">
+          <td><em>Cartesia Sonic-3 (ref)</em></td>
+          <td>Sonic-3</td>
+          <td class="lat-fast">188 ms P50</td>
+          <td>100 ms</td>
+          <td>WebSocket</td>
+          <td>Coval, May 4 2026</td>
+          <td class="note">Included for context; not in scope but frequently cited as benchmark leader for real-time</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ===== PROVIDER DEEP DIVES ===== -->
+  <h2>Per-Provider Detail</h2>
+
+  <div class="cards">
+
+    <div class="card">
+      <div class="card-name">ElevenLabs</div>
+      <div class="card-model">Flash v2.5 · Turbo v2.5</div>
+      <div class="card-stat"><span class="label">Turbo v2.5 P50 TTFA</span><span class="val lat-ok">264 ms</span></div>
+      <div class="card-stat"><span class="label">Flash v2.5 P50 TTFA</span><span class="val lat-ok">288 ms</span></div>
+      <div class="card-stat"><span class="label">IQR (both)</span><span class="val">28 ms</span></div>
+      <div class="card-stat"><span class="label">Vendor claim (Flash)</span><span class="val lat-fast">~75 ms</span></div>
+      <span class="card-badge badge-yellow">Borderline real-time</span>
+      <p class="note" style="margin-top:0.7rem;">The 75ms vendor figure is inference-only. Independent Coval tests (750–1,471 runs) show 264–288ms end-to-end. The 28ms IQR is the best consistency score among tested providers — latency is predictable even if not ultra-low.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-name">Fish Audio</div>
+      <div class="card-model">S2 Pro</div>
+      <div class="card-stat"><span class="label">Vendor TTFA claim</span><span class="val lat-ok">&lt;300 ms</span></div>
+      <div class="card-stat"><span class="label">Informal production est.</span><span class="val lat-ok">~200 ms</span></div>
+      <div class="card-stat"><span class="label">Coval / independent</span><span class="val lat-na">No data</span></div>
+      <span class="card-badge badge-gray">Unverified independently</span>
+      <p class="note" style="margin-top:0.7rem;">Fish Audio markets sub-300ms streaming. No independent benchmark (Coval, Gradium) has published production P50/IQR data for Fish Audio. ElevenLabs is explicitly described as faster for real-time agents; Fish Audio is positioned as a batch/cloning workflow choice.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-name">Azure Neural TTS</div>
+      <div class="card-model">HD 2.5 · DragonHD</div>
+      <div class="card-stat"><span class="label">TTFA over WebSocket</span><span class="val lat-ok">250–400 ms</span></div>
+      <div class="card-stat"><span class="label">Coval vendor survey range</span><span class="val lat-ok">300–500 ms</span></div>
+      <div class="card-stat"><span class="label">Official P50 published</span><span class="val lat-na">No</span></div>
+      <span class="card-badge badge-yellow">Mid-range</span>
+      <p class="note" style="margin-top:0.7rem;">DragonHD got a March 2026 update improving real-time latency. Azure focuses on finish-latency SLAs (suitable for batch/pre-generation) rather than TTFA. Supports 140+ languages. No official P50 TTFA published — all figures are third-party.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-name">Sarvam AI</div>
+      <div class="card-model">Bulbul v2</div>
+      <div class="card-stat"><span class="label">TTFB (vendor, same-region)</span><span class="val lat-fast">&lt;200 ms</span></div>
+      <div class="card-stat"><span class="label">Audio start delay (production)</span><span class="val lat-ok">300–400 ms</span></div>
+      <div class="card-stat"><span class="label">Hindi end-to-end turn</span><span class="val lat-slow">2.5–4 s</span></div>
+      <span class="card-badge badge-green">India-region competitive</span>
+      <p class="note" style="margin-top:0.7rem;">Vendor TTFB under 200ms is measured same-region (AWS/Azure India) at 8kHz telephony. Production tests by GrowwStacks on unoptimised calls show 300–400ms audio start delay. Hindi end-to-end includes LLM time. Streaming reduces perceived latency 40–60% vs batch. No global independent benchmark exists — no Coval or Gradium data.</p>
+    </div>
+
+    <div class="card">
+      <div class="card-name">OpenAI TTS</div>
+      <div class="card-model">tts-1 · tts-1-hd · gpt-4o-mini-tts</div>
+      <div class="card-stat"><span class="label">tts-1-hd P50 TTFA</span><span class="val lat-slow">2,295 ms</span></div>
+      <div class="card-stat"><span class="label">tts-1-hd IQR</span><span class="val lat-slow">1,062 ms</span></div>
+      <div class="card-stat"><span class="label">gpt-4o-mini-tts est.</span><span class="val lat-slow">350–500 ms</span></div>
+      <div class="card-stat"><span class="label">Transport</span><span class="val">HTTP POST only</span></div>
+      <span class="card-badge badge-red">Not real-time</span>
+      <p class="note" style="margin-top:0.7rem;">tts-1 has lower latency than tts-1-hd but no P50 published. The HTTP-POST-only architecture (no WebSocket endpoint) is a structural contributor to high TTFA. OpenAI's Realtime API (&lt;300ms) is speech-to-speech, not a modular TTS endpoint. gpt-4o-mini-tts improves cost/latency trade-off but remains outperformed by ElevenLabs for real-time use.</p>
+    </div>
+
+  </div>
+
+  <hr class="divider">
+
+  <!-- ===== COVAL BENCHMARK TABLE ===== -->
+  <h2>Coval Independent Benchmark — May 4, 2026</h2>
+  <p class="note" style="margin-bottom:0.8rem;">Source: <a href="https://www.coval.ai/blog/best-text-to-speech-providers-in-2026-how-to-choose-(and-why-vendor-benchmarks-lie)/" style="color:#60a5fa;">coval.ai/blog</a> · 750–1,471 runs per model · WebSocket APIs (HTTP for OpenAI) · Continuous refresh at benchmarks.coval.ai/tts</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th>
+          <th>Provider / Model</th>
+          <th>P50 TTFA</th>
+          <th>IQR (P25–P75)</th>
+          <th>Transport</th>
+          <th>In-scope for this report</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>Gradium TTS <em>(self-published)</em></td><td class="lat-fast">155 ms</td><td>2 ms</td><td>WebSocket</td><td>No</td></tr>
+        <tr><td>2</td><td>Cartesia Sonic-3</td><td class="lat-fast">188 ms</td><td>100 ms</td><td>WebSocket</td><td>No (reference)</td></tr>
+        <tr><td>3</td><td><strong>ElevenLabs Turbo v2.5</strong></td><td class="lat-ok">264 ms</td><td>28 ms</td><td>HTTP streaming</td><td><strong>Yes</strong></td></tr>
+        <tr><td>4</td><td><strong>ElevenLabs Flash v2.5</strong></td><td class="lat-ok">288 ms</td><td>28 ms</td><td>HTTP streaming</td><td><strong>Yes</strong></td></tr>
+        <tr><td>5</td><td>Deepgram Aura-2</td><td class="lat-ok">313 ms</td><td>68 ms</td><td>WebSocket</td><td>No</td></tr>
+        <tr><td>—</td><td><strong>OpenAI tts-1-hd</strong></td><td class="lat-slow">2,295 ms</td><td>1,062 ms</td><td>HTTP POST</td><td><strong>Yes</strong></td></tr>
+        <tr><td>—</td><td><strong>Fish Audio S2 Pro</strong></td><td class="lat-na">Not tested</td><td>—</td><td>—</td><td>Not in Coval dataset</td></tr>
+        <tr><td>—</td><td><strong>Azure Neural TTS</strong></td><td class="lat-na">Not tested</td><td>—</td><td>—</td><td>Not in Coval dataset</td></tr>
+        <tr><td>—</td><td><strong>Sarvam AI Bulbul v2</strong></td><td class="lat-na">Not tested</td><td>—</td><td>—</td><td>Not in Coval dataset</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="caveat">
+    <strong>Why OpenAI scores so poorly in this table:</strong> OpenAI exposes only HTTP POST for its audio/speech endpoint — no WebSocket streaming. All other top-ranked providers in this benchmark stream via WebSocket, which delivers the first audio frame earlier. The gap between OpenAI and ElevenLabs (2,295ms vs 264ms) is partly architectural, not just model quality.
+  </div>
+
+  <hr class="divider">
+
+  <!-- ===== SARVAM SPECIAL SECTION ===== -->
+  <h2>Sarvam AI — India-Region Context</h2>
+  <p class="note" style="margin-bottom:0.8rem;">Sarvam AI is absent from all major global benchmarks (Coval, Gradium). The figures below come from two sources: Sarvam's own documentation and a production integration test by GrowwStacks.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Metric</th><th>Value</th><th>Conditions</th><th>Source</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>TTFB (Bulbul v2)</td>
+          <td class="lat-fast">&lt;200 ms</td>
+          <td>Same AWS/Azure India region, 8kHz telephony, Hindi/Tamil</td>
+          <td>Sarvam vendor docs via autointerviewai.com</td>
+        </tr>
+        <tr>
+          <td>Audio start delay (production)</td>
+          <td class="lat-ok">300–400 ms</td>
+          <td>Raw unoptimised API calls, Hindi-English</td>
+          <td>GrowwStacks production test, 2026</td>
+        </tr>
+        <tr>
+          <td>End-to-end Hindi conversational turn</td>
+          <td class="lat-slow">2.5–4 s</td>
+          <td>Includes LLM inference + TTS; no caching</td>
+          <td>GrowwStacks production test, 2026</td>
+        </tr>
+        <tr>
+          <td>Perceived latency reduction vs batch</td>
+          <td>40–60%</td>
+          <td>Streaming vs non-streaming mode</td>
+          <td>GrowwStacks FAQ, 2026</td>
+        </tr>
+        <tr>
+          <td>Saaras v3 ASR latency (WebSocket)</td>
+          <td class="lat-fast">~180 ms avg</td>
+          <td>Live telephony test</td>
+          <td>Sarvam vendor (autointerviewai.com)</td>
+        </tr>
+        <tr>
+          <td>ElevenLabs Hindi comparison</td>
+          <td class="lat-ok">&lt;250 ms</td>
+          <td>Hindi synthesis</td>
+          <td>autointerviewai.com benchmark</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Sarvam's sub-200ms TTFB is plausible for same-region hosting — TransformED's stack currently runs on Railway (no India region). Deploying to Fly.io Mumbai or AWS ap-south-1 would be required to achieve near-vendor latencies. See ADR-001 in <code>docs/decisions/</code>.</p>
+
+  <hr class="divider">
+
+  <!-- ===== VENDOR VS INDEPENDENT ===== -->
+  <h2>Vendor Claims vs Independent Tests — Gap Analysis</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Provider</th><th>Vendor Claim</th><th>Independent P50</th><th>Gap</th><th>Explanation</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>ElevenLabs Flash v2.5</strong></td>
+          <td class="lat-fast">~75 ms</td>
+          <td class="lat-ok">288 ms</td>
+          <td>+213 ms</td>
+          <td>Vendor measures inference time only; independent measures network round-trip + HTTP overhead</td>
+        </tr>
+        <tr>
+          <td><strong>Fish Audio S2 Pro</strong></td>
+          <td class="lat-ok">&lt;300 ms</td>
+          <td class="lat-na">No independent data</td>
+          <td>Unknown</td>
+          <td>Vendor claim is plausible but unverified</td>
+        </tr>
+        <tr>
+          <td><strong>Azure Neural TTS</strong></td>
+          <td class="lat-na">Not published</td>
+          <td class="lat-ok">250–400 ms</td>
+          <td>N/A</td>
+          <td>Azure publishes no official TTFA SLAs; third-party range only</td>
+        </tr>
+        <tr>
+          <td><strong>Sarvam AI Bulbul v2</strong></td>
+          <td class="lat-fast">&lt;200 ms TTFB</td>
+          <td class="lat-ok">300–400 ms audio start</td>
+          <td>+100–200 ms</td>
+          <td>TTFB ≠ TTFA; production test measures audio playback start, not first byte</td>
+        </tr>
+        <tr>
+          <td><strong>OpenAI tts-1-hd</strong></td>
+          <td class="lat-na">Not published</td>
+          <td class="lat-slow">2,295 ms</td>
+          <td>N/A</td>
+          <td>HTTP POST only; structural architectural disadvantage vs WebSocket providers</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ===== IMPLICATIONS FOR TRANSFORMED ===== -->
+  <h2>Implications for TransformED's TTS Stack</h2>
+
+  <div class="caveat">
+    <p>TransformED's current fallback chain is: <strong>Sarvam AI Bulbul v2 → Azure TTS → Browser Speech</strong> (ElevenLabs was removed). The data below evaluates each tier against the real-world latency evidence.</p>
+  </div>
+
+  <div class="table-wrap" style="margin-top:1rem;">
+    <table>
+      <thead>
+        <tr><th>Tier</th><th>Provider</th><th>Real-World TTFA</th><th>Key Risk</th><th>Assessment</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Primary</td>
+          <td><strong>Sarvam AI Bulbul v2</strong></td>
+          <td>300–400 ms (India region)</td>
+          <td>Railway has no India region; cross-region latency will be significantly higher. Vendor &lt;200ms TTFB requires same-region hosting.</td>
+          <td class="lat-ok">Viable post India-region migration (ADR-001)</td>
+        </tr>
+        <tr>
+          <td>Fallback 1</td>
+          <td><strong>Azure TTS (HD 2.5)</strong></td>
+          <td>250–400 ms</td>
+          <td>No official TTFA SLA; finish-latency optimised. Adequate for lesson narration (not real-time agent).</td>
+          <td class="lat-ok">Acceptable for pre-generated narration</td>
+        </tr>
+        <tr>
+          <td>Fallback 2</td>
+          <td><strong>Browser Speech API</strong></td>
+          <td>~0 ms (local)</td>
+          <td>Voice quality significantly lower; no Indic language support in all browsers.</td>
+          <td class="lat-fast">Latency-best but quality-worst</td>
+        </tr>
+        <tr>
+          <td>Removed</td>
+          <td>ElevenLabs</td>
+          <td>264–288 ms P50</td>
+          <td>Cost. Independent P50 is ~200ms better than OpenAI TTS-1-HD and consistent (IQR 28ms).</td>
+          <td class="lat-na">Removed per D122 decision</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <hr class="divider">
+
+  <!-- ===== METHODOLOGY NOTES ===== -->
+  <h2>Cross-Source Methodology Notes</h2>
+
+  <ul style="padding-left:1.3rem; font-size:0.87rem; color:#94a3b8; line-height:1.8;">
+    <li><strong>Coval (benchmarks.coval.ai/tts):</strong> Independent voice AI evaluation platform. 750–1,471 runs per model. WebSocket APIs for all providers except OpenAI (HTTP). Captures P25, P50, P75, IQR. Refreshes continuously. Data snapshot: May 4, 2026. <em>Most credible source — largest sample sizes.</em></li>
+    <li><strong>Gradium self-benchmark (March 2026):</strong> Paris-based. WebSocket multiplexing test. Self-published P50 258ms standard / 214ms with multiplexing. Gradium also ranked #1 in the independent Coval test (155ms) — treat self-published numbers as directionally consistent but optimistic.</li>
+    <li><strong>forasoft / FutureAGI / texttolab (May 2026):</strong> Editorial reviews "verified against official documentation." No methodology detail for how TTFA was measured. Figures for Azure, OpenAI gpt-4o-mini-tts, and Fish Audio from these sources should be treated as estimates ±50ms.</li>
+    <li><strong>GrowwStacks Sarvam test:</strong> Production integration. "Raw, unoptimised API calls, no caching." Hindi-English conversations. Measures actual audio start delay, not TTFB. Most realistic production estimate for Sarvam AI.</li>
+    <li><strong>Sarvam vendor documentation:</strong> TTFB &lt;200ms measured from same-region India infrastructure. TTFB ≠ TTFA (does not include audio decoding / playback start). 8kHz telephony test, not high-fidelity narration.</li>
+    <li><strong>Key distinction (forasoft):</strong> "The first byte is often just a file header. Measure time-to-first-audio, not time-to-first-byte." TTFB and TTFA differ by 50–150ms in practice.</li>
+    <li><strong>Universal caveat (FutureAGI):</strong> "Provider-published TTFA numbers come from their nearest region under ideal load. Your number from your egress point at your peak traffic shape will be 50–150ms higher."</li>
+  </ul>
+
+  <!-- ===== SOURCES ===== -->
+  <div class="sources">
+    <h2>Sources</h2>
+    <ol>
+      <li><a href="https://www.coval.ai/blog/best-text-to-speech-providers-in-2026-how-to-choose-(and-why-vendor-benchmarks-lie)/">Coval — "Best TTS Providers 2026: Why Vendor Benchmarks Lie" (with P50/IQR data)</a></li>
+      <li><a href="https://gradium.ai/content/tts-latency-benchmark-2026">Gradium — "TTS Latency Benchmark 2026: TTFA Compared Across Gradium, ElevenLabs, Cartesia and Deepgram"</a></li>
+      <li><a href="https://gradium.ai/content/best-ai-voice-generators-2026">Gradium — "Best AI Voice Generators in 2026: APIs Ranked by Voice Quality, Latency, and Price"</a></li>
+      <li><a href="https://gradium.ai/content/best-low-latency-tts-apis-2026">Gradium — "Best Low-Latency TTS APIs in 2026: TTFA, P99 and Pipeline Impact"</a></li>
+      <li><a href="https://gradium.ai/blog/coval-tts-benchmarks-may-2026">Gradium — "Gradium #1 on Coval TTS Benchmarks" (May 2026)</a></li>
+      <li><a href="https://www.forasoft.com/learn/ai-for-video-engineering/articles-ai/streaming-tts-kokoro-elevenlabs-turbo-openai-tts">forasoft — "Streaming TTS: Kokoro, ElevenLabs Turbo, Cartesia, and OpenAI TTS" (Coval P50 data, IQR breakdown)</a></li>
+      <li><a href="https://futureagi.com/blog/best-tts-providers-voice-agents-2026/">FutureAGI — "7 Best TTS Providers for Voice AI Agents in 2026 (Tested + Ranked)"</a></li>
+      <li><a href="https://texttolab.com/blog/best-text-to-speech-api">TextToLab — "Best Text to Speech API 2026: 12 TTS APIs Compared" (Fish Audio ~200ms est.)</a></li>
+      <li><a href="https://speechgeneration.ai/compare/fish-audio-vs-elevenlabs">SpeechGeneration AI — "Fish Audio vs ElevenLabs (2026): Honest TTS Comparison"</a></li>
+      <li><a href="https://fish.audio/elevenlabs-alternative/">Fish Audio — "ElevenLabs Alternative" (vendor claim: &lt;300ms streaming)</a></li>
+      <li><a href="https://growwstacks.com/blog/sarvam-ai-tts-stt-voice-agent-test">GrowwStacks — "We Tested Sarvam AI's New TTS & STT in Our Voice Agent — Here's What Happened"</a></li>
+      <li><a href="https://www.autointerviewai.com/blog/sarvam-ai-bulbul-saaras-indic-voice-models-review-2026">Auto Interview AI — "Sarvam AI Review: Bulbul TTS, Saaras ASR, Shuka v1 Architecture, and Indic Voice Benchmarks in 2026"</a></li>
+      <li><a href="https://yixscout.com/resources/columns/low-latency-tts-api">YixScout — "Best Low-Latency TTS API: Cartesia, ElevenLabs, OpenAI TTS, and Azure"</a></li>
+      <li><a href="https://www.marktechpost.com/2026/05/30/best-text-to-speech-tts-models-in-2026-a-benchmark-based-comparison/">MarkTechPost — "Best Text-to-Speech TTS Models in 2026: A Benchmark-Based Comparison"</a></li>
+      <li><a href="https://inworld.ai/resources/best-voice-ai-tts-apis-for-real-time-voice-agents-2026-benchmarks">Inworld AI — "Best TTS APIs for Real-Time Voice Agents (2026 Benchmarks)"</a></li>
+      <li><a href="https://gradium.ai/content/azure-tts-alternative-gradium">Gradium — "Azure TTS Alternative: Gradium for Real-Time Voice AI"</a></li>
+    </ol>
+  </div>
+
+</div>
+</body>
+</html>

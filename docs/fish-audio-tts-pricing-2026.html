@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fish Audio TTS Pricing — September 2026</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+
+    .page { max-width: 860px; margin: 0 auto; }
+
+    header {
+      border-bottom: 1px solid #2d3748;
+      padding-bottom: 1.25rem;
+      margin-bottom: 2rem;
+    }
+    header h1 { font-size: 1.6rem; font-weight: 700; color: #f7fafc; }
+    header p  { margin-top: 0.35rem; color: #94a3b8; font-size: 0.9rem; }
+
+    .badge {
+      display: inline-block;
+      background: #1e3a5f;
+      color: #63b3ed;
+      border: 1px solid #2b6cb0;
+      border-radius: 4px;
+      padding: 0.15rem 0.55rem;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+    .badge.green  { background: #1a3a2a; color: #68d391; border-color: #276749; }
+    .badge.orange { background: #3d2a10; color: #f6ad55; border-color: #c05621; }
+
+    section { margin-bottom: 2rem; }
+    h2 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #63b3ed;
+      margin-bottom: 0.9rem;
+      padding-bottom: 0.35rem;
+      border-bottom: 1px solid #1e3a5f;
+    }
+
+    .highlight-box {
+      background: #1a2744;
+      border: 1px solid #2b6cb0;
+      border-left: 4px solid #3182ce;
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .highlight-box .big { font-size: 1.8rem; font-weight: 800; color: #90cdf4; }
+    .highlight-box .label { color: #94a3b8; font-size: 0.85rem; margin-top: 0.2rem; }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    .info-card {
+      background: #1a202c;
+      border: 1px solid #2d3748;
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+    }
+    .info-card .val { font-size: 1.2rem; font-weight: 700; color: #e2e8f0; }
+    .info-card .key { color: #718096; font-size: 0.8rem; margin-top: 0.15rem; }
+
+    .alert {
+      background: #2d1e00;
+      border: 1px solid #c05621;
+      border-left: 4px solid #f6ad55;
+      border-radius: 6px;
+      padding: 0.85rem 1.1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      color: #fbd38d;
+    }
+    .alert strong { color: #f6ad55; }
+
+    .note {
+      background: #1a2a1a;
+      border: 1px solid #276749;
+      border-left: 4px solid #68d391;
+      border-radius: 6px;
+      padding: 0.85rem 1.1rem;
+      margin-bottom: 1rem;
+      font-size: 0.9rem;
+      color: #c6f6d5;
+    }
+    .note strong { color: #68d391; }
+
+    /* Plans table */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+      min-width: 560px;
+    }
+    thead th {
+      background: #1a202c;
+      color: #a0aec0;
+      font-weight: 600;
+      text-align: left;
+      padding: 0.6rem 0.85rem;
+      border-bottom: 2px solid #2d3748;
+    }
+    tbody tr { border-bottom: 1px solid #1e2535; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td { padding: 0.55rem 0.85rem; color: #e2e8f0; }
+    tbody tr:nth-child(odd) { background: #12171f; }
+    tbody tr:nth-child(even) { background: #0f1117; }
+    td.dim { color: #718096; }
+    td.green { color: #68d391; font-weight: 600; }
+    td.yellow { color: #f6ad55; }
+
+    .model-block {
+      background: #12171f;
+      border: 1px solid #2d3748;
+      border-radius: 6px;
+      padding: 0.85rem 1rem;
+      margin-bottom: 0.65rem;
+    }
+    .model-block .name { font-weight: 700; color: #90cdf4; font-size: 0.95rem; }
+    .model-block .price { font-size: 1.05rem; font-weight: 700; color: #e2e8f0; margin: 0.25rem 0; }
+    .model-block .details { color: #94a3b8; font-size: 0.82rem; }
+
+    .source-list { list-style: none; padding: 0; }
+    .source-list li { margin-bottom: 0.4rem; font-size: 0.82rem; }
+    .source-list a { color: #63b3ed; text-decoration: none; }
+    .source-list a:hover { text-decoration: underline; }
+    .source-list .src-label { color: #718096; margin-right: 0.4rem; }
+
+    footer {
+      margin-top: 2.5rem;
+      padding-top: 1rem;
+      border-top: 1px solid #2d3748;
+      color: #4a5568;
+      font-size: 0.78rem;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <h1>Fish Audio TTS — Pricing Reference <span class="badge">September 2026</span></h1>
+    <p>Compiled from live web sources. All figures are in USD. Verify at fish.audio before committing budget.</p>
+  </header>
+
+  <!-- KEY NUMBER UP FRONT -->
+  <section>
+    <h2>API Rate (Pay-as-You-Go)</h2>
+    <div class="highlight-box">
+      <div class="big">$15.00 / 1M UTF-8 bytes</div>
+      <div class="label">
+        Applies to all billed models: s2.1-pro, s2-pro, and legacy s1.<br>
+        For English text (1 byte per char): $0.015 per 1,000 chars &nbsp;·&nbsp; $0.0015 per 100 chars &nbsp;·&nbsp; ~$7.50 for a 500,000-char audiobook.
+      </div>
+    </div>
+
+    <div class="alert">
+      <strong>Multi-byte encoding surcharge:</strong> Chinese, Japanese, Korean, and Cyrillic characters
+      use 2–4 UTF-8 bytes each, so the effective per-character cost is 2–4× higher for those scripts.
+      Budget accordingly if your content is non-Latin.
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <div class="val">$0.000015</div>
+        <div class="key">per English character</div>
+      </div>
+      <div class="info-card">
+        <div class="val">$0.015</div>
+        <div class="key">per 1,000 characters (English)</div>
+      </div>
+      <div class="info-card">
+        <div class="val">~$7.50</div>
+        <div class="key">500,000-char audiobook equivalent</div>
+      </div>
+      <div class="info-card">
+        <div class="val">$0.36</div>
+        <div class="key">per audio hour (ASR / transcription)</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FREE TIER -->
+  <section>
+    <h2>Free Access Options</h2>
+
+    <div class="model-block">
+      <div class="name">s2.1-pro-free &nbsp;<span class="badge green">Free API</span></div>
+      <div class="price">$0 — Fair Use Policy</div>
+      <div class="details">
+        Announced June 2026. Extended through at least August 31, 2026 (multiple extensions already issued).<br>
+        No hard character cap, but subject to Fair Use restrictions to prevent abuse.<br>
+        No SLA or latency guarantees — best-effort only.<br>
+        Requests may be used to improve model quality (data retention).<br>
+        Commercial use: products generating &gt;$1M annual revenue must contact Fish Audio first.<br>
+        Model string: <code>s2.1-pro-free</code>
+      </div>
+    </div>
+
+    <div class="model-block">
+      <div class="name">Web Playground Free Plan</div>
+      <div class="price">$0/month</div>
+      <div class="details">
+        8,000 credits (~7 minutes of audio) per month.<br>
+        500 characters maximum per generation.<br>
+        3 public voice slots, no commercial use permitted.
+      </div>
+    </div>
+
+    <div class="note">
+      <strong>Key distinction:</strong> The <code>s2.1-pro-free</code> API endpoint is separate from the web
+      free plan and has no per-generation character cap — it is aimed at developers evaluating the API.
+      The web free plan is primarily for playground/demo use.
+    </div>
+  </section>
+
+  <!-- SUBSCRIPTION PLANS -->
+  <section>
+    <h2>Subscription Plans (Web / Playground Credits)</h2>
+    <p style="color:#94a3b8; font-size:0.85rem; margin-bottom:0.85rem;">
+      Credits are consumed by the web interface and some API usage paths. ~600–625 credits = 1 minute of audio.
+      Credits expire monthly with no rollover.
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Plan</th>
+            <th>Monthly Price</th>
+            <th>Annual Price</th>
+            <th>Credits/Month</th>
+            <th>Audio (~min)</th>
+            <th>Chars/Gen</th>
+            <th>Voice Slots</th>
+            <th>Commercial</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Free</strong></td>
+            <td class="green">$0</td>
+            <td class="dim">—</td>
+            <td>8,000</td>
+            <td class="dim">~7 min</td>
+            <td>500</td>
+            <td>3 public</td>
+            <td class="yellow">No</td>
+          </tr>
+          <tr>
+            <td><strong>Plus</strong></td>
+            <td>$15 <span class="badge orange">prev $11</span></td>
+            <td class="dim">~$66/yr (33% off)</td>
+            <td>250,000</td>
+            <td class="dim">~200 min</td>
+            <td>15,000</td>
+            <td>10 private + 1 pro</td>
+            <td class="green">Yes</td>
+          </tr>
+          <tr>
+            <td><strong>Pro</strong></td>
+            <td>$100 <span class="badge orange">prev $75</span></td>
+            <td class="dim">~$450/yr (33% off)</td>
+            <td>2,000,000</td>
+            <td class="dim">~1,620 min</td>
+            <td>30,000</td>
+            <td>Unlimited + 5 pro, 3 seats</td>
+            <td class="green">Yes</td>
+          </tr>
+          <tr>
+            <td><strong>Max</strong></td>
+            <td>$999</td>
+            <td class="dim">~$8,988/yr</td>
+            <td>25,000,000</td>
+            <td class="dim">~6,250 min</td>
+            <td>30,000</td>
+            <td>Unlimited + 15 pro</td>
+            <td class="green">Yes</td>
+          </tr>
+          <tr>
+            <td><strong>Enterprise</strong></td>
+            <td class="dim">Custom</td>
+            <td class="dim">Custom</td>
+            <td class="dim">Custom</td>
+            <td class="dim">Custom</td>
+            <td>30,000</td>
+            <td>Custom</td>
+            <td class="green">Yes</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="color:#718096; font-size:0.78rem; margin-top:0.5rem;">
+      Note: Monthly prices shown vary slightly across sources (e.g. Plus cited as $11 in some 2025 sources, $15 in 2026 sources). The $15/$100 figures are from the most recent 2026 sources. Confirm at fish.audio before purchase.
+    </p>
+  </section>
+
+  <!-- MODELS -->
+  <section>
+    <h2>Models &amp; API Billing</h2>
+
+    <div class="model-block">
+      <div class="name">s2.1-pro &nbsp;<span class="badge green">Current recommended</span></div>
+      <div class="price">$15 / 1M UTF-8 bytes (paid) &nbsp;·&nbsp; Free via <code>s2.1-pro-free</code></div>
+      <div class="details">
+        83 languages · voice cloning · ~70–90ms time-to-first-audio · 8,000+ tokens/sec throughput at 64 concurrent requests.<br>
+        61% blind-test win rate over prior S2 Pro. Released 2026.
+      </div>
+    </div>
+
+    <div class="model-block">
+      <div class="name">s2-pro</div>
+      <div class="price">$15 / 1M UTF-8 bytes</div>
+      <div class="details">80+ languages · voice cloning · ~100ms time-to-first-audio. Previous generation (released March 2026).</div>
+    </div>
+
+    <div class="model-block">
+      <div class="name">s1 (legacy)</div>
+      <div class="price">$15 / 1M UTF-8 bytes</div>
+      <div class="details">13 languages · 64+ emotion styles · older control syntax. No price premium vs newer models.</div>
+    </div>
+
+    <div class="model-block">
+      <div class="name">ASR / Speech Recognition</div>
+      <div class="price">$0.36 / audio hour</div>
+      <div class="details">Transcription API, separate billing from TTS.</div>
+    </div>
+  </section>
+
+  <!-- CONTEXT FOR TRANSFORMED -->
+  <section>
+    <h2>Relevance to TransformED Stack</h2>
+    <div class="alert">
+      <strong>Current TTS stack:</strong> Sarvam AI Bulbul v2 → Azure TTS → Browser Speech (per CLAUDE.md).
+      Fish Audio is NOT in the current stack. This pricing research is for evaluation purposes only.
+    </div>
+    <p style="color:#94a3b8; font-size:0.875rem; margin-bottom:0.75rem;">
+      If evaluating Fish Audio as a Sarvam replacement, key considerations:
+    </p>
+    <ul style="color:#94a3b8; font-size:0.875rem; padding-left:1.25rem; line-height:1.8;">
+      <li>The <code>s2.1-pro-free</code> free endpoint has no SLA — unsuitable for production without a paid plan.</li>
+      <li>Paid API at $15/1M bytes is pure pay-as-you-go with no subscription minimum.</li>
+      <li>No India-region endpoint confirmed — latency for ap-south-1 migration context needs verification.</li>
+      <li>Data residency: requests on the free tier may be used for model training; review DPDP Act 2023 implications for Indian student audio data before using.</li>
+      <li>The $3.00/lesson ceiling: at $0.015/1,000 chars, a 2,000-word narration script (~10,000 chars) costs ~$0.15 in TTS — well within budget headroom.</li>
+    </ul>
+  </section>
+
+  <!-- SOURCES -->
+  <section>
+    <h2>Sources</h2>
+    <ul class="source-list">
+      <li><span class="src-label">[1]</span><a href="https://texttolab.com/blog/fish-audio-pricing" target="_blank">TextToLab — Fish Audio Pricing 2026: S2 Pro API at $15/1M</a></li>
+      <li><span class="src-label">[2]</span><a href="https://fish.audio/blog/s2-1-pro-free-api/" target="_blank">Fish Audio Blog — Fish Audio S2.1 Pro: Free Text-to-Speech API for Developers</a></li>
+      <li><span class="src-label">[3]</span><a href="https://fish.audio/blog/cheapest-text-to-speech-api-developers/" target="_blank">Fish Audio Blog — Cheapest Text to Speech API for Developers in 2026</a></li>
+      <li><span class="src-label">[4]</span><a href="https://saascrmreview.com/fish-audio-review/" target="_blank">SaaSCRMReview — Fish Audio Review 2026: Pricing, Limits &amp; Verdict</a></li>
+      <li><span class="src-label">[5]</span><a href="https://smallest.ai/blog/fish-audio-pricing-plans-api-billing-commercial-use-in-2026" target="_blank">Smallest.ai — Fish Audio Pricing: Plans, API Billing &amp; Commercial Use in 2026</a></li>
+      <li><span class="src-label">[6]</span><a href="https://texttolab.com/blog/fish-audio-review" target="_blank">TextToLab — Fish Audio Review 2026: #1 in Blind Tests</a></li>
+      <li><span class="src-label">[7]</span><a href="https://toolchase.com/tool/fish-audio/" target="_blank">ToolChase — Fish Audio Review 2026: Pricing, Features &amp; Alternatives</a></li>
+    </ul>
+  </section>
+
+  <footer>
+    Research date: 2026-09-03 &nbsp;·&nbsp; Prices subject to change — always confirm at fish.audio before committing budget.
+  </footer>
+
+</div>
+</body>
+</html>

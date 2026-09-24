@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fish Audio TTS — Pricing, Latency &amp; Competitive Research</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1117;
+    color: #e2e8f0;
+    line-height: 1.6;
+    padding: 2rem 1rem;
+  }
+  .container { max-width: 900px; margin: 0 auto; }
+  header { margin-bottom: 2.5rem; }
+  header h1 { font-size: 1.75rem; font-weight: 700; color: #f1f5f9; margin-bottom: 0.4rem; }
+  header .subtitle { color: #94a3b8; font-size: 0.9rem; }
+  header .meta { display: flex; gap: 1.5rem; margin-top: 0.75rem; font-size: 0.8rem; color: #64748b; }
+  .badge { display: inline-block; padding: 0.2rem 0.55rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+  .badge-verified { background: #14532d; color: #86efac; }
+  .badge-unverified { background: #431407; color: #fdba74; }
+  .badge-stale { background: #312e81; color: #a5b4fc; }
+  section { margin-bottom: 2.5rem; }
+  h2 { font-size: 1.1rem; font-weight: 700; color: #cbd5e1; border-bottom: 1px solid #1e293b; padding-bottom: 0.5rem; margin-bottom: 1.25rem; text-transform: uppercase; letter-spacing: 0.06em; }
+  h3 { font-size: 0.95rem; font-weight: 600; color: #94a3b8; margin: 1.25rem 0 0.5rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  p { margin-bottom: 0.75rem; font-size: 0.92rem; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1.25rem; margin-bottom: 1rem; }
+  .highlight { background: #0f172a; border: 1px solid #1e3a5f; border-left: 3px solid #3b82f6; border-radius: 6px; padding: 1rem 1.25rem; margin: 1rem 0; font-size: 0.9rem; }
+  .warn { background: #0f172a; border: 1px solid #3d1f00; border-left: 3px solid #f59e0b; border-radius: 6px; padding: 1rem 1.25rem; margin: 1rem 0; font-size: 0.9rem; }
+  .critical { background: #0f172a; border: 1px solid #500; border-left: 3px solid #ef4444; border-radius: 6px; padding: 1rem 1.25rem; margin: 1rem 0; font-size: 0.9rem; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.75rem 0 1.25rem; }
+  th { background: #0f172a; color: #94a3b8; font-weight: 600; text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid #334155; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  td { padding: 0.55rem 0.8rem; border-bottom: 1px solid #1e293b; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #1e293b44; }
+  .num { font-family: "SF Mono", "Fira Code", monospace; color: #38bdf8; }
+  .dim { color: #64748b; font-size: 0.82rem; }
+  .green { color: #4ade80; }
+  .amber { color: #fbbf24; }
+  .red { color: #f87171; }
+  .sources { margin-top: 2.5rem; }
+  .sources h2 { font-size: 0.85rem; }
+  .sources ol { padding-left: 1.25rem; }
+  .sources li { font-size: 0.78rem; color: #64748b; margin-bottom: 0.35rem; }
+  .sources a { color: #38bdf8; text-decoration: none; }
+  .sources a:hover { text-decoration: underline; }
+  .toc { background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 2.5rem; }
+  .toc h3 { margin-top: 0; font-size: 0.8rem; margin-bottom: 0.6rem; }
+  .toc ol { padding-left: 1.25rem; }
+  .toc li { font-size: 0.82rem; color: #94a3b8; margin-bottom: 0.25rem; }
+  .toc a { color: #64748b; text-decoration: none; }
+  .toc a:hover { color: #94a3b8; }
+  code { font-family: "SF Mono", "Fira Code", monospace; background: #0f172a; padding: 0.15rem 0.35rem; border-radius: 3px; font-size: 0.82rem; color: #7dd3fc; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width: 600px) { .grid2 { grid-template-columns: 1fr; } }
+  .overflow { overflow-x: auto; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>Fish Audio TTS — Pricing, Latency &amp; Competitive Research</h1>
+  <div class="subtitle">Deep-research report — multi-source, adversarially verified</div>
+  <div class="meta">
+    <span>Date: 2026-09-03</span>
+    <span>Sources: 10 primary URLs fetched</span>
+    <span>Confidence: high where primary-source confirmed, flagged elsewhere</span>
+  </div>
+</header>
+
+<div class="toc">
+  <h3>Contents</h3>
+  <ol>
+    <li><a href="#summary">Executive Summary</a></li>
+    <li><a href="#models">Models &amp; API Pricing</a></li>
+    <li><a href="#subscriptions">Subscription Plans</a></li>
+    <li><a href="#free-tier">Free Tier — S2.1-Pro-Free</a></li>
+    <li><a href="#rate-limits">Rate Limits &amp; Concurrency</a></li>
+    <li><a href="#latency">Streaming &amp; Latency</a></li>
+    <li><a href="#comparison">Competitive Comparison</a></li>
+    <li><a href="#flags">Unverified / Flagged Claims</a></li>
+    <li><a href="#sources">Sources</a></li>
+  </ol>
+</div>
+
+<!-- ── 1. EXECUTIVE SUMMARY ──────────────────────────────────────────────── -->
+<section id="summary">
+  <h2>1. Executive Summary</h2>
+  <div class="card">
+    <p>Fish Audio's paid API costs <strong class="num">$15.00 / million UTF-8 bytes</strong> — equivalent to roughly 12 hours of English speech or 180,000 words. A <strong>free production API tier</strong> (<code>s2.1-pro-free</code>) existed with no hard character cap through <strong>31 August 2026</strong> (its extended deadline); its post-August status is unconfirmed as of the research date (2026-09-03).</p>
+    <p>Latency for the WebSocket streaming endpoint is self-reported as <strong>sub-500 ms end-to-end</strong> in normal conditions, with a time-to-first-byte of <strong>180–220 ms</strong> in light-load development environments. <strong>No SLA is published</strong>.</p>
+    <p>Fish Audio is positioned as an <strong>11× cheaper alternative to ElevenLabs Multilingual v2</strong> ($15 vs $165/1M chars) and <strong>4× cheaper than ElevenLabs Flash</strong> ($15 vs $60/1M chars).</p>
+  </div>
+</section>
+
+<!-- ── 2. MODELS & API PRICING ───────────────────────────────────────────── -->
+<section id="models">
+  <h2>2. Models &amp; API Pricing</h2>
+  <p>Source: <a href="https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits" style="color:#38bdf8">docs.fish.audio — Pricing &amp; Rate Limits</a> <span class="badge badge-verified">Primary source — fetched directly</span></p>
+
+  <div class="highlight">
+    <strong>Billing unit:</strong> UTF-8 bytes of input text. For English (single-byte ASCII), this is effectively dollars per million characters. For CJK scripts (Chinese/Japanese/Korean), each character is 2–3 bytes — a million Chinese characters can cost $30–$45, not $15.
+  </div>
+
+  <div class="overflow">
+  <table>
+    <thead>
+      <tr><th>Model ID</th><th>Price</th><th>Notes</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>s2.1-pro</code></td><td class="num">$15.00 / M UTF-8 bytes</td><td>Flagship — current generation</td></tr>
+      <tr><td><code>s2.1-pro-free</code></td><td class="num green">$0.00 / M UTF-8 bytes</td><td>Free tier model — see Section 4 for limits</td></tr>
+      <tr><td><code>s2-pro</code></td><td class="num">$15.00 / M UTF-8 bytes</td><td>Previous generation</td></tr>
+      <tr><td><code>s1</code></td><td class="num">$15.00 / M UTF-8 bytes</td><td>Earlier model, still available</td></tr>
+      <tr><td><code>transcribe-1</code> (ASR)</td><td class="num">$0.36 / audio hour</td><td>Rounded up to nearest second</td></tr>
+      <tr><td><code>voice-design-1</code></td><td class="num">$0.01 / request</td><td>Failed requests not billed</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="highlight">
+    <strong>Reference scale:</strong> 1M UTF-8 bytes ≈ 180,000 English words ≈ 12 hours of generated speech.
+    At $15/M bytes, generating 1 hour of speech costs approximately <span class="num">$1.25</span>.
+  </div>
+</section>
+
+<!-- ── 3. SUBSCRIPTION PLANS ─────────────────────────────────────────────── -->
+<section id="subscriptions">
+  <h2>3. Subscription Plans (Consumer / Studio Tiers)</h2>
+  <p class="dim">Note: Subscription plans bundle credits for the web interface and studio tools. API usage is separately billed pay-as-you-go at $15/M bytes regardless of subscription tier. <span class="badge badge-verified">Confirmed across multiple sources</span></p>
+
+  <div class="overflow">
+  <table>
+    <thead>
+      <tr><th>Plan</th><th>Monthly (annual)</th><th>Monthly (monthly)</th><th>Credits/mo</th><th>Audio cap</th><th>Max chars/gen</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Free</td><td class="num">$0</td><td class="num">$0</td><td class="num">8,000</td><td class="dim">~7 min</td><td class="num">500</td></tr>
+      <tr><td>Plus</td><td class="num">$5.50–$11</td><td class="num">$20</td><td class="num">250,000</td><td class="dim">~200 min</td><td class="num">15,000</td></tr>
+      <tr><td>Pro</td><td class="num">$37.50–$75</td><td class="num">$150</td><td class="num">2,000,000</td><td class="dim">~27 hr</td><td class="num">—</td></tr>
+      <tr><td>Max</td><td class="num">$749</td><td class="num">—</td><td class="num">25,000,000</td><td class="dim">~104 hr</td><td class="num">—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="warn">
+    <strong>Credit conversion:</strong> Approximately 600–625 credits = 1 minute of audio. Annual billing saves approximately 33%. Promotional annual prices for Plus ($5.50) and Pro ($37.50) were cited by one third-party source — treat as approximate; verify at fish.audio/pricing before committing.
+  </div>
+
+  <p><strong>Commercial rights:</strong> The Free subscription plan (web interface) does NOT include commercial rights — generated audio is personal/non-commercial only. Plus and above unlock commercial use. The free API tier (<code>s2.1-pro-free</code>) has a separate restriction: products with over $1M ARR must contact Fish Audio before using it.</p>
+</section>
+
+<!-- ── 4. FREE TIER ───────────────────────────────────────────────────────── -->
+<section id="free-tier">
+  <h2>4. Free Tier — <code>s2.1-pro-free</code></h2>
+  <p>Source: <a href="https://fish.audio/blog/s2-1-pro-free-api/" style="color:#38bdf8">Fish Audio blog — S2.1 Pro Free API</a> <span class="badge badge-verified">Primary source — fetched directly</span></p>
+
+  <div class="critical">
+    <strong>CRITICAL — STATUS UNCERTAIN AS OF 2026-09-03:</strong> The free API tier was valid through <strong>31 August 2026</strong> (extended twice from the original 24 July deadline). As of research date (2026-09-03), whether this has been extended again, made permanent, or expired is <strong>unconfirmed</strong>. Check fish.audio directly before relying on it.
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>What was included</h3>
+      <ul style="padding-left:1.25rem;font-size:0.88rem;color:#94a3b8;">
+        <li>Full API access via model string <code>s2.1-pro-free</code></li>
+        <li>No hard character cap (Fair Use Policy applies)</li>
+        <li>All 83 supported languages</li>
+        <li>Same endpoint as paid plans</li>
+        <li>No separate integration — same code path</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Restrictions</h3>
+      <ul style="padding-left:1.25rem;font-size:0.88rem;color:#94a3b8;">
+        <li><strong>No SLA</strong> — best-effort only</li>
+        <li><strong>No latency guarantee</strong></li>
+        <li>Requests may be used for model improvement</li>
+        <li>Products &gt;$1M ARR must contact Fish Audio first</li>
+        <li>Fish Audio may throttle abusive patterns</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ── 5. RATE LIMITS ─────────────────────────────────────────────────────── -->
+<section id="rate-limits">
+  <h2>5. Rate Limits &amp; Concurrency Tiers</h2>
+  <p>Source: <a href="https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits" style="color:#38bdf8">docs.fish.audio — Pricing &amp; Rate Limits</a> <span class="badge badge-verified">Primary source — fetched directly</span></p>
+
+  <div class="overflow">
+  <table>
+    <thead>
+      <tr><th>Tier</th><th>Threshold (total prepaid)</th><th>Concurrent Requests</th><th>Est. QPM (short requests)</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Starter</td><td class="dim">&lt; $100</td><td class="num">5</td><td class="dim">~5–25 QPM</td></tr>
+      <tr><td>Elevated</td><td class="num">≥ $100</td><td class="num">15</td><td class="dim">~15–75 QPM</td></tr>
+      <tr><td>High Volume</td><td class="num">≥ $1,000</td><td class="num">50</td><td class="dim">~50–250 QPM</td></tr>
+      <tr><td>Enterprise</td><td class="dim">Custom</td><td class="dim">Custom</td><td class="dim">Custom</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="highlight">
+    <strong>Key mechanism:</strong> Tiers unlock when <em>prepaid</em> balance reaches the threshold — you do not need to spend the full amount. Topping up $100 immediately unlocks Elevated concurrency. QPM estimates are derived from documentation formulas and vary heavily based on average request duration.
+  </div>
+</section>
+
+<!-- ── 6. STREAMING & LATENCY ─────────────────────────────────────────────── -->
+<section id="latency">
+  <h2>6. Streaming Architecture &amp; Latency</h2>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>WebSocket endpoint</h3>
+      <p style="font-size:0.85rem;color:#94a3b8;"><code>wss://api.fish.audio/v1/tts/live</code></p>
+      <ul style="padding-left:1.25rem;font-size:0.85rem;color:#94a3b8;margin-top:0.5rem;">
+        <li>Serialization: MessagePack</li>
+        <li>Auth: Bearer token in <code>Authorization</code> header</li>
+        <li>Bidirectional streaming</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Audio formats</h3>
+      <ul style="padding-left:1.25rem;font-size:0.85rem;color:#94a3b8;">
+        <li>WAV, PCM</li>
+        <li>MP3 (64, 128, 192 kbps)</li>
+        <li>Opus (24, 32, 48, 64 kbps or auto)</li>
+        <li>Default sample rate: 44,100 Hz (48,000 Hz for Opus)</li>
+      </ul>
+    </div>
+  </div>
+
+  <h3>Latency figures (self-reported by Fish Audio)</h3>
+  <div class="warn">
+    No independent third-party benchmark exists. All figures below are from Fish Audio's own blog or documentation. No SLA is published. <span class="badge badge-unverified">Self-reported only</span>
+  </div>
+
+  <div class="overflow">
+  <table>
+    <thead>
+      <tr><th>Condition</th><th>Reported Value</th><th>Confidence</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Typical TTFB (time to first byte), light load</td><td class="num">180–220 ms</td><td><span class="badge badge-unverified">Self-reported</span></td></tr>
+      <tr><td>End-to-end, consistent normal load</td><td class="num">&lt; 500 ms</td><td><span class="badge badge-unverified">Self-reported</span></td></tr>
+      <tr><td>200 concurrent users (stress test)</td><td class="num">~2,300 ms</td><td><span class="badge badge-unverified">Self-reported</span></td></tr>
+      <tr><td>Streaming start for 6–8 s response</td><td class="num">80–150 ms</td><td><span class="badge badge-unverified">Self-reported</span></td></tr>
+      <tr><td>Self-hosted inference</td><td class="num">&lt; 100 ms</td><td><span class="badge badge-unverified">Self-reported</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Latency controls in the API</h3>
+  <p>Three latency modes are available per request:</p>
+  <ul style="padding-left:1.25rem;font-size:0.88rem;color:#94a3b8;margin-bottom:1rem;">
+    <li><strong>low</strong> — fastest response, potentially lower quality</li>
+    <li><strong>balanced</strong> — reduced latency with acceptable quality</li>
+    <li><strong>normal</strong> — best quality (default)</li>
+  </ul>
+
+  <h3>Buffer controls</h3>
+  <ul style="padding-left:1.25rem;font-size:0.88rem;color:#94a3b8;margin-bottom:1rem;">
+    <li><code>chunk_length</code>: 100–300 characters (default 300)</li>
+    <li><code>min_chunk_length</code>: 0–100 characters (default 50)</li>
+    <li><code>FlushEvent</code>: forces immediate synthesis of buffered text for low-latency interactive use</li>
+    <li><code>condition_on_previous_chunks</code>: enabled by default for voice consistency across chunks</li>
+  </ul>
+
+  <div class="highlight">
+    <strong>Streaming benefit:</strong> A response requiring 6–8 seconds of total generation time can start delivering audio to the client in 80–150 ms when using WebSocket streaming, because audio chunks are sent before the full generation is complete.
+  </div>
+</section>
+
+<!-- ── 7. COMPETITIVE COMPARISON ──────────────────────────────────────────── -->
+<section id="comparison">
+  <h2>7. Competitive Comparison</h2>
+
+  <div class="overflow">
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>API Cost</th><th>Free Tier</th><th>Streaming</th><th>SLA/Latency</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Fish Audio</strong> (s2.1-pro)</td>
+        <td class="num green">$15 / 1M UTF-8 bytes</td>
+        <td class="green">Yes (s2.1-pro-free; status uncertain post-Aug 2026)</td>
+        <td class="green">WebSocket + HTTP streaming</td>
+        <td class="amber">No SLA; self-reported &lt;500 ms</td>
+      </tr>
+      <tr>
+        <td><strong>ElevenLabs</strong> Multilingual v2</td>
+        <td class="num red">$165 / 1M chars</td>
+        <td>10,000 credits/mo</td>
+        <td class="green">Yes</td>
+        <td class="amber">&lt;200 ms TTFB (US East, self-reported)</td>
+      </tr>
+      <tr>
+        <td><strong>ElevenLabs</strong> Flash</td>
+        <td class="num amber">$60 / 1M chars</td>
+        <td>Shared with above</td>
+        <td class="green">Yes</td>
+        <td class="green">Lower latency model</td>
+      </tr>
+      <tr>
+        <td><strong>OpenAI TTS</strong></td>
+        <td class="num amber">Pay-per-use (no free tier)</td>
+        <td class="red">None</td>
+        <td class="green">Streaming supported</td>
+        <td class="dim">Not published</td>
+      </tr>
+      <tr>
+        <td><strong>Azure TTS</strong></td>
+        <td class="dim">Not retrieved in this research</td>
+        <td class="dim">Has free tier (5M chars/mo standard)</td>
+        <td class="green">Yes</td>
+        <td class="dim">SLA available; exact latency not retrieved</td>
+      </tr>
+      <tr>
+        <td><strong>Sarvam AI Bulbul v2</strong></td>
+        <td class="dim">Not retrieved in this research</td>
+        <td class="dim">Not retrieved</td>
+        <td class="dim">Not retrieved</td>
+        <td class="dim">India-region; low-latency for Indian languages</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="highlight">
+    Fish Audio is 4× cheaper than ElevenLabs Flash and 11× cheaper than ElevenLabs Multilingual v2 on a per-character basis. However, it does not publish an SLA, and its concurrency at the Starter tier (5 concurrent requests) is a hard limit until $100 prepaid is reached.
+  </div>
+</section>
+
+<!-- ── 8. UNVERIFIED / FLAGGED CLAIMS ─────────────────────────────────────── -->
+<section id="flags">
+  <h2>8. Unverified &amp; Flagged Claims</h2>
+
+  <div class="card">
+    <h3>Flag 1 — Free tier post-August 2026 status <span class="badge badge-unverified">Unverified</span></h3>
+    <p>The <code>s2.1-pro-free</code> tier was confirmed active through 31 August 2026. Whether it has been extended, ended, or made permanent after that date is unknown as of 2026-09-03. The research date is 3 days past the stated deadline. <strong>Verify at fish.audio before using.</strong></p>
+  </div>
+
+  <div class="card">
+    <h3>Flag 2 — Promotional subscription prices <span class="badge badge-unverified">Unverified exact values</span></h3>
+    <p>Third-party sources cite Plus at $5.50/mo and Pro at $37.50/mo on annual billing. These may be promotional prices. The Plus list price is $20/mo and Pro is $150/mo. Verify directly at fish.audio/pricing.</p>
+  </div>
+
+  <div class="card">
+    <h3>Flag 3 — All latency figures are self-reported <span class="badge badge-unverified">No independent benchmark</span></h3>
+    <p>The TTFB figures (180–220 ms, &lt;500 ms end-to-end) come from Fish Audio's own blog posts. No independent third-party benchmark was found. The article itself cautions that "development machine benchmarks do not predict production behavior" and results should be tested "from the region where your users are." Degradation to ~2,300 ms was observed at 200 concurrent users in an undisclosed test.</p>
+  </div>
+
+  <div class="card">
+    <h3>Flag 4 — Azure TTS and Sarvam AI pricing not retrieved <span class="badge badge-unverified">Gap in research</span></h3>
+    <p>Search results did not return authoritative 2026 pricing for Azure TTS or Sarvam AI Bulbul v2. Azure TTS pricing is available at azure.microsoft.com/pricing/details/cognitive-services/speech-services/. Sarvam AI pricing requires direct contact or checking sarvam.ai.</p>
+  </div>
+
+  <div class="card">
+    <h3>Flag 5 — "#1 in blind A/B tests" claim <span class="badge badge-unverified">Unverified — source is Fish Audio marketing</span></h3>
+    <p>One third-party source (texttolab.com) cites Fish Audio as ranking "#1 in blind A/B tests" and "wins 60% of blind tests." The methodology, sample size, and test conditions are not specified. Treat as marketing language, not independently verified quality benchmark.</p>
+  </div>
+</section>
+
+<!-- ── SOURCES ─────────────────────────────────────────────────────────────── -->
+<div class="sources">
+  <h2>Sources</h2>
+  <ol>
+    <li><a href="https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits">docs.fish.audio — Pricing &amp; Rate Limits (fetched directly)</a></li>
+    <li><a href="https://docs.fish.audio/api-reference/endpoint/websocket/tts-live">docs.fish.audio — WebSocket TTS Live (fetched directly)</a></li>
+    <li><a href="https://fish.audio/blog/s2-1-pro-free-api/">Fish Audio Blog — S2.1 Pro Free API (fetched directly)</a></li>
+    <li><a href="https://fish.audio/blog/lowest-latency-text-to-speech-api-real-time/">Fish Audio Blog — Lowest Latency TTS (fetched directly)</a></li>
+    <li><a href="https://texttolab.com/blog/fish-audio-pricing">TextToLab — Fish Audio Pricing 2026 (fetched directly)</a></li>
+    <li><a href="https://smallest.ai/blog/fish-audio-pricing-plans-api-billing-commercial-use-in-2026">Smallest.ai — Fish Audio Pricing Plans 2026</a></li>
+    <li><a href="https://fish.audio/blog/top-tts-apis-developer-comparison-2026/">Fish Audio Blog — Top TTS APIs Comparison 2026</a></li>
+    <li><a href="https://speechgeneration.ai/compare/fish-audio-vs-elevenlabs">SpeechGeneration.ai — Fish Audio vs ElevenLabs 2026</a></li>
+    <li><a href="https://texttolab.com/blog/fish-audio-vs-elevenlabs">TextToLab — Fish Audio vs ElevenLabs</a></li>
+    <li><a href="https://fish.audio/elevenlabs-alternative/">Fish Audio — ElevenLabs Alternative page</a></li>
+    <li><a href="https://www.g2.com/products/fish-audio/pricing">G2 — Fish Audio Pricing 2026</a></li>
+  </ol>
+</div>
+
+</div>
+</body>
+</html>

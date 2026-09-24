@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fish Audio Pricing — Plans, Limits & API Costs (2026)</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      line-height: 1.6;
+      padding: 2rem 1rem;
+    }
+
+    .page { max-width: 960px; margin: 0 auto; }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 0.25rem;
+    }
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin-bottom: 2.5rem;
+    }
+
+    h2 {
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: #cbd5e1;
+      margin: 2.5rem 0 1rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    /* ── Plan cards ── */
+    .plans {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+
+    .card {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .card.highlight { border-color: #6366f1; }
+
+    .plan-name {
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #94a3b8;
+    }
+    .card.highlight .plan-name { color: #818cf8; }
+
+    .plan-price {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #f8fafc;
+      line-height: 1.1;
+    }
+    .plan-price span {
+      font-size: 0.85rem;
+      font-weight: 400;
+      color: #94a3b8;
+    }
+
+    .plan-annual {
+      font-size: 0.78rem;
+      color: #4ade80;
+    }
+
+    .divider { border: none; border-top: 1px solid #334155; margin: 0.5rem 0; }
+
+    .plan-feature {
+      font-size: 0.82rem;
+      color: #cbd5e1;
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+    .plan-feature .label { color: #64748b; white-space: nowrap; }
+    .plan-feature .val { font-weight: 600; color: #e2e8f0; text-align: right; }
+    .val.yes { color: #4ade80; }
+    .val.no { color: #f87171; }
+    .val.limited { color: #fbbf24; }
+
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; margin-bottom: 1.5rem; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    th {
+      background: #1e293b;
+      color: #94a3b8;
+      font-weight: 600;
+      text-align: left;
+      padding: 0.6rem 0.9rem;
+      white-space: nowrap;
+      border-bottom: 2px solid #334155;
+    }
+    td {
+      padding: 0.55rem 0.9rem;
+      border-bottom: 1px solid #1e293b;
+      color: #cbd5e1;
+      vertical-align: top;
+    }
+    tr:hover td { background: #1a2232; }
+    .green { color: #4ade80; font-weight: 600; }
+    .red { color: #f87171; font-weight: 600; }
+    .amber { color: #fbbf24; font-weight: 600; }
+
+    /* ── Alert box ── */
+    .alert {
+      background: #1e1a0e;
+      border: 1px solid #92400e;
+      border-left: 4px solid #f59e0b;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      font-size: 0.85rem;
+      color: #fde68a;
+      margin-bottom: 1.5rem;
+    }
+    .alert strong { color: #fbbf24; }
+
+    .info {
+      background: #0c1a2e;
+      border: 1px solid #1e3a5f;
+      border-left: 4px solid #3b82f6;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      font-size: 0.85rem;
+      color: #93c5fd;
+      margin-bottom: 1.5rem;
+    }
+    .info strong { color: #60a5fa; }
+
+    /* ── Sources ── */
+    .sources { margin-top: 2.5rem; }
+    .sources h2 { font-size: 1rem; }
+    .sources ul { list-style: none; padding: 0; }
+    .sources li {
+      padding: 0.3rem 0;
+      font-size: 0.8rem;
+    }
+    .sources a { color: #6366f1; text-decoration: none; }
+    .sources a:hover { text-decoration: underline; }
+
+    footer {
+      margin-top: 3rem;
+      font-size: 0.75rem;
+      color: #475569;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <h1>Fish Audio Pricing Plans</h1>
+  <p class="subtitle">Subscription tiers, voice cloning limits, API costs &amp; key caveats — as of September 2026. Sourced from the official fish.audio/plan/ page and corroborated by third-party reviews.</p>
+
+  <!-- ── Plan Cards ── -->
+  <h2>Subscription Tiers at a Glance</h2>
+  <div class="plans">
+
+    <div class="card">
+      <div class="plan-name">Free</div>
+      <div class="plan-price">$0 <span>/ mo</span></div>
+      <div class="plan-annual" style="color:#64748b;">No annual option</div>
+      <hr class="divider">
+      <div class="plan-feature"><span class="label">Credits / mo</span><span class="val">8,000</span></div>
+      <div class="plan-feature"><span class="label">Audio (est.)</span><span class="val">~7 min</span></div>
+      <div class="plan-feature"><span class="label">Chars / generation</span><span class="val limited">500</span></div>
+      <div class="plan-feature"><span class="label">Voice slots</span><span class="val">3 public</span></div>
+      <div class="plan-feature"><span class="label">Pro voice clones</span><span class="val no">None</span></div>
+      <div class="plan-feature"><span class="label">API access</span><span class="val no">No</span></div>
+      <div class="plan-feature"><span class="label">Team seats</span><span class="val no">No</span></div>
+      <div class="plan-feature"><span class="label">Commercial use</span><span class="val limited">Disputed ⚠️</span></div>
+    </div>
+
+    <div class="card highlight">
+      <div class="plan-name">Plus</div>
+      <div class="plan-price">$15 <span>/ mo</span></div>
+      <div class="plan-annual">$66 / yr → ~$5.50/mo (save 33%)</div>
+      <hr class="divider">
+      <div class="plan-feature"><span class="label">Credits / mo</span><span class="val">250,000</span></div>
+      <div class="plan-feature"><span class="label">Audio (est.)</span><span class="val">~200 min</span></div>
+      <div class="plan-feature"><span class="label">Chars / generation</span><span class="val">15,000</span></div>
+      <div class="plan-feature"><span class="label">Voice slots</span><span class="val">Unlimited pub + 10 private</span></div>
+      <div class="plan-feature"><span class="label">Pro voice clones</span><span class="val">1 slot</span></div>
+      <div class="plan-feature"><span class="label">Voice Design</span><span class="val yes">Yes</span></div>
+      <div class="plan-feature"><span class="label">API access</span><span class="val yes">Yes (PAYG)</span></div>
+      <div class="plan-feature"><span class="label">Team seats</span><span class="val">1</span></div>
+      <div class="plan-feature"><span class="label">Commercial use</span><span class="val yes">Yes</span></div>
+    </div>
+
+    <div class="card">
+      <div class="plan-name">Pro</div>
+      <div class="plan-price">$100 <span>/ mo</span></div>
+      <div class="plan-annual">$450 / yr → ~$37.50/mo (save 33%)</div>
+      <hr class="divider">
+      <div class="plan-feature"><span class="label">Credits / mo</span><span class="val">2,000,000</span></div>
+      <div class="plan-feature"><span class="label">Audio (est.)</span><span class="val">~1,620 min</span></div>
+      <div class="plan-feature"><span class="label">Chars / generation</span><span class="val">30,000</span></div>
+      <div class="plan-feature"><span class="label">Voice slots</span><span class="val">Unlimited</span></div>
+      <div class="plan-feature"><span class="label">Pro voice clones</span><span class="val">5 slots</span></div>
+      <div class="plan-feature"><span class="label">API access</span><span class="val yes">Yes (PAYG)</span></div>
+      <div class="plan-feature"><span class="label">Team seats</span><span class="val">3</span></div>
+      <div class="plan-feature"><span class="label">Commercial use</span><span class="val yes">Yes</span></div>
+    </div>
+
+    <div class="card">
+      <div class="plan-name">Max</div>
+      <div class="plan-price">$999 <span>/ mo</span></div>
+      <div class="plan-annual">$8,988 / yr → ~$749/mo (save 33%)</div>
+      <hr class="divider">
+      <div class="plan-feature"><span class="label">Credits / mo</span><span class="val">25,000,000</span></div>
+      <div class="plan-feature"><span class="label">Audio (est.)</span><span class="val">~6,250 min</span></div>
+      <div class="plan-feature"><span class="label">Chars / generation</span><span class="val">30,000</span></div>
+      <div class="plan-feature"><span class="label">Voice slots</span><span class="val">Unlimited</span></div>
+      <div class="plan-feature"><span class="label">Pro voice clones</span><span class="val">15 slots</span></div>
+      <div class="plan-feature"><span class="label">API access</span><span class="val yes">Yes (PAYG)</span></div>
+      <div class="plan-feature"><span class="label">Team seats</span><span class="val">10</span></div>
+      <div class="plan-feature"><span class="label">Commercial use</span><span class="val yes">Yes</span></div>
+    </div>
+
+    <div class="card">
+      <div class="plan-name">Enterprise</div>
+      <div class="plan-price" style="font-size:1.2rem;">Custom</div>
+      <div class="plan-annual" style="color:#64748b;">Annual billing, contact sales</div>
+      <hr class="divider">
+      <div class="plan-feature"><span class="label">Credits</span><span class="val">Custom volume</span></div>
+      <div class="plan-feature"><span class="label">Zero data retention</span><span class="val yes">Yes</span></div>
+      <div class="plan-feature"><span class="label">On-premise deploy</span><span class="val yes">Yes</span></div>
+      <div class="plan-feature"><span class="label">SOC 2</span><span class="val yes">Yes</span></div>
+      <div class="plan-feature"><span class="label">Custom SSO</span><span class="val limited">Coming soon</span></div>
+      <div class="plan-feature"><span class="label">Org controls</span><span class="val yes">Yes</span></div>
+    </div>
+
+  </div>
+
+  <!-- ── Commercial use warning ── -->
+  <div class="alert">
+    <strong>Commercial Use Conflict on Free Plan:</strong> The Free plan card on the fish.audio website advertises "commercial use," but Fish Audio's Terms of Service explicitly restrict free-tier use to personal and non-commercial purposes. Multiple independent reviewers flag this contradiction. Safe assumption: any monetised content (YouTube, podcasts, client work, products) requires at minimum the Plus plan.
+  </div>
+
+  <!-- ── Full comparison table ── -->
+  <h2>Full Feature Comparison</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Feature</th>
+          <th>Free</th>
+          <th>Plus ($15/mo)</th>
+          <th>Pro ($100/mo)</th>
+          <th>Max ($999/mo)</th>
+          <th>Enterprise</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Monthly credits</td>
+          <td>8,000</td>
+          <td>250,000</td>
+          <td>2,000,000</td>
+          <td>25,000,000</td>
+          <td>Custom</td>
+        </tr>
+        <tr>
+          <td>Est. audio / mo</td>
+          <td>~7 min</td>
+          <td>~200 min</td>
+          <td>~1,620 min</td>
+          <td>~6,250 min</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>Chars per generation</td>
+          <td class="amber">500</td>
+          <td>15,000</td>
+          <td>30,000</td>
+          <td>30,000</td>
+          <td>Custom</td>
+        </tr>
+        <tr>
+          <td>Public voice slots</td>
+          <td>3</td>
+          <td>Unlimited</td>
+          <td>Unlimited</td>
+          <td>Unlimited</td>
+          <td>Unlimited</td>
+        </tr>
+        <tr>
+          <td>Private voice slots</td>
+          <td class="red">0</td>
+          <td>10</td>
+          <td>Unlimited</td>
+          <td>Unlimited</td>
+          <td>Unlimited</td>
+        </tr>
+        <tr>
+          <td>Professional clone slots</td>
+          <td class="red">0</td>
+          <td>1</td>
+          <td>5</td>
+          <td>15</td>
+          <td>Custom</td>
+        </tr>
+        <tr>
+          <td>Voice Design access</td>
+          <td class="red">No</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+        </tr>
+        <tr>
+          <td>API access</td>
+          <td class="red">No</td>
+          <td class="green">Yes (PAYG)</td>
+          <td class="green">Yes (PAYG)</td>
+          <td class="green">Yes (PAYG)</td>
+          <td class="green">Yes</td>
+        </tr>
+        <tr>
+          <td>Team seats</td>
+          <td class="red">None</td>
+          <td>1</td>
+          <td>3</td>
+          <td>10</td>
+          <td>Custom</td>
+        </tr>
+        <tr>
+          <td>Priority generation</td>
+          <td class="red">No</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+        </tr>
+        <tr>
+          <td>Credit rollover</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td>—</td>
+        </tr>
+        <tr>
+          <td>Commercial use</td>
+          <td class="amber">Disputed ⚠️</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+          <td class="green">Yes</td>
+        </tr>
+        <tr>
+          <td>Zero data retention</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="green">Yes</td>
+        </tr>
+        <tr>
+          <td>On-premise deployment</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="green">Yes</td>
+        </tr>
+        <tr>
+          <td>SOC 2 compliance</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="red">No</td>
+          <td class="green">Yes</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── API Pricing ── -->
+  <h2>API Pricing (Pay-As-You-Go, separate from subscription credits)</h2>
+
+  <div class="info">
+    <strong>Note:</strong> API usage is billed separately from subscription credits. Subscription credits cover the web studio. API calls are metered in UTF-8 bytes regardless of which plan you are on. Requires Plus or higher to unlock API access.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Model / Service</th>
+          <th>Price</th>
+          <th>Unit</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>S2.1 Pro (TTS)</td>
+          <td class="green">$15.00</td>
+          <td>per 1M UTF-8 bytes</td>
+          <td>Latest model; ~$15 per 1M English chars (1 char = 1 byte in ASCII/Latin). CJK costs 2–3× more due to multi-byte encoding.</td>
+        </tr>
+        <tr>
+          <td>S2.1 Pro Free tier</td>
+          <td class="green">$0.00</td>
+          <td>per 1M UTF-8 bytes</td>
+          <td>Fair-use limits apply; no published ceiling.</td>
+        </tr>
+        <tr>
+          <td>S2 Pro (TTS)</td>
+          <td class="green">$15.00</td>
+          <td>per 1M UTF-8 bytes</td>
+          <td>Previous generation.</td>
+        </tr>
+        <tr>
+          <td>S1 TTS</td>
+          <td class="green">$15.00</td>
+          <td>per 1M UTF-8 bytes</td>
+          <td>Older model; same rate.</td>
+        </tr>
+        <tr>
+          <td>Transcribe-1 (ASR)</td>
+          <td class="green">$0.36</td>
+          <td>per audio hour</td>
+          <td>Speech-to-text transcription.</td>
+        </tr>
+        <tr>
+          <td>Voice Design-1</td>
+          <td class="green">$0.01</td>
+          <td>per successful request</td>
+          <td>Generative voice creation.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2>API Concurrency Tiers</h2>
+  <p style="font-size:0.85rem; color:#94a3b8; margin-bottom:1rem;">Concurrent request limits are determined by your prepaid balance, not your subscription plan.</p>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Prepaid Balance Required</th>
+          <th>Concurrent Requests</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Starter</td><td>Below $100</td><td>5</td></tr>
+        <tr><td>Elevated</td><td>$100+</td><td>15</td></tr>
+        <tr><td>High Volume</td><td>$1,000+</td><td>50</td></tr>
+        <tr><td>Enterprise</td><td>Custom</td><td>Custom</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Voice Cloning ── -->
+  <h2>Voice Cloning Details</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Attribute</th>
+          <th>Detail</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>Minimum audio to clone</td><td>10–15 seconds of clean, single-speaker audio (Fish Audio markets "15 seconds" on the homepage)</td></tr>
+        <tr><td>Voice types</td><td>Standard clone (all paid plans) and Professional clone (higher fidelity; 1 on Plus, 5 on Pro, 15 on Max)</td></tr>
+        <tr><td>Languages</td><td>Multi-language cloning supported</td></tr>
+        <tr><td>Consent requirement</td><td>Fish Audio terms require written permission for any voice cloned</td></tr>
+        <tr><td>Private slots on Free</td><td class="red">0 — free users get only 3 public voice slots</td></tr>
+        <tr><td>Credit consumption rate</td><td>~600–625 credits per minute of generated audio</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ── Key caveats ── -->
+  <h2>Key Caveats and Gotchas</h2>
+  <ul style="font-size:0.85rem; color:#cbd5e1; display:flex; flex-direction:column; gap:0.6rem; padding-left:1.2rem;">
+    <li><strong>No credit rollover.</strong> Unused monthly credits expire at end of each billing cycle across all plans.</li>
+    <li><strong>Commercial use ambiguity on Free.</strong> The plan card says "commercial use" but the ToS restricts free accounts to personal, non-commercial use. Treat free tier as non-commercial to avoid account action.</li>
+    <li><strong>API billing is separate.</strong> Subscription credits fund the web studio only. API calls are billed per-byte, metered separately, and require a prepaid balance.</li>
+    <li><strong>CJK language surcharge.</strong> One million Chinese/Japanese/Korean characters costs $30–$45 via API (not $15) because each CJK character encodes as 3 UTF-8 bytes.</li>
+    <li><strong>Self-serve plans allow content to be used for AI training.</strong> Fish Audio's terms permit usage data and generated content to support model development on Free, Plus, Pro, and Max. Zero data retention is Enterprise-only.</li>
+    <li><strong>Team seat gaps.</strong> Pro caps at 3 seats, Max at 10. No published per-seat add-on pricing for additional members beyond those caps.</li>
+    <li><strong>Fair-use ceiling on S2.1 Pro Free API tier</strong> is not published; use at your own risk for production workloads.</li>
+    <li><strong>Account termination destroys cloned voices.</strong> Fish Audio does not guarantee export of voice models on account suspension — keep your original recordings elsewhere.</li>
+  </ul>
+
+  <!-- ── Competitive context ── -->
+  <h2>Competitive Context</h2>
+  <p style="font-size:0.85rem; color:#cbd5e1;">Fish Audio claims its S2 Pro model is <strong>"11× cheaper than ElevenLabs"</strong> on a per-character basis. Independent benchmarks cited in their marketing material list S2 Pro at <strong>#1 in blind A/B tests</strong> (Bradley-Terry score 1.7× higher than the next competitor). These claims originate from Fish Audio's own marketing and have not been independently verified in the sources reviewed here.</p>
+
+  <!-- ── Sources ── -->
+  <div class="sources">
+    <h2>Sources</h2>
+    <ul>
+      <li><a href="https://fish.audio/plan/" target="_blank" rel="noopener">fish.audio/plan/ — Official Fish Audio Pricing Page</a></li>
+      <li><a href="https://smallest.ai/blog/fish-audio-pricing-plans-api-billing-commercial-use-in-2026" target="_blank" rel="noopener">Smallest.ai — Fish Audio Pricing: Plans, API Billing &amp; Commercial Use in 2026</a></li>
+      <li><a href="https://texttolab.com/blog/fish-audio-pricing" target="_blank" rel="noopener">TextToLab — Fish Audio Pricing 2026: S2 Pro API at $15/1M</a></li>
+      <li><a href="https://saascrmreview.com/fish-audio-review/" target="_blank" rel="noopener">SaaS CRM Review — Fish Audio Review 2026: Pricing, Limits &amp; Verdict</a></li>
+      <li><a href="https://www.toolcolumn.com/pricing/fish-audio-pricing" target="_blank" rel="noopener">ToolColumn — Fish Audio Pricing: Plans and API Costs</a></li>
+      <li><a href="https://www.g2.com/products/fish-audio/pricing" target="_blank" rel="noopener">G2 — Fish Audio Pricing 2026</a></li>
+      <li><a href="https://www.xpay.sh/saas-pricing/fish-audio/" target="_blank" rel="noopener">xpay — Fish Audio Pricing 2026: Real Costs, Plans &amp; Alternatives</a></li>
+      <li><a href="https://toolchase.com/tool/fish-audio/" target="_blank" rel="noopener">ToolChase — Fish Audio Review 2026: Pricing, Features &amp; Alternatives</a></li>
+      <li><a href="https://knowara.com/ai-tools/voice/fish-audio-review/" target="_blank" rel="noopener">Knowara — Fish Audio Review 2026: Voice Cloning From 15 Seconds</a></li>
+      <li><a href="https://fish.audio/" target="_blank" rel="noopener">fish.audio — Official Homepage</a></li>
+      <li><a href="https://fish.audio/voice-clone/" target="_blank" rel="noopener">fish.audio/voice-clone/ — Voice Cloning Page</a></li>
+      <li><a href="https://www.saasworthy.com/product/fish-audio/pricing" target="_blank" rel="noopener">SaaSworthy — Fish Audio Pricing: Cost and Plans</a></li>
+    </ul>
+  </div>
+
+  <footer>Research compiled 2026-09-03 from official fish.audio pages and third-party reviews. Prices and limits subject to change — verify at fish.audio/plan/ before purchasing.</footer>
+
+</div>
+</body>
+</html>
