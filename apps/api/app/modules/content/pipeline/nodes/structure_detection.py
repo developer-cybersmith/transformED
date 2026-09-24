@@ -167,7 +167,11 @@ def _merge_two(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     b_title = (b.get("title") or "").strip()
     b_body = (b.get("body") or "").strip()
     folded = "\n".join(part for part in (b_title, b_body) if part)
-    merged_body = a.get("body", "")
+    # `.get("body", "")` only substitutes "" when the key is ABSENT — an
+    # explicit `a["body"] = None` (review finding, Story 233 round) would
+    # otherwise leave `merged_body` as `None`, breaking every downstream
+    # `.strip()`/string call on a section's body. `or ""` covers both cases.
+    merged_body = a.get("body") or ""
     if folded:
         merged_body = f"{merged_body}\n\n{folded}" if merged_body else folded
     a_level = a.get("level", "topic")
@@ -197,6 +201,11 @@ def merge_section_range(sections: list[dict[str, Any]]) -> dict[str, Any]:
     if not sections:
         raise ValueError("merge_section_range: sections must be non-empty")
     merged = dict(sections[0])
+    # Single-section input skips the _merge_two loop below entirely, so its
+    # own None-body normalization never runs — normalize here too, at this
+    # function's own boundary, so "body is always a string" holds regardless
+    # of how many sections were passed in.
+    merged["body"] = merged.get("body") or ""
     for nxt in sections[1:]:
         merged = _merge_two(merged, nxt)
     merged["id"] = "s0"

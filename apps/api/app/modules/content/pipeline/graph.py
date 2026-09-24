@@ -1291,8 +1291,36 @@ async def _topic_selection_llm_split(
     Topic II begins. Input is index + title + a short body preview only —
     never full section bodies, never the whole chapter. Degrade-not-fabricate:
     any invalid/missing response or exception falls back to a deterministic
-    midpoint-by-cumulative-body-length split — never raises."""
+    midpoint-by-cumulative-body-length split — never raises.
+
+    Review finding (Story 233 round, Blind Hunter): every other paid call site
+    in this file (`lesson_planner_node`, `slide_generator_node`,
+    `narration_generator_node`, etc.) gates its spend on `check_ceiling()`
+    first — this one didn't. A lesson already over budget now falls straight
+    to the free deterministic split instead of paying for a call whose result
+    would be discarded on the next node's own ceiling check anyway.
+    """
+    from app.core.cost_tracker import check_ceiling
     from app.providers.llm.factory import get_llm_provider
+
+    try:
+        over_ceiling = await check_ceiling(lesson_id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] topic_selection_node: check_ceiling() failed — failing open "
+            "(assuming not over ceiling)",
+            lesson_id,
+            exc_info=True,
+        )
+        over_ceiling = False
+
+    if over_ceiling:
+        logger.warning(
+            "[%s] topic_selection_node: cost ceiling reached — skipping the "
+            "split LLM call, falling back to deterministic midpoint split",
+            lesson_id,
+        )
+        return _topic_selection_midpoint_split(sections)
 
     preview_lines = "\n".join(
         f"{i}: {_single_line(s.get('title', ''))} — {_single_line((s.get('body') or '')[:200])}"
@@ -7600,7 +7628,7 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
 
     graph: StateGraph[Any] = StateGraph(PipelineState)
 
-    # Register all 16 nodes (issue #236 adds narration_stitch; Story 233
+    # Register all 17 nodes (issue #236 adds narration_stitch; Story 233
     # piece 1 adds topic_selection)
     graph.add_node("extract", extract_node)
     graph.add_node("structure", structure_node)

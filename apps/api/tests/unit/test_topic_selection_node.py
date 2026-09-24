@@ -286,3 +286,180 @@ async def test_idempotent_cache_hit_skips_llm_call() -> None:
 
     assert result["sections"] == cached_sections
     provider.complete_structured.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_cost_ceiling_reached_skips_llm_call_falls_back_to_midpoint() -> None:
+    """Review finding (Story 233 round, Blind Hunter): every other paid call
+    site in this file gates on check_ceiling() first — the split LLM call
+    didn't. A lesson already over budget must fall to the free deterministic
+    split rather than pay for a call, matching narration_generator_node's
+    established per-dispatch degrade pattern."""
+    from app.modules.content.pipeline.graph import topic_selection_node
+
+    sections = _sections([f"TOKEN_{i}" for i in range(6)])
+    provider = AsyncMock()
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=True)),
+    ):
+        result = await topic_selection_node(_base_state(sections, tier="T2"))
+
+    assert len(result["sections"]) == 2
+    for topic in result["sections"]:
+        assert topic["body"]
+    provider.complete_structured.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_check_ceiling_failure_fails_open_and_calls_llm() -> None:
+    """A transient check_ceiling() error (e.g. Redis blip) must not abort
+    topic selection — fail open, same convention as every other check_ceiling
+    call site in this file."""
+    from app.modules.content.pipeline.graph import topic_selection_node
+
+    sections = _sections([f"TOKEN_{i}" for i in range(6)])
+    provider = AsyncMock()
+    provider.complete_structured.return_value = _split_response(3)
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+        patch(
+            "app.core.cost_tracker.check_ceiling",
+            new=AsyncMock(side_effect=RuntimeError("redis down")),
+        ),
+    ):
+        result = await topic_selection_node(_base_state(sections, tier="T2"))
+
+    assert len(result["sections"]) == 2
+    provider.complete_structured.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_two_topic_case_missing_split_index_falls_back_to_midpoint() -> None:
+    """AC 6 degrade-not-fabricate: a response whose split_index is missing/
+    None (not just out-of-range) must never raise and never produce an empty
+    topic. `_StructureTopicSplitLLM` is a real Pydantic model that would
+    reject a None int at construction, so this uses a bare object to
+    reproduce what an actually malformed/unexpected provider response looks
+    like from topic_selection_node's own perspective (it only ever reads
+    `response.split_index`, never isinstance-checks the response type)."""
+    from types import SimpleNamespace
+
+    from app.modules.content.pipeline.graph import topic_selection_node
+
+    sections = _sections([f"TOKEN_{i}" for i in range(6)])
+    provider = AsyncMock()
+    provider.complete_structured.return_value = SimpleNamespace(split_index=None)
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        result = await topic_selection_node(_base_state(sections, tier="T2"))
+
+    assert len(result["sections"]) == 2
+    for topic in result["sections"]:
+        assert topic["body"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_two_topic_case_non_int_split_index_falls_back_to_midpoint() -> None:
+    """Same as above for a non-integer (e.g. string) split_index."""
+    from types import SimpleNamespace
+
+    from app.modules.content.pipeline.graph import topic_selection_node
+
+    sections = _sections([f"TOKEN_{i}" for i in range(6)])
+    provider = AsyncMock()
+    provider.complete_structured.return_value = SimpleNamespace(split_index="three")
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        result = await topic_selection_node(_base_state(sections, tier="T2"))
+
+    assert len(result["sections"]) == 2
+    for topic in result["sections"]:
+        assert topic["body"]
+
+
+@pytest.mark.unit
+def test_midpoint_split_zero_total_body_length_does_not_divide_by_zero() -> None:
+    """The `_topic_selection_midpoint_split` fallback's own zero-total guard
+    (`if total <= 0`) has no test reaching it — every other fallback test uses
+    non-empty TOKEN_i bodies. All-empty bodies must still return a valid,
+    in-range split index, never raise ZeroDivisionError."""
+    from app.modules.content.pipeline.graph import _topic_selection_midpoint_split
+
+    sections = _sections(["", "", "", "", "", ""])
+    split_index = _topic_selection_midpoint_split(sections)
+
+    assert 1 <= split_index <= len(sections) - 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_two_topic_case_all_empty_bodies_via_llm_exception_path() -> None:
+    """Same zero-total-length edge case, exercised end-to-end through
+    topic_selection_node's real degrade path (LLM failure -> midpoint
+    fallback), not just the pure helper in isolation."""
+    from app.modules.content.pipeline.graph import topic_selection_node
+
+    sections = _sections(["", "", "", "", "", ""])
+    provider = AsyncMock()
+    provider.complete_structured.side_effect = RuntimeError("boom")
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        result = await topic_selection_node(_base_state(sections, tier="T2"))
+
+    assert len(result["sections"]) == 2
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_two_topic_llm_prompt_excludes_full_section_bodies() -> None:
+    """AC 6: input to the split LLM call is index + title + a short (~200
+    char) preview only — never full section bodies, never the whole chapter.
+    True only 'by construction' with nothing that previously caught a
+    regression — inspect the actual prompt content sent to the provider."""
+    from app.modules.content.pipeline.graph import topic_selection_node
+
+    long_marker = "FULL_BODY_TAIL_MARKER_MUST_NOT_APPEAR_IN_PROMPT"
+    long_body = ("x" * 500) + long_marker  # tail sits well past any ~200-char preview
+    sections = _sections([long_body for _ in range(6)])
+    provider = AsyncMock()
+    provider.complete_structured.return_value = _split_response(3)
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        await topic_selection_node(_base_state(sections, tier="T2"))
+
+    provider.complete_structured.assert_called_once()
+    messages = provider.complete_structured.call_args.args[0]
+    full_prompt_text = " ".join(m["content"] for m in messages)
+    assert long_marker not in full_prompt_text, (
+        "the LLM prompt included text past the ~200-char preview window — "
+        "AC 6 requires bounded input, never full section bodies"
+    )
+
+
+@pytest.mark.unit
+def test_section_body_max_chars_description_states_the_arithmetic() -> None:
+    """AC 9: the re-derivation's arithmetic must live IN the field's own
+    description, not just the numeric value be in range — a regression that
+    kept the value correct but stripped the justification text would
+    otherwise go uncaught."""
+    from app.config import Settings
+
+    description = Settings.model_fields["section_body_max_chars"].description or ""
+    assert "structure_max_sections" in description
+    assert "TIER_TOPIC_COUNT" in description
+    assert "45,000" in description or "45000" in description

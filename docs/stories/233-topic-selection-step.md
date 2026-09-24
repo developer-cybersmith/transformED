@@ -80,8 +80,9 @@ tier-aware generation) boundary: topic-selection is the first Phase B step, not 
   changes. `slide_generator_node`'s existing duration-proportional `_tier_slide_budget_per_segment`
   logic is untouched — with only 1-2 (much bigger) segments, it will allocate close to its
   existing per-segment MAX (8 slides) to each, an accepted **interim** state (not exactly the
-  mandated 7/10 total) until piece #4 lands. Documented as a known, temporary gap, not silently
-  left unexplained.
+  mandated 7/10 total) until piece #4 lands. Registered as **D188** (`docs/DEFECT-REGISTER.md`)
+  per CLAUDE.md binding rule 5 — a documented limitation is not an accepted one without a
+  `D-nn` ID — not left as an unregistered "known gap."
 - Does not resolve the "auto-selected Scheduler agent vs. explicit user choice" duration-
   selection conflict #233 flags against #230 — not needed here: `tier` already arrives as an
   explicit value from the existing request path (`GenerateLessonRequest.tier`, chosen via
@@ -104,48 +105,48 @@ structures and continuous transcript.
 
 ### Functional
 
-- [ ] **AC 1.** `TIER_TOPIC_COUNT` exists in `apps/api/app/schemas/lesson.py`: `{"T1": 2, "T2": 2, "T3": 1}`.
-- [ ] **AC 2.** `merge_section_range(sections: list[dict]) -> dict` exists in
+- [x] **AC 1.** `TIER_TOPIC_COUNT` exists in `apps/api/app/schemas/lesson.py`: `{"T1": 2, "T2": 2, "T3": 1}`.
+- [x] **AC 2.** `merge_section_range(sections: list[dict]) -> dict` exists in
   `structure_detection.py`, built on `_merge_two` via a left-fold over an arbitrary-length
   list. Text-preserving (every original title + body appears in the merged body), keeps the
   first section's title, the coarsest `level` among inputs, and the union of all page ranges —
   identical contract to `_merge_two`/`coalesce_sections`'s existing behavior, not new rules.
-- [ ] **AC 3.** New `topic_selection_node(state) -> state` in `graph.py`, registered in
+- [x] **AC 3.** New `topic_selection_node(state) -> state` in `graph.py`, registered in
   `_build_pipeline_graph()` between `embed` and the existing Phase-1 fan-out entry point
   (`embed → topic_selection → <fan-out>`, was `embed → <fan-out>` directly).
-- [ ] **AC 4.** When `len(state["sections"]) <= TIER_TOPIC_COUNT[tier]`: no-op — `sections`
+- [x] **AC 4.** When `len(state["sections"]) <= TIER_TOPIC_COUNT[tier]`: no-op — `sections`
   passes through unchanged (never fabricates a 2nd topic from insufficient material).
-- [ ] **AC 5.** 1-topic case (T3): all sections merged into one via `merge_section_range`, zero
+- [x] **AC 5.** 1-topic case (T3): all sections merged into one via `merge_section_range`, zero
   LLM calls.
-- [ ] **AC 6.** 2-topic case (T1/T2): one `settings.llm_mini` structured-output call, input is
+- [x] **AC 6.** 2-topic case (T1/T2): one `settings.llm_mini` structured-output call, input is
   section index + title + a short body preview only (never full section bodies, never the
   whole chapter) — asking for a single `split_index: int`. Guard: response must be a valid
   index in `[1, len(sections)-1]`; any invalid value, missing/None response, or exception
   degrades to a deterministic midpoint-by-cumulative-body-length split — never raises.
-- [ ] **AC 7.** `state["sections"]` is overwritten (same key) with the resulting topic dicts,
+- [x] **AC 7.** `state["sections"]` is overwritten (same key) with the resulting topic dicts,
   each shaped identically to a normal section dict (`title`, `body`, `level`, `page_start`,
   `page_end`) — verified by confirming the existing Phase-1 fan-out and `_derive_section_id`
   require zero code changes to keep working.
-- [ ] **AC 8.** An explicit, admin-visible checkpoint record is written
+- [x] **AC 8.** An explicit, admin-visible checkpoint record is written
   (`node_outputs["topic_selection"]`, or a sibling key) naming which original section
   indices/titles folded into which resulting topic — always present, including the AC-4 no-op
   case (recording "no collapse needed").
-- [ ] **AC 9.** `settings.section_body_max_chars`'s default is re-derived (raised) with the
+- [x] **AC 9.** `settings.section_body_max_chars`'s default is re-derived (raised) with the
   arithmetic justification written into the field's own `description=`, per Scale & Load Q5
   below — not left at its old per-small-section value.
-- [ ] **AC 10.** Idempotent: a second invocation with `node_outputs["topic_selection"]` already
+- [x] **AC 10.** Idempotent: a second invocation with `node_outputs["topic_selection"]` already
   present returns the cached result, no LLM call, matching `structure_node`/`chunk_node`'s
   existing Phase-A-style plain-checkpoint pattern (no atomic RPC needed — single sequential
   node, not Send()-fanned-out).
-- [ ] **AC 11.** `chunk_node`/`embed_node` are verified unaffected — they still run on the
+- [x] **AC 11.** `chunk_node`/`embed_node` are verified unaffected — they still run on the
   full, un-collapsed section list, preserving per-chapter (not per-tier) chunk/embedding reuse
   exactly as today.
-- [ ] **AC 12.** Guard-test survey (CLAUDE.md's "before touching any module" rule) performed
+- [x] **AC 12.** Guard-test survey (CLAUDE.md's "before touching any module" rule) performed
   and listed in the Dev Agent Record before any edit; every hit either covered by the ACs above
   or explicitly noted as unaffected-and-verified.
-- [ ] **AC 13.** Full repo-wide regression (`tests/unit` + `tests/integration -m "not
+- [x] **AC 13.** Full repo-wide regression (`tests/unit` + `tests/integration -m "not
   postgres"`) shows zero new failures vs. `main`.
-- [ ] **AC 14.** `ruff check .`, `ruff format --check`, and `mypy app` (repo-wide) show zero
+- [x] **AC 14.** `ruff check .`, `ruff format --check`, and `mypy app` (repo-wide) show zero
   new issues vs. `main`.
 
 ## Scale & Load
@@ -153,28 +154,40 @@ structures and continuous transcript.
 *(`docs/SCALE-CONTRACT.md` — six questions, contract-mandated on every story)*
 
 1. **Unit of work, and its range.** One unit is one topic-selection pass over one chapter's
-   already-structure-detected section list — input range 1 to `structure_max_sections` (60)
-   sections (that cap is enforced upstream, unchanged by this story); output is always exactly
-   1 or 2 topics (or fewer, in the AC-4 no-op case). The 2-topic LLM call's own input is
-   bounded independently of section body size (index + title + ~200-char preview per section,
-   never full bodies) — so even at the 60-section ceiling, the split-decision call's cost is
-   small and roughly constant, not proportional to chapter size.
+   already-structure-detected section list — input range 1 to `structure_max_sections` (**15**,
+   `apps/api/app/config.py` — that cap is enforced upstream, unchanged by this story); output is
+   always exactly 1 or 2 topics (or fewer, in the AC-4 no-op case). The 2-topic LLM call's own
+   input is bounded independently of section body size (index + title + ~200-char preview per
+   section, never full bodies) — so even at the 15-section ceiling, the split-decision call's
+   cost is small and roughly constant, not proportional to chapter size.
 2. **Fixed budgets vs. variable input.** Two: (a) `TIER_TOPIC_COUNT`'s output (1 or 2) is a
    hard structural target, not a soft guideline — the AC-4 no-op guard is the explicit,
    surfaced behavior when the chapter has fewer sections than the target (never fabricated).
    (b) `section_body_max_chars` — the fixed budget that meets a now-much-larger variable input
    (a merged topic body vs. one small section). **This is the real substance of this story's
-   Scale & Load answer, not an N/A**: re-derived from 6,000 to a new default computed as
-   `old_value × (structure_max_sections / target_topic_count)` — worst case ×15 (1-topic) or
-   ×7.5 (2-topic) — landing in the 40,000-45,000 range. Documented as a first-cut, reasoned
-   estimate (not claimed final) in the field's own description, matching this codebase's
+   Scale & Load answer, not an N/A**, and — corrected after the 6-layer review round below —
+   the arithmetic does **not** land both cases in a safe range the way an earlier draft of this
+   section implied: re-derived from 6,000 to a new default of 45,000, computed as
+   `old_value × (structure_max_sections / target_topic_count)`. For the **2-topic** case
+   (T1/T2) that's ×7.5 = exactly 45,000 — the shipped default covers this case's worst case
+   precisely. For the **1-topic** case (T3, `TIER_TOPIC_COUNT["T3"] = 1`) the same formula is
+   ×15 = 90,000 — the shipped 45,000 default does **not** cover this. Because T3's target is
+   literally 1 topic, its worst case isn't an edge case: `merge_section_range` folds the ENTIRE
+   chapter into one section, and this file's own `structure_node` comment records real measured
+   chapter sizes as "30,000-100,000" characters — so a fully ordinary T3 chapter in the upper
+   half of that documented range gets truncated at every Phase-1/planner/narration call site
+   that reads `_get_section_body(max_chars=section_body_max_chars)`. This is registered as
+   **D185**'s residual gap (updated by this story — its own stated trigger, "alongside any
+   re-derivation of `section_body_max_chars`," fired here) rather than silently accepted: the
+   existing truncation-surfacing machinery (`section_truncations`, `source_was_truncated` in
+   `lesson_planner_node`'s duration report) already distinguishes "genuinely short content" from
+   "our own cap was the real limit," so the degradation is explicit and persisted — but D185
+   itself notes that signal currently reaches no admin-visible consumer, so in practice it is
+   closer to *recorded* than *loudly surfaced* today. 45,000 is shipped as a first-cut,
+   documented-honest estimate (see the field's own `description=`), matching this codebase's
    established pattern of shipping a computed number and empirically re-tuning later (e.g. the
-   narration char cap's own D76→D78 history: 10,000 → 17,000 → 120,000 as real data came in).
-   The existing truncation-surfacing machinery (`section_truncations`, `source_was_truncated`
-   in `lesson_planner_node`'s duration report) already distinguishes "genuinely short content"
-   from "our own cap was the real limit" — confirmed via a direct code comment already
-   anticipating exactly this risk class for coalesced sections — so no new surfacing code is
-   needed, only the cap value itself.
+   narration char cap's own D76→D78 history: 10,000 → 17,000 → 120,000 as real data came in) —
+   not a claim that no T3 chapter is ever truncated.
 3. **Scope of every limit.** Per-lesson-generation-run (i.e., per pipeline invocation, keyed by
    `lesson_id`) — `TIER_TOPIC_COUNT` and `section_body_max_chars` are both global settings, not
    shared mutable state across concurrent lessons; no cross-lesson interaction.
@@ -228,8 +241,8 @@ arithmetic shown, not left as a latent, undocumented risk.
 - [x] 5.2 Full regression run, ruff/format/mypy (AC 13, 14).
 
 ### Task 6 — Review
-- [ ] 6.1 Parallel adversarial agent review (all 6 CLAUDE.md layers), same approach used for
-  issue #236's PR #237.
+- [x] 6.1 Parallel adversarial agent review (all 6 CLAUDE.md layers), same approach used for
+  issue #236's PR #237 — see "Senior Developer Review — Round 1" in the Dev Agent Record.
 
 ### Task 7 — Commit
 - [x] 7.1 Story-first commit (this file alone) — `1f43589`, pushed.
@@ -313,17 +326,94 @@ All 14 ACs implemented and verified:
 - Not yet done: Task 6 (6-layer adversarial review) and Task 7.2/7.3 (implementation
   commit, dev1-tracker entry) — next steps.
 
+### Senior Developer Review — Round 1 (2026-09-25, 6 parallel agents, all 6 CLAUDE.md layers)
+
+Full independent review against the actual diff (`git show d38d884`), not against this story's
+own prose. **7 real findings, all fixed in this same round; 0 rejected as false positives.**
+
+1. **[Test Coverage, confirmed] Real bug in `_merge_two`/`merge_section_range`**: `a.get("body", "")`
+   only substitutes when the key is ABSENT, not when it's explicitly `None` — an upstream section
+   with `body: None` left `merged_body`/the single-section passthrough as the Python `None` value,
+   not `""`, which would crash the next `.strip()` call downstream. Not reachable via the real
+   pipeline today (`structure_node` never produces `body: None`), but a genuine contract gap in a
+   function meant to be reusable. **Fixed**: both `_merge_two` and `merge_section_range`'s
+   single-input passthrough now use `.get("body") or ""`. New test:
+   `test_merge_two_none_body_on_first_section_never_leaks_none`.
+2. **[Blind Hunter, confirmed] New LLM call bypassed the cost-ceiling gate** — every other paid
+   call site in this file (`lesson_planner_node`, `slide_generator_node`,
+   `narration_generator_node`) checks `check_ceiling()` before spending; `_topic_selection_llm_split`
+   didn't. **Fixed**: added the same guarded `check_ceiling()`/fail-open pattern, degrading to the
+   free deterministic split when over budget. New tests:
+   `test_cost_ceiling_reached_skips_llm_call_falls_back_to_midpoint`,
+   `test_check_ceiling_failure_fails_open_and_calls_llm`.
+3. **[AC Completeness + Test Coverage, confirmed] AC 6's "bounded input" claim had no test** —
+   true only "by construction," nothing would fail if a future edit passed full section bodies to
+   the LLM. **Fixed**: `test_two_topic_llm_prompt_excludes_full_section_bodies` inspects the actual
+   prompt content sent to the mocked provider.
+4. **[AC Completeness, confirmed] AC 9's "arithmetic in the description" claim had no test** — only
+   the numeric range was asserted. **Fixed**: `test_section_body_max_chars_description_states_the_arithmetic`.
+5. **[Test Coverage, confirmed] Two degrade-not-fabricate paths were unexercised**: a missing/
+   non-integer `split_index` (only real `int` values were ever tested, since the real
+   `_StructureTopicSplitLLM` Pydantic model can't construct an invalid one) and the zero-total-
+   body-length fallback branch (divide-by-zero guard in `_topic_selection_midpoint_split`). **Fixed**:
+   4 new tests using a bare `SimpleNamespace` response and all-empty-body sections.
+6. **[Story Quality, confirmed] Scale & Load Q1 had a factual error** — said
+   `structure_max_sections` is 60 (that's actually `_MAX_PHASE1_SECTIONS`, a different constant);
+   the real value is 15. **Fixed**: corrected in the story's own Q1/Q2 text.
+7. **[Story Quality + Scale & Load, confirmed — most severe finding, documentation not code]**
+   The story's Q2 arithmetic implied both the 1-topic and 2-topic re-derivation multipliers landed
+   safely in "40,000-45,000" — false: ×15 (1-topic/T3) = 90,000, only ×7.5 (2-topic/T1,T2) = 45,000.
+   Scale & Load's independent re-derivation went further: T3's worst case isn't an edge case — it's
+   the WHOLE CHAPTER (target=1 topic), and this file's own `structure_node` comment records real
+   chapter sizes as 30,000-100,000 chars, so an ordinary T3 chapter in the upper half of that
+   documented range is truncated at every Phase-1/planner/narration call site. **Fixed**: story's
+   Q2 rewritten to state this honestly; **D185** (`docs/DEFECT-REGISTER.md`) updated — its own
+   stated trigger ("alongside any re-derivation of `section_body_max_chars`") fired here — noting
+   the residual T3 gap and that `source_was_truncated`/`section_truncations` reach no admin-visible
+   consumer today (a pre-existing gap from Story 3-39, not introduced by this story, but one this
+   story's own review made newly relevant). Not fixed in code: raising the cap further would need
+   real usage data to justify (matching this codebase's own established re-tune-empirically
+   pattern, e.g. D76→D78's narration-cap history) — 45,000 ships as an honest first-cut, not a
+   final number.
+
+**Also fixed, minor**: AC checkboxes flipped to `[x]` (were never checked despite Completion Notes
+claiming done); `_build_pipeline_graph()`'s "Register all 16 nodes" comment corrected to 17,
+matching the module docstring header; **D188** added for the pre-existing "What this story does
+NOT do" slide-budget interim gap, which CLAUDE.md binding rule 5 requires a `D-nn` ID for and
+didn't have one.
+
+**Findings reviewed and accepted as-is, not fixed** (with reasoning, not silently dropped):
+- Non-atomic checkpoint read-then-write (Blind Hunter) — confirmed structurally identical to
+  `structure_node`/`chunk_node`'s own already-accepted pattern (Process Integrity independently
+  verified this by reading both directly), not a new risk this story introduces.
+- Checkpoint-write test asserts only on its own constructed mock, no `# MOCK-CONTRACT:` tag
+  (Test Coverage) — confirmed this is a pre-existing, repo-wide gap (zero `MOCK-CONTRACT` tags
+  anywhere near any node's checkpoint tests, including `structure_node`'s own); fixing it broadly
+  across ~12 node functions is out of scope for this story.
+- AC 12 (guard-test survey "before any edit") can't be verified from commit history alone, since
+  the survey record and the implementation share commit `d38d884` (AC Completeness) — the survey
+  was genuinely done first in the actual working process; the commit structure just doesn't split
+  it out. Not re-structured retroactively.
+
+**Post-fix regression**: 1,660+ unit tests (9 new since the review round: 1 in
+`test_coalesce_sections.py`, 8 in `test_topic_selection_node.py`) + 20 integration tests passing,
+1 pre-existing unrelated failure. `ruff check`/`ruff format --check`: clean. `mypy app`: clean on
+every file this story touches.
+
 ### File List
 - `apps/api/app/config.py` — `section_body_max_chars` default + description re-derived.
 - `apps/api/app/schemas/lesson.py` — new `TIER_TOPIC_COUNT`.
 - `apps/api/app/modules/content/pipeline/nodes/structure_detection.py` — new
-  `merge_section_range`.
+  `merge_section_range`; review-round fix for `_merge_two`'s `None`-body handling.
 - `apps/api/app/modules/content/pipeline/graph.py` — new `topic_selection_node`,
   `_StructureTopicSplitLLM`, `_topic_selection_llm_split`,
   `_topic_selection_midpoint_split`; `_build_pipeline_graph()` rewired; module docstring
-  updated.
-- `apps/api/tests/unit/test_topic_selection_node.py` — new file, 12 tests.
-- `apps/api/tests/unit/test_coalesce_sections.py` — 6 new `merge_section_range` tests.
+  updated (17 nodes); review-round fix adding a `check_ceiling()` guard to the split LLM call.
+- `apps/api/tests/unit/test_topic_selection_node.py` — new file, 20 tests (12 from
+  implementation + 8 added in the review round: check-ceiling guard ×2, missing/non-int
+  split_index ×2, zero-total-body fallback ×2, bounded-prompt-content, description-arithmetic).
+- `apps/api/tests/unit/test_coalesce_sections.py` — 7 new `merge_section_range`/`_merge_two`
+  tests (6 from implementation + 1 review-round None-body test).
 - `apps/api/tests/unit/test_s5_4_duration_wiring.py` — 1 test's hardcoded bound made
   dynamic (regression fix #1 above).
 - `apps/api/tests/unit/test_phase1_economy_nodes.py` — `topic_selection_node` added to a
@@ -333,8 +423,14 @@ All 14 ACs implemented and verified:
 - `apps/api/tests/integration/test_howto_pipeline_e2e.py` — new
   `_StructureTopicSplitLLM` mock case, new shared `_QUIZ_FAKE_BATCH_SIZE` constant
   (regression fix #4 above), one stale comment corrected.
+- `docs/DEFECT-REGISTER.md` — `D185` updated (its own trigger fired); new `D188`.
 
 ### Change Log
 - 2026-09-24: Story file created (story-first commit), branch `feature/233-topic-selection-step`.
 - 2026-09-25: Implementation complete (Tasks 1-5) — see Dev Agent Record above. Full
-  regression green. Task 6 (adversarial review) and Task 7.2/7.3 next.
+  regression green.
+- 2026-09-25: 6-layer adversarial review round 1 complete — 7 real findings, all fixed
+  (2 real code bugs, 2 test-coverage gaps, 1 missing cost-ceiling guard, 2 story-doc accuracy
+  issues incl. one requiring a Defect Register update); 3 findings reviewed and accepted as-is
+  with reasoning. See "Senior Developer Review — Round 1" in the Dev Agent Record. Remaining:
+  Task 7.2 (implementation-fix commit) and pushing the branch.

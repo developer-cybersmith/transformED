@@ -338,3 +338,50 @@ def test_merge_section_range_empty_list_raises() -> None:
 
     with pytest.raises(ValueError, match="non-empty"):
         merge_section_range([])
+
+
+@pytest.mark.unit
+def test_merge_two_none_body_on_first_section_never_leaks_none() -> None:
+    """Review finding (Story 233 round): `.get("body", "")` only substitutes
+    when the key is ABSENT, not when it's explicitly None — an upstream
+    section with `body: None` must still produce a string, never the Python
+    `None` value (which would crash the next `.strip()` call downstream)."""
+    from app.modules.content.pipeline.nodes.structure_detection import (
+        _merge_two,
+        merge_section_range,
+    )
+
+    a = {"id": "s0", "title": "A", "level": "topic", "body": None, "page_start": 1, "page_end": 1}
+    b = {
+        "id": "s1",
+        "title": "B",
+        "level": "topic",
+        "body": "real text",
+        "page_start": 2,
+        "page_end": 2,
+    }
+    merged = _merge_two(a, b)
+    assert merged["body"] == "B\nreal text"
+    assert "None" not in merged["body"]
+
+    # Both bodies falsy (None/blank) — no fold occurs, so `merged_body` never
+    # gets reassigned past the initial `a.get("body") or ""` — this is the
+    # exact path that used to return the Python None value.
+    a_blank = {
+        "id": "s0",
+        "title": "A",
+        "level": "topic",
+        "body": None,
+        "page_start": 1,
+        "page_end": 1,
+    }
+    b_blank = {
+        "id": "s1",
+        "title": "",
+        "level": "topic",
+        "body": None,
+        "page_start": 2,
+        "page_end": 2,
+    }
+    assert _merge_two(a_blank, b_blank)["body"] == ""
+    assert merge_section_range([a_blank])["body"] == ""
