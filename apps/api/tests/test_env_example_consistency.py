@@ -177,3 +177,37 @@ def test_max_daily_spend_per_user_usd_has_a_real_reader_or_does_not_exist() -> N
         "real spend control. Either implement enforcement (a reader must appear "
         "outside config.py) or delete the field entirely."
     )
+
+
+@pytest.mark.unit
+def test_env_example_has_tts_chain_vars_and_no_stale_elevenlabs() -> None:
+    """Story 232 AC 9 (review finding — no test previously asserted this AC's
+    specific claim, only human inspection). `.env.example` must document all
+    three TTS fallback-chain tiers (this story's pre-existing, unrelated gap
+    fix: Sarvam/Azure vars were entirely missing before) and must NOT still
+    list the stale ELEVENLABS_API_KEY/ELEVENLABS_VOICE_ID entries — ElevenLabs
+    was removed from the chain (CLAUDE.md) and `config.py`'s own field
+    description calls it "deprecated, replaced by Sarvam"."""
+    env_pairs = _parse_env_example()
+
+    required_keys = {
+        "SIXTYDB_API_KEY",
+        "SIXTYDB_VOICE_ID",
+        "SIXTYDB_MODEL",
+        "SIXTYDB_SPEED",
+        "SIXTYDB_ENHANCE",
+        "SARVAM_API_KEY",
+        "SARVAM_VOICE_ID",
+        "SARVAM_NARRATION_PACE",
+        "AZURE_TTS_KEY",
+        "AZURE_TTS_REGION",
+        "AZURE_TTS_VOICE",
+    }
+    missing = required_keys - env_pairs.keys()
+    assert not missing, f".env.example is missing TTS-chain keys: {sorted(missing)}"
+
+    stale_keys = {"ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"} & env_pairs.keys()
+    assert not stale_keys, (
+        f".env.example still lists stale ElevenLabs keys: {sorted(stale_keys)} — "
+        "ElevenLabs was removed from the TTS chain (CLAUDE.md)"
+    )

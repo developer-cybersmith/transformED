@@ -4153,7 +4153,8 @@ _SAFE_SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 async def _synthesize_with_fallback(
     lesson_id: str, segment_id: str, text: str
 ) -> tuple[bytes | None, str, float]:
-    """Try Sarvam, then Azure, then Browser — never raises (Story 2-8 AC-2).
+    """Try 60db, then Sarvam, then Azure, then Browser — never raises
+    (Story 2-8 AC-2; 60db tier added by Story 232).
 
     Returns (audio_bytes_or_None, audio_provider, cost_usd). audio_bytes is
     None for the browser-fallback case (no server-side audio produced).
@@ -4161,8 +4162,107 @@ async def _synthesize_with_fallback(
     from app.config import get_settings
     from app.providers.tts.sarvam import COST_PER_CHAR as _SARVAM_COST_PER_CHAR
     from app.providers.tts.sarvam import SarvamTTSProvider
+    from app.providers.tts.sixtydb import COST_PER_CHAR as _SIXTYDB_COST_PER_CHAR
+    from app.providers.tts.sixtydb import (
+        SixtyDbNotConfiguredError,
+        SixtyDbPartialSpendError,
+        SixtyDbTTSProvider,
+    )
 
     settings = get_settings()
+
+    try:
+        # Review finding (considered, not changed): `or ""` here plus
+        # synthesize()'s own internal `voice_id or self._voice_id_default`
+        # fallback is a harmless double-indirection, not a bug — both read
+        # the same settings.sixtydb_voice_id and land on the same value.
+        # Left as `or ""` (not `settings.sixtydb_voice_id` directly) because
+        # the ABC's synthesize(text: str, voice_id: str) is non-Optional;
+        # passing the raw `str | None` would be a real mypy violation.
+        #
+        # PR #240 follow-up review finding (simplification): synthesize()
+        # structurally cannot return falsy audio_bytes without raising first
+        # — _post_chunk raises on zero parsed PCM pieces, and
+        # _wrap_pcm_as_wav always writes a full WAV header even in edge
+        # cases. The old `if audio_bytes: return ... else: log+fall
+        # through` shape (mirroring Sarvam/Azure below, which genuinely CAN
+        # return falsy audio) was therefore dead code for this provider
+        # specifically — removed to avoid a future reader mistaking it for
+        # a live degrade path.
+        audio_bytes, _ = await SixtyDbTTSProvider(lesson_id).synthesize(
+            text, settings.sixtydb_voice_id or ""
+        )
+        return audio_bytes, "sixtydb", len(text) * _SIXTYDB_COST_PER_CHAR
+    except SixtyDbNotConfiguredError:
+        # PR #240 review finding (real bug, fixed): this used to catch bare
+        # `ValueError`, but `json.JSONDecodeError` and `binascii.Error` --
+        # both raised deep inside `_post_chunk` for a genuinely CORRUPTED
+        # live response -- are themselves real ValueError subclasses. That
+        # meant a live provider-corruption bug would ALSO match this branch
+        # and get silently mislabeled as "not configured" at DEBUG (no
+        # traceback), hiding a real, actionable bug. Catching this specific
+        # subclass instead means only the three deliberate config/caller-bug
+        # raise sites in synthesize() ever land here; a corrupted response
+        # now correctly falls through to the `except Exception` branch below
+        # (WARNING + traceback), matching what actually happened.
+        #
+        # "not configured" (missing sixtydb_api_key/sixtydb_voice_id, or a
+        # caller passing empty text) is a deliberate, common deployment
+        # state. Before the ORIGINAL fix (this docstring's prior version),
+        # it fell into the except-Exception branch and logged a WARNING with
+        # a full traceback on EVERY narration segment, in EVERY deployment
+        # that hasn't yet set SIXTYDB_* -- i.e. every deployment today --
+        # contradicting this PR's own "degrades to today's exact behavior"
+        # framing. Logged quietly instead.
+        logger.debug(
+            "[%s] tts_node: 60db not configured for segment %s, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+        )
+    except SixtyDbPartialSpendError as exc:
+        # Human reviewer finding, PR #240 (Developer-2-max, real bug, fixed):
+        # at least one chunk of this segment already succeeded against 60db
+        # (and, per its wallet-credit billing, was already paid for) before
+        # a later chunk failed permanently. Without this, that real spend
+        # was never recorded anywhere — _synthesize_with_fallback falls
+        # through to Sarvam, whose cost is the only one ever accumulated
+        # against the $3.00/lesson ceiling, silently dropping 60db's actual
+        # wallet spend. Record it now, before falling through.
+        from app.core.cost_tracker import accumulate_cost, check_ceiling
+
+        logger.warning(
+            "[%s] tts_node: 60db synthesis failed for segment %s after partial spend "
+            "($%.6f already incurred) — recording it, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+            exc.partial_cost_usd,
+            exc_info=True,
+        )
+        await accumulate_cost(lesson_id, exc.partial_cost_usd)
+        # PR #240 follow-up review finding (real bug, fixed): tts_node's own
+        # per-segment loop only checks check_ceiling() ONCE, before this
+        # function is called at all. Recording the partial spend above can
+        # itself push the lesson over the $3.00 ceiling, and falling through
+        # to try Sarvam unconditionally meant a single segment could
+        # accumulate TWO real provider costs between ceiling checks — more
+        # than the pre-#232 (Sarvam/Azure-only, all-or-nothing-cost) design
+        # ever allowed for one segment. Re-check immediately after recording,
+        # mirroring tts_node's own per-segment pre-check pattern.
+        if await check_ceiling(lesson_id):
+            logger.warning(
+                "[%s] tts_node: cost ceiling reached after 60db partial spend for "
+                "segment %s — skipping remaining paid providers (browser fallback)",
+                lesson_id,
+                segment_id,
+            )
+            return None, "browser", 0.0
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] tts_node: 60db synthesis failed for segment %s, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+            exc_info=True,
+        )
 
     try:
         audio_bytes, _ = await SarvamTTSProvider(lesson_id).synthesize(
@@ -4668,7 +4768,11 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
 @traced_node("tts_node")
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
-    Sarvam -> Azure -> Browser Speech fallback chain.
+    60db -> Sarvam -> Azure -> Browser Speech fallback chain (60db tier
+    added by Story 232 — human reviewer finding, PR #240: this docstring had
+    gone stale when that tier was added, even though
+    `_synthesize_with_fallback`'s own docstring immediately above its
+    definition was correctly updated at the same time).
 
     Input is `state["narration_scripts_final"]` ONLY (AC-1; renamed from
     `narration_scripts` by issue #236 — see `narration_stitch_node`, which now
@@ -4812,7 +4916,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 # Story 2-13/S2-13 AC-3: proactive per-segment cost-ceiling
                 # pre-check, mirroring image_generator_node's existing
                 # pattern (Story 2-9 AC-3) — skip straight to the free
-                # browser fallback rather than attempting Sarvam/Azure.
+                # browser fallback rather than attempting 60db/Sarvam/Azure.
                 elif await check_ceiling(lesson_id):
                     logger.warning(
                         "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
@@ -4822,8 +4926,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     )
                     audio_bytes, audio_provider, cost = None, "browser", 0.0
                     if not downshift_recorded:
+                        # Story 232: 60db is now the first paid tier tried —
+                        # this label must name every tier being skipped, not
+                        # just the two that predate it (review finding).
                         node_outputs = _record_cost_downshift(
-                            node_outputs, "tts_node", "sarvam/azure", "browser"
+                            node_outputs, "tts_node", "sixtydb/sarvam/azure", "browser"
                         )
                         downshift_recorded = True
                 else:

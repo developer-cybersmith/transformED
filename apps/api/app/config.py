@@ -64,8 +64,11 @@ class Settings(BaseSettings):
     )
 
     # ── TTS providers ─────────────────────────────────────────────────────────
-    # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
-    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v3 API key — primary TTS")
+    # Fallback chain: 60db → Sarvam → Azure → Browser Speech (PRD §14; 60db
+    # tier added by Story 232 — see sixtydb_* settings below).
+    sarvam_api_key: str = Field(
+        ..., description="Sarvam AI Bulbul v3 API key — fallback #1 TTS (was primary before 60db)"
+    )
     sarvam_voice_id: str = Field(
         # D67 (historical): "meera" is not a valid Bulbul v2 speaker --
         # confirmed via a real, live call to api.sarvam.ai. "anushka" was
@@ -112,6 +115,35 @@ class Settings(BaseSettings):
     )
     elevenlabs_api_key: str | None = Field(
         default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam"
+    )
+
+    # ── 60db.ai (Story 232) ──────────────────────────────────────────────────
+    # New PRIMARY tier ahead of Sarvam: 60db -> Sarvam -> Azure -> Browser.
+    # Optional (unlike sarvam_api_key) so a deployment with no 60db key
+    # configured degrades to today's exact behavior — the provider raises a
+    # clear ValueError, caught by _synthesize_with_fallback's existing
+    # except-and-fall-through, same as an Azure auth failure does today.
+    sixtydb_api_key: str | None = Field(
+        default=None, description="60db.ai API key — new primary TTS tier"
+    )
+    sixtydb_voice_id: str | None = Field(
+        default=None,
+        description=(
+            "60db.ai voice id (from GET /voices) — no universal default exists "
+            "(unlike sarvam_voice_id/azure_tts_voice); must be set per deployment."
+        ),
+    )
+    sixtydb_model: str = Field(
+        default="60db-quality", description="60db.ai model tier for narration synthesis"
+    )
+    sixtydb_speed: float = Field(
+        default=1.0,
+        ge=0.5,
+        le=2.0,
+        description="60db.ai `speed` parameter for narration synthesis (0.5-2.0)",
+    )
+    sixtydb_enhance: bool = Field(
+        default=True, description="60db.ai `enhance` post-processing flag"
     )
 
     # ── Langfuse ──────────────────────────────────────────────────────────────
