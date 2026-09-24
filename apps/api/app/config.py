@@ -753,6 +753,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Caption lines (Story 4-29, BR-6) ──────────────────────────────────────
+    caption_max_chars_per_line: int = Field(
+        default=120,
+        gt=0,
+        description=(
+            "Maximum characters per caption line before a sentence is sub-split "
+            "at the last word boundary within the limit (package_builder's "
+            "_split_into_caption_lines)."
+        ),
+    )
+
     # ── Embeddings (Node 4) ───────────────────────────────────────────────────
     embedding_model: str = Field(
         default="text-embedding-3-small",

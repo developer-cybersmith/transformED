@@ -3,7 +3,7 @@
 **Owner:** Dev 4 · developerteam3@cybersmithsecure.com
 **Domain:** WebSocket handlers · JWT middleware · 7-state LangGraph tutor · Redis signal buffer · Interventions · Learner module
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-07 (BR-6 added — caption_lines schema + pipeline estimation, code done, awaiting 4-dev frozen-contract PR review; Phase 2 P2-1 also done — Tutor Q&A real backend, D158, closing D149)
+**Last updated:** 2026-09-22 (BR-6: PR #219 merged 2026-09-08, but a post-merge Dev 1 review found 3 real defects — dead `caption_max_chars_per_line` config, silent mid-word truncation, possible zero-width caption windows — all fixed in follow-up PR #242, still awaiting review; task stays Partial until that lands) — previously 2026-09-07 (BR-6 added — caption_lines schema + pipeline estimation, code done, awaiting 4-dev frozen-contract PR review; Phase 2 P2-1 also done — Tutor Q&A real backend, D158, closing D149)
 **Overall status:** 37/49 Completed · 7 Partial · 6 Not Started (37 = 36 from the dashboard's 49 in-table tasks + Phase 2's P2-1, which is intentionally out-of-table per its own section note above)
 **Sprint 1 deadline:** 2026-06-27 — 2 partial tasks remain (arq_lesson_ready cross-process fix, idle_to_teaching WS wiring)
 **Auto-check script:** `scripts/check_dev4_progress.py` — run to auto-update this file (flips Not Started↔Completed by code presence; preserves human-set Partial)
@@ -786,7 +786,7 @@ MAX_DISTRACTION_PER_SESSION=3
   - **AC:** TBD in story file.
 
 <!-- CHECK:br6_caption_lines_schema_pipeline -->
-- [Partial] **`caption_lines` schema + server-side line-level timestamp estimation** ⚠️ PARTIAL — code merged to branch, awaiting 4-dev frozen-contract PR review before `[Completed]` ✅ 2026-09-07
+- [Partial] **`caption_lines` schema + server-side line-level timestamp estimation** ⚠️ PARTIAL — PR #219 merged to `main` 2026-09-08; a post-merge review then surfaced 3 real defects, fixed in a follow-up PR — not `[Completed]` until that follow-up lands ✅ 2026-09-07 (PR merge), updated 2026-09-22 (review follow-up)
   - Picked up opportunistically — prerequisite for BR-1 (WS caption-cue delivery) and karaoke-style
     slide-text highlight. Dev 1 approved Dev 4 taking the pipeline work (2026-09-07). Dev 2 confirmed
     line-level is sufficient (no word-level needed) and validated the schema shape.
@@ -796,6 +796,15 @@ MAX_DISTRACTION_PER_SESSION=3
     `package_builder_node` alongside `_estimate_slide_timestamps`.
   - 13 unit tests in `apps/api/tests/test_caption_lines.py` (AC6a–AC6f); 1 pre-existing test
     updated (`test_audio_duration_s3_38`) to reflect new Narration key set.
+  - **2026-09-22 update:** Dev 1 filed a `CHANGES_REQUESTED` review on PR #219 the day *after* it had
+    already merged (AC8's "4-dev review is the merge gate" was not actually satisfied before merge) —
+    3 confirmed defects: `CAPTION_MAX_CHARS_PER_LINE` was dead config (`getattr` fallback, no matching
+    `Settings` field), a mid-word hard-cut truncation was completely silent (CLAUDE.md's
+    silent-truncation rule), and proportional-rounding could produce a zero-width caption window
+    (`start_ms == end_ms`, unreachable by the karaoke-highlight consumer this schema exists to
+    unblock). All 3 fixed in PR #242 (`fix/4-29-br6-caption-lines-review-followup`), plus a cheap
+    finiteness guard matching `_estimate_slide_timestamps`'s existing precedent. 5 new tests
+    (16 total, up from 13). AC8 remains open until PR #242 itself is reviewed/merged.
   - Story: `docs/stories/4-29-caption-lines-schema-pipeline.md`
   - **AC:** AC1–AC8. AC8 (4-dev PR review) is the merge gate — not complete until signed off.
 

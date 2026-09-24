@@ -6023,6 +6023,8 @@ def _split_into_caption_lines(
     duration_ms: float | None,
     *,
     max_chars_per_line: int = 120,
+    lesson_id: str | None = None,
+    segment_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Split a narration script into timed caption lines.
 
@@ -6032,14 +6034,18 @@ def _split_into_caption_lines(
     Duration is distributed proportionally by character count: a longer
     line gets a proportionally longer window. The last line's ``end_ms``
     is always exactly ``round(duration_ms)`` — the remainder is assigned
-    there so no rounding gap exists.
+    there so no rounding gap exists (unless ``duration_ms`` is so small
+    relative to the line count that the ≥1ms-per-line floor below expands it).
 
     Returns ``[]`` in two cases:
-    * ``duration_ms`` is ``None`` — browser-fallback path or tinytag failure.
-      Estimation without a real audio anchor produces consistently wrong
-      captions; explicit empty is the correct degraded output. The frontend
-      should render static (un-timed) captions when ``caption_lines`` is
-      empty.
+    * ``duration_ms`` is ``None`` or non-finite — browser-fallback path,
+      tinytag failure, or a schema-drifted checkpoint value. Estimation
+      without a real audio anchor produces consistently wrong captions;
+      explicit empty is the correct degraded output. The frontend should
+      render static (un-timed) captions when ``caption_lines`` is empty.
+      (In practice the one real caller already filters non-finite values to
+      ``None`` before calling; this is defence-in-depth for other callers,
+      matching ``_estimate_slide_timestamps``'s identical guard.)
     * ``script`` is empty or whitespace-only.
 
     Splitting rules:
@@ -6048,7 +6054,13 @@ def _split_into_caption_lines(
        the last word boundary (space) within the limit. If no space exists
        within the limit (a single word longer than the cap — extremely rare
        in educational narration), a hard character cut is made at
-       ``max_chars_per_line``.
+       ``max_chars_per_line`` and logged (``lesson_id``/``segment_id`` are
+       optional, caller-supplied context for that log line only).
+
+    Every line's window is non-degenerate (``start_ms < end_ms``) — mirrors
+    ``_estimate_slide_timestamps``'s ``end_ms = start_ms + 1`` floor, so a
+    proportional-rounding edge case can never produce a zero-width line a
+    karaoke-highlight consumer could never activate.
 
     Story 4-29 (BR-6). Unblocks BR-1 (WS caption-cue delivery) and the
     karaoke-style slide-text highlight feature. Schema shape is intentionally
@@ -6057,7 +6069,7 @@ def _split_into_caption_lines(
     """
     if not script or not script.strip():
         return []
-    if duration_ms is None:
+    if duration_ms is None or not math.isfinite(duration_ms):
         return []
 
     # 1. Split at sentence boundaries.
@@ -6076,6 +6088,20 @@ def _split_into_caption_lines(
                 cut = remaining.rfind(" ", 0, max_chars_per_line)
                 if cut == -1:
                     # No space within limit — hard cut (single overlong word).
+                    # Round-4 review finding (Dev 1, PR #219): this used to be a
+                    # silent hard cut — CLAUDE.md's rule on a fixed budget meeting
+                    # variable input requires an explicit error or a surfaced
+                    # degradation, not nothing. Logged the same way
+                    # duration_ms_by_id's own bad-input normalisation is, below.
+                    logger.warning(
+                        "[%s] _split_into_caption_lines: segment %s has a "
+                        "%d-char run with no space within max_chars_per_line=%d "
+                        "— hard-cutting mid-word",
+                        lesson_id,
+                        segment_id,
+                        len(remaining),
+                        max_chars_per_line,
+                    )
                     cut = max_chars_per_line
                 lines.append(remaining[:cut].strip())
                 remaining = remaining[cut:].strip()
@@ -6090,15 +6116,23 @@ def _split_into_caption_lines(
         return []
 
     # 3. Distribute duration proportionally by character count.
-    total_ms_int = round(duration_ms)
+    n = len(lines)
+    # Round-4 review finding (Dev 1, PR #219): a line whose proportional share
+    # rounds down to 0ms would produce start_ms == end_ms — a window a
+    # karaoke-highlight consumer keyed on start_ms <= t < end_ms could never
+    # activate. `max(..., n)` guarantees enough total budget for every line to
+    # get >=1ms even in the all-lines-round-to-zero worst case, matching
+    # `_estimate_slide_timestamps`'s identical `total_ms = max(total_ms, n)`.
+    total_ms_int = max(round(duration_ms), n)
     result: list[dict[str, Any]] = []
     cursor = 0
-    n = len(lines)
     for i, line in enumerate(lines):
         if i == n - 1:
-            end_ms = total_ms_int  # Last line takes the exact remainder.
+            end_ms = max(total_ms_int, cursor + 1)  # Last line takes the remainder.
         else:
             end_ms = cursor + round(len(line) / total_chars * total_ms_int)
+            if end_ms <= cursor:
+                end_ms = cursor + 1
         result.append({"text": line, "start_ms": cursor, "end_ms": end_ms})
         cursor = end_ms
 
@@ -6694,7 +6728,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
             "caption_lines": _split_into_caption_lines(
                 _segment_script,
                 _segment_duration_ms,
-                max_chars_per_line=getattr(settings, "caption_max_chars_per_line", 120),
+                max_chars_per_line=settings.caption_max_chars_per_line,
+                lesson_id=lesson_id,
+                segment_id=segment_id,
             ),
         }
 
