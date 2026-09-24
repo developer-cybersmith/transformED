@@ -239,10 +239,13 @@ async def test_book_ingest_job_cancellation_is_not_retyped_as_bookingesterror() 
     from app.workers.jobs.book_ingest import BookIngestError, book_ingest_job
 
     store: dict[str, Any] = {}
-    with patch("app.core.db.get_supabase", return_value=make_supabase(store)), patch(
-        "app.workers.jobs.book_ingest._extract_text_only",
-        new_callable=AsyncMock,
-        side_effect=asyncio.CancelledError(),
+    with (
+        patch("app.core.db.get_supabase", return_value=make_supabase(store)),
+        patch(
+            "app.workers.jobs.book_ingest._extract_text_only",
+            new_callable=AsyncMock,
+            side_effect=asyncio.CancelledError(),
+        ),
     ):
         try:
             await book_ingest_job({}, BOOK_ID, STORAGE_PATH)
