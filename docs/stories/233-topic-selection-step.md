@@ -432,5 +432,5 @@ every file this story touches.
 - 2026-09-25: 6-layer adversarial review round 1 complete — 7 real findings, all fixed
   (2 real code bugs, 2 test-coverage gaps, 1 missing cost-ceiling guard, 2 story-doc accuracy
   issues incl. one requiring a Defect Register update); 3 findings reviewed and accepted as-is
-  with reasoning. See "Senior Developer Review — Round 1" in the Dev Agent Record. Remaining:
-  Task 7.2 (implementation-fix commit) and pushing the branch.
+  with reasoning. See "Senior Developer Review — Round 1" in the Dev Agent Record. Fixes
+  committed (`789b254`). Remaining: push the branch and open the PR.
