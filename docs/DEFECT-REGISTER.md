@@ -754,6 +754,56 @@ This is the **higher-priority** of the two gaps issue #245 reports: the postgres
 
 ---
 
+## D181 — `book_ingest_job` left `books.status='processing'` forever when ARQ cancelled it on `job_timeout`
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 1 (content pipeline) · **Detected:** 2026-09-24, live
+production smoke-test of book ingestion (real 501-page PDF upload via `hieiq.ai/upload`) ·
+**Fixed:** 2026-09-24, same day, `docs/stories/book-ingest-cancellederror-status.md`
+
+`book_ingest_job`'s single `except Exception as exc:` block was the only place `books.status`
+was ever set to `'failed'`. `asyncio.CancelledError` inherits from `BaseException`, not
+`Exception`, since Python 3.8 — it skips that block entirely. When ARQ's own outer
+`job_timeout` (`arq_job_timeout_s`, default 1800s) fires and cancels the job's task, the
+cancellation is exactly what reaches this code path, so `books.status` was **never** written
+and stayed at `'processing'` permanently, with no error surfaced anywhere a human or the
+frontend would see.
+
+**Confirmed live** against book_id `22dce7c5-55c5-4086-b885-9f45f052871b` (`hie-api`, machine
+`873d97a0404d78`, `sin` region): job started `13:02:25`, ARQ logged
+`book_ingest_job failed, TimeoutError` at `13:32:25` — exactly `1800.03s`, i.e.
+`arq_job_timeout_s`, not the code's own 900s `_EXTRACT_TIMEOUT_S`. Traceback showed
+`asyncio.CancelledError` raised inside `proc.communicate()`/`proc.wait()`, later relabeled
+`TimeoutError` by `asyncio.wait_for`'s own `__aexit__` machinery **after it had already
+escaped `book_ingest_job`'s frame unhandled** (confirmed by direct read of the traceback's
+frame order — the exception passed through `book_ingest.py:173` without matching
+`except Exception`). A `books` row query over an hour later still showed
+`status='processing'`, `updated_at` unchanged since the original insert — silently stuck
+forever, exactly the failure class CLAUDE.md's Scale Contract Q2 exists to catch.
+
+This is a distinct root cause from **D180** (ARQ's `max_tries` job-level retry never firing for
+exceptions this codebase raises) — that entry is about the job not being *retried*; this one is
+about the job's own *failure bookkeeping* silently not running on cancellation, independent of
+whether a retry follows.
+
+**Resolution:** `book_ingest_job` now has a dedicated `except asyncio.CancelledError:` branch
+(before `except Exception`) that writes `books.status='failed'` and then bare `raise`s —
+re-raising `CancelledError` itself, never retyping it to `BookIngestError`, so asyncio's own
+cancellation propagation contract for the caller is preserved.
+
+**Enforcement:** `tests/unit/test_book_ingest_job.py::test_book_ingest_job_cancelled_marks_books_failed`
+(asserts the `books.status='failed'` write happens on cancellation) and
+`::test_book_ingest_job_cancellation_is_not_retyped_as_bookingesterror` (asserts the propagated
+exception stays `asyncio.CancelledError`, not `BookIngestError`).
+
+**Out of scope, tracked separately, not silently dropped:** *why* the extraction subprocess
+itself ran past both the 900s inner timeout and the full 1800s outer `arq_job_timeout_s` in
+production for a book that extracts in well under 60s locally with the correctly pinned
+`pypdfium2==4.30.0` — resource contention on the shared `sin`-region Fly worker vs. a genuine
+hang has not yet been distinguished. Filed as a follow-up investigation, not folded into this
+fix.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent

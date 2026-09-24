@@ -198,6 +198,63 @@ async def test_failure_is_reraised_so_arq_can_retry() -> None:
         await book_ingest_job({}, BOOK_ID, STORAGE_PATH)
 
 
+@pytest.mark.unit
+async def test_book_ingest_job_cancelled_marks_books_failed() -> None:
+    """D181 — asyncio.CancelledError is a BaseException, not an Exception, so
+    ARQ's own arq_job_timeout_s cancelling the task used to skip the
+    `except Exception` branch entirely and leave books.status stuck at
+    'processing' forever, with no record ARQ had already given up. Confirmed
+    live 2026-09-24 (book_id 22dce7c5-...): job failed in ARQ's own logs at
+    exactly arq_job_timeout_s, but books.status never moved off 'processing'.
+    """
+    import asyncio
+
+    from app.workers.jobs.book_ingest import book_ingest_job
+
+    store: dict[str, Any] = {}
+    with (
+        patch("app.core.db.get_supabase", return_value=make_supabase(store)),
+        patch(
+            "app.workers.jobs.book_ingest._extract_text_only",
+            new_callable=AsyncMock,
+            side_effect=asyncio.CancelledError(),
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await book_ingest_job({}, BOOK_ID, STORAGE_PATH)
+
+    assert {"status": "failed"} in store["books"]["updates"], (
+        "cancellation (ARQ job_timeout) must still mark the book failed, "
+        "not leave it stuck at 'processing' forever"
+    )
+
+
+@pytest.mark.unit
+async def test_book_ingest_job_cancellation_is_not_retyped_as_bookingesterror() -> None:
+    """The cancellation path must re-raise CancelledError itself -- converting it
+    to BookIngestError (a plain Exception) would break asyncio's own cancellation
+    propagation contract for whoever is awaiting this task."""
+    import asyncio
+
+    from app.workers.jobs.book_ingest import BookIngestError, book_ingest_job
+
+    store: dict[str, Any] = {}
+    with (
+        patch("app.core.db.get_supabase", return_value=make_supabase(store)),
+        patch(
+            "app.workers.jobs.book_ingest._extract_text_only",
+            new_callable=AsyncMock,
+            side_effect=asyncio.CancelledError(),
+        ),
+    ):
+        try:
+            await book_ingest_job({}, BOOK_ID, STORAGE_PATH)
+        except asyncio.CancelledError:
+            pass
+        except BookIngestError:
+            pytest.fail("cancellation must not be retyped as BookIngestError")
+
+
 def _executable_source(path: str) -> str:
     """Source with docstrings and comments removed.
 
