@@ -161,7 +161,8 @@
         "audio_url": { "type": "string" },
         "audio_provider": {
           "type": "string",
-          "enum": ["sarvam", "azure", "browser"]
+          "enum": ["sarvam", "azure", "browser", "sixtydb"],
+          "$comment": "\"sixtydb\" added by Story 232 — FROZEN CONTRACT CHANGE, requires the 4-developer-reviewed PR per CLAUDE.md/PRD §16 before merge."
         },
         "timestamps": {
           "type": "array",

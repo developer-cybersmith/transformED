@@ -32,7 +32,10 @@ _STRICT = ConfigDict(extra="forbid")
 
 LessonStatus = Literal["generating", "ready", "failed"]
 ComplexityLevel = Literal["low", "medium", "high"]
-AudioProvider = Literal["sarvam", "azure", "browser"]  # frozen — see lesson_package.schema.json
+# frozen — see lesson_package.schema.json. "sixtydb" added by Story 232 —
+# FROZEN CONTRACT CHANGE, requires the 4-developer-reviewed PR per CLAUDE.md/PRD §16
+# before merge, in addition to this story's own 6-agent review.
+AudioProvider = Literal["sarvam", "azure", "browser", "sixtydb"]
 QuizType = Literal["mcq", "concept_check"]
 QuizDifficulty = Literal["easy", "medium", "hard"]
 LessonTier = Literal["T1", "T2", "T3"]  # Story 2-2 — Learner Mode content-depth tier

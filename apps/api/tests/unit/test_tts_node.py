@@ -33,6 +33,19 @@ def _default_under_cost_ceiling():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _default_sixtydb_unconfigured():
+    """Story 232 (review finding): shared implementation lives in
+    tests/conftest.py's `sixtydb_unconfigured_default` — see its docstring
+    for the full rationale. Kept as a thin local autouse wrapper (not a
+    global conftest autouse) so test_tts_providers_sixtydb.py's own
+    dedicated tests, which exercise the real class directly, are unaffected."""
+    from tests.conftest import sixtydb_unconfigured_default
+
+    with sixtydb_unconfigured_default():
+        yield
+
+
 FAKE_LESSON_ID = "50505050-5050-5050-5050-505050505050"
 
 NARRATION_SCRIPTS: list[dict[str, Any]] = [
@@ -102,6 +115,218 @@ async def test_happy_path_sarvam_success_produces_nested_narration_entries() -> 
     sb.storage.from_.assert_any_call("lesson-audio")
     upload_calls = sb.storage.from_.return_value.upload.call_args_list
     assert any(call.kwargs.get("path") == f"{FAKE_LESSON_ID}/sec_0.mp3" for call in upload_calls)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_success_produces_nested_narration_entries() -> None:
+    """Story 232 AC 7: 60db succeeds first -> audio_provider='sixtydb',
+    Sarvam/Azure never called, and cost is accumulated using 60db's own
+    COST_PER_CHAR (review finding: AC 7's `cost` component of the returned
+    tuple was previously unasserted for the 60db path)."""
+    from app.modules.content.pipeline.graph import tts_node
+    from app.providers.tts.sixtydb import COST_PER_CHAR as _SIXTYDB_COST_PER_CHAR
+
+    mock_sixtydb = AsyncMock()
+    mock_sixtydb.synthesize.return_value = (b"SIXTYDB_AUDIO", [])
+    mock_sarvam = AsyncMock()
+    sb = _mock_supabase()
+    mock_accumulate = AsyncMock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
+    ):
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
+
+    assets = result["audio_assets"]
+    assert assets[0]["data"]["audio_provider"] == "sixtydb"
+    mock_sarvam.synthesize.assert_not_called()
+    mock_accumulate.assert_called_once()
+    call_args = mock_accumulate.call_args
+    assert call_args.args[0] == FAKE_LESSON_ID
+    expected_cost = len(NARRATION_SCRIPTS[0]["script"]) * _SIXTYDB_COST_PER_CHAR
+    assert call_args.args[1] == pytest.approx(expected_cost)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_failure_falls_back_to_sarvam() -> None:
+    """Story 232 AC 7: 60db raises -> Sarvam is tried and succeeds ->
+    audio_provider='sarvam' (chain order: 60db -> Sarvam -> Azure -> Browser)."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sixtydb = AsyncMock()
+    mock_sixtydb.synthesize.side_effect = RuntimeError("60db down")
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
+
+    assets = result["audio_assets"]
+    assert assets[0]["data"]["audio_provider"] == "sarvam"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_not_configured_falls_back_to_sarvam() -> None:
+    """Story 232 AC 6: no 60db key/voice configured -> ValueError inside the
+    provider -> caught, falls through to Sarvam, no crash. Uses the file's
+    own _default_sixtydb_unconfigured fixture (not overridden here) to prove
+    that default IS the "not configured" behavior, not just a test convenience."""
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+    ):
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
+
+    assets = result["audio_assets"]
+    assert assets[0]["data"]["audio_provider"] == "sarvam"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_not_configured_logs_quietly_not_a_warning_with_traceback(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Independent PR review finding (2026-09-22, PR #240): before this fix,
+    the expected/common "60db not configured" case logged a WARNING with a
+    full traceback on every single narration segment, in every deployment
+    that hasn't yet set SIXTYDB_API_KEY/SIXTYDB_VOICE_ID -- i.e. every
+    deployment today -- contradicting this story's own "degrades to today's
+    exact behavior" framing. Must log at most at INFO, never WARNING, and
+    never with exc_info for this specific, expected exception type."""
+    import logging
+
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        caplog.at_level(logging.DEBUG, logger="app.modules.content.pipeline.graph"),
+    ):
+        await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
+
+    warning_or_above = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert not any("60db" in r.message for r in warning_or_above), (
+        "the 'not configured' case must never log at WARNING or above — "
+        f"found: {[r.message for r in warning_or_above if '60db' in r.message]}"
+    )
+    sixtydb_records = [r for r in caplog.records if "60db not configured" in r.message]
+    assert len(sixtydb_records) == 1
+    assert sixtydb_records[0].levelno == logging.DEBUG
+    assert sixtydb_records[0].exc_info is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_genuine_corruption_still_logs_loudly_not_mislabeled(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Human reviewer finding, PR #240 (Developer-2-max): the previous fix's
+    `except ValueError:` was too broad -- `json.JSONDecodeError` and
+    `binascii.Error` (raised deep inside SixtyDbTTSProvider._post_chunk for a
+    genuinely CORRUPTED live response) are BOTH real ValueError subclasses,
+    so a live provider-corruption bug would ALSO match the "not configured"
+    branch and get silently mislabeled at DEBUG with no traceback -- hiding
+    a real, actionable bug behind a factually wrong diagnosis. Proves the
+    fix (a dedicated SixtyDbNotConfiguredError subclass, not bare
+    ValueError): a genuine binascii.Error must still log at WARNING with a
+    traceback, and must NOT be mislabeled "60db not configured"."""
+    import binascii
+    import logging
+
+    from app.modules.content.pipeline.graph import tts_node
+
+    mock_sixtydb = AsyncMock()
+    mock_sixtydb.synthesize.side_effect = binascii.Error("Invalid base64-encoded string")
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new_callable=AsyncMock),
+        caplog.at_level(logging.DEBUG, logger="app.modules.content.pipeline.graph"),
+    ):
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
+
+    # Still degrades gracefully — falls through to Sarvam, never crashes.
+    assert result["audio_assets"][0]["data"]["audio_provider"] == "sarvam"
+
+    mislabeled = [r for r in caplog.records if "60db not configured" in r.message]
+    assert not mislabeled, "a genuine binascii.Error must NEVER be logged as 'not configured'"
+
+    real_failure = [r for r in caplog.records if "60db synthesis failed" in r.message]
+    assert len(real_failure) == 1
+    assert real_failure[0].levelno == logging.WARNING
+    assert real_failure[0].exc_info is not None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sixtydb_partial_spend_recorded_before_falling_back_to_sarvam() -> None:
+    """Human reviewer finding, PR #240 (Developer-2-max, real bug, fixed):
+    when 60db fails after at least one chunk already succeeded (real,
+    already-paid-for wallet spend), that partial cost must be recorded
+    against the $3.00/lesson ceiling before falling through to Sarvam — not
+    silently dropped just because the overall 60db call didn't return audio."""
+    from app.modules.content.pipeline.graph import tts_node
+    from app.providers.tts.sixtydb import SixtyDbPartialSpendError
+
+    mock_sixtydb = AsyncMock()
+    mock_sixtydb.synthesize.side_effect = SixtyDbPartialSpendError(
+        "60db synthesis failed after 12/23 chars already succeeded: 503", partial_cost_usd=0.00024
+    )
+    mock_sarvam = AsyncMock()
+    mock_sarvam.synthesize.return_value = (b"AUDIO_BYTES", [])
+    sb = _mock_supabase()
+    mock_accumulate = AsyncMock()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb),
+        patch("app.providers.tts.sarvam.SarvamTTSProvider", return_value=mock_sarvam),
+        patch("app.core.cost_tracker.accumulate_cost", new=mock_accumulate),
+    ):
+        result = await tts_node(_base_state(narration_scripts_final=[NARRATION_SCRIPTS[0]]))
+
+    assert result["audio_assets"][0]["data"]["audio_provider"] == "sarvam"
+
+    # Two accumulate_cost calls: the partial 60db spend (recorded here,
+    # before falling through), then Sarvam's own successful-synthesis cost
+    # (recorded later by tts_node's normal cost-tracking path).
+    partial_spend_calls = [
+        c for c in mock_accumulate.call_args_list if c.args[1] == pytest.approx(0.00024)
+    ]
+    assert len(partial_spend_calls) == 1, (
+        f"expected exactly one accumulate_cost(..., 0.00024) call for the partial 60db "
+        f"spend, got calls: {mock_accumulate.call_args_list}"
+    )
+    assert partial_spend_calls[0].args[0] == FAKE_LESSON_ID
 
 
 @pytest.mark.unit
@@ -203,7 +428,7 @@ async def test_over_ceiling_skips_paid_providers_and_downshifts_to_browser() -> 
     downshifts = written_node_outputs["_cost_downshifts"]
     assert len(downshifts) == 1
     assert downshifts[0]["node"] == "tts_node"
-    assert downshifts[0]["from_model_or_provider"] == "sarvam/azure"
+    assert downshifts[0]["from_model_or_provider"] == "sixtydb/sarvam/azure"
     assert downshifts[0]["to_model_or_provider"] == "browser"
     assert mock_check_ceiling.call_count == 2  # once per segment
     assert all(c.args == (FAKE_LESSON_ID,) for c in mock_check_ceiling.call_args_list)
