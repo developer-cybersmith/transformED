@@ -78,7 +78,13 @@ async def test_tier_changes_the_delivered_package() -> None:
     If `_FAN_OUT_STATE_KEYS` ever loses `"tier"` again, every tier collapses to
     T2 here and this test fails; the per-node tier tests would not.
     """
-    from app.modules.content.pipeline.graph import _TIER_QUIZ_COUNT_BAND
+    from app.config import get_settings
+    from app.schemas.lesson import quiz_budget_seconds
+
+    def _lesson_budget(tier: str) -> int:
+        """The tier's TOTAL question count — S5-4's replacement for the deleted
+        per-segment `_TIER_QUIZ_COUNT_BAND`."""
+        return int(quiz_budget_seconds(tier) // max(1, get_settings().quiz_seconds_per_question))
 
     shapes: dict[str, dict[str, Any]] = {}
     for tier in ("T1", "T2", "T3"):
@@ -92,46 +98,55 @@ async def test_tier_changes_the_delivered_package() -> None:
         f"segment count differs across tiers {seg_counts} — the comparison below is invalid"
     )
 
-    # Every segment's quiz count must sit inside ITS OWN tier band.
+    # S5-4: the invariant is now the LESSON total, not a per-segment band —
+    # a per-segment ceiling was exactly the thing that let quiz volume scale
+    # with segment count (15 segments x T1's old 3-5 band = 45-75 questions in
+    # a 45-minute lesson). Each tier must deliver its whole budget and no more.
     for tier, shape in shapes.items():
-        lo, hi = _TIER_QUIZ_COUNT_BAND[tier]
-        for i, n in enumerate(shape["quiz_per_segment"]):
-            assert n <= hi, f"{tier} segment {i}: {n} questions exceeds band max {hi}"
+        assert shape["quiz_total"] == _lesson_budget(tier), (
+            f"{tier}: delivered {shape['quiz_total']} questions against a lesson "
+            f"budget of {_lesson_budget(tier)} — the seat-time budget was not honoured"
+        )
+        # Premise check: if the fake's per-batch size were the binding constraint,
+        # the totals above would be measuring the fake, not the allocator.
+        assert max(shape["quiz_per_segment"]) <= 5, (
+            f"{tier}: a segment was allocated more than the fake supplies — this "
+            "comparison would be measuring the fixture, not the tier"
+        )
 
-    # All THREE tiers must differ, strictly. The fake returns 5 questions per
-    # batch — at or above every band's n_max — so each tier truncates to its own
-    # ceiling and the delivered counts become a direct readout of the tier value
-    # each node actually received. With the fake's original fixed 3, T1 (n_max=5)
-    # and T2 (n_max=3) both kept 3 and were indistinguishable; the comparison
-    # looked like it passed while proving nothing about T1 vs T2.
+    # All THREE tiers must differ, strictly. Under S5-4 the readout is the
+    # lesson total (16 / 10 / 5) rather than a per-segment ceiling, so the
+    # delivered counts remain a direct readout of the tier value each node
+    # actually received through the fan-out.
     t1, t2, t3 = (shapes[t]["quiz_total"] for t in ("T1", "T2", "T3"))
     assert t1 > t2 > t3, (
         f"tiers did not differentiate (T1={t1}, T2={t2}, T3={t3}) — `tier` is not "
         "reaching the Phase-1 nodes through the fan-out"
     )
 
-    # Stronger: each tier's per-segment count must equal ITS OWN n_max, which
-    # pins WHICH tier value arrived rather than merely that they differ.
+    # Stronger: the exact total pins WHICH tier value arrived, not merely that
+    # the three differ. (Per-segment counts are deliberately NOT uniform under
+    # S5-4 — the allocator distributes a fixed lesson total proportionally, so
+    # zero-allocation segments are expected on a long chapter at T3.)
     for tier, shape in shapes.items():
-        n_max = _TIER_QUIZ_COUNT_BAND[tier][1]
-        assert set(shape["quiz_per_segment"]) == {n_max}, (
-            f"{tier}: expected every segment at n_max={n_max}, got "
-            f"{sorted(set(shape['quiz_per_segment']))} — a node used the wrong tier"
+        assert shape["quiz_total"] == _lesson_budget(tier), (
+            f"{tier}: total {shape['quiz_total']} != budget {_lesson_budget(tier)} "
+            "— a node used the wrong tier"
         )
 
     print("\n=== Learner Mode: delivered package by tier ===")
     for tier in ("T1", "T2", "T3"):
         s = shapes[tier]
-        lo, hi = _TIER_QUIZ_COUNT_BAND[tier]
         print(
-            f"  {tier} band {lo}-{hi}: {s['segments']} segments, "
+            f"  {tier} budget {_lesson_budget(tier)} questions/lesson: {s['segments']} segments, "
             f"{s['quiz_total']:>2} quiz ({s['quiz_per_segment']}), "
             f"{s['slides_total']:>2} slides, {s['narration_chars']:>5} narration chars"
         )
     print()
     print("  PROVEN here: `tier` reaches every Phase-1 node through the real")
-    print("  fan-out, and each node truncates to its own band ceiling. This is")
-    print("  the regression guard for the Story 2-28 defect.")
+    print("  fan-out, and the lesson's quiz volume equals its own seat-time")
+    print("  budget. This is the regression guard for the Story 2-28 defect,")
+    print("  and for S5-4's lesson-level quiz budget.")
     print("  NOT proven here: slide-budget (S2-LM4) and content-depth (S2-LM5)")
     print("  differentiation. Both act on the PROMPT, and the provider is faked")
     print("  — it returns a fixed slide count and a fixed narration string no")

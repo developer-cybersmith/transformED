@@ -430,6 +430,48 @@ describe('enterQuiz / exitQuiz / enterTeachBack / exitTeachBack', () => {
     expect(usePlayerStore.getState().status).toBe('QUIZ');
   });
 
+  // ── Story S5-4: zero-quiz segments ────────────────────────────────────────
+  // Quiz volume became a LESSON-level budget allocated across segments, so a
+  // segment with an empty `quiz` array is now the normal case for several
+  // segments per lesson (T3 buys 5 questions; a chapter can have 15 segments).
+  // Before the guard these tests pin, enterQuiz() set status QUIZ, QuizOverlay
+  // rendered null (no question at the index), and exitQuiz() — reachable only
+  // from inside that overlay — was never called: audio paused, controls
+  // disabled, lesson permanently stuck mid-session.
+
+  it('S5-4: a segment with zero quiz questions never enters QUIZ', () => {
+    const lesson = makeLesson();
+    lesson.segments[0].quiz = [];
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().enterQuiz();
+
+    expect(usePlayerStore.getState().status).not.toBe('QUIZ');
+    expect(usePlayerStore.getState().status).toBe('TEACH_BACK');
+  });
+
+  it('S5-4: a zero-quiz segment still advances — the lesson is not stuck', () => {
+    const lesson = makeLesson(3);
+    lesson.segments[0].quiz = [];
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().enterQuiz();
+    usePlayerStore.getState().exitTeachBack();
+
+    expect(usePlayerStore.getState().status).toBe('PLAYING');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+  });
+
+  it('S5-4: a zero-quiz segment is still marked fired, so it cannot re-trigger', () => {
+    const lesson = makeLesson();
+    lesson.segments[0].quiz = [];
+    usePlayerStore.getState().loadLesson(lesson);
+    usePlayerStore.getState().play();
+    usePlayerStore.getState().enterQuiz();
+
+    expect(usePlayerStore.getState().quizFiredForSegment.has('seg_0')).toBe(true);
+  });
+
   it('QUIZ → TEACH_BACK on exitQuiz()', () => {
     usePlayerStore.getState().loadLesson(makeLesson());
     usePlayerStore.getState().play();

@@ -14,6 +14,11 @@ from typing import Annotated
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+# Safe at import time: app.schemas.lesson imports only pydantic/stdlib, never
+# app.config — no cycle. Story S5-4 keeps the 45/30/15 mapping in exactly one
+# place, so these defaults cannot drift from it.
+from app.schemas.lesson import DEFAULT_TIER, qa_budget_seconds
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -64,8 +69,11 @@ class Settings(BaseSettings):
     )
 
     # ── TTS providers ─────────────────────────────────────────────────────────
-    # Fallback chain: Sarvam → Azure → Browser Speech (PRD §14)
-    sarvam_api_key: str = Field(..., description="Sarvam AI Bulbul v3 API key — primary TTS")
+    # Fallback chain: 60db → Sarvam → Azure → Browser Speech (PRD §14; 60db
+    # tier added by Story 232 — see sixtydb_* settings below).
+    sarvam_api_key: str = Field(
+        ..., description="Sarvam AI Bulbul v3 API key — fallback #1 TTS (was primary before 60db)"
+    )
     sarvam_voice_id: str = Field(
         # D67 (historical): "meera" is not a valid Bulbul v2 speaker --
         # confirmed via a real, live call to api.sarvam.ai. "anushka" was
@@ -112,6 +120,35 @@ class Settings(BaseSettings):
     )
     elevenlabs_api_key: str | None = Field(
         default=None, description="ElevenLabs API key — deprecated, replaced by Sarvam"
+    )
+
+    # ── 60db.ai (Story 232) ──────────────────────────────────────────────────
+    # New PRIMARY tier ahead of Sarvam: 60db -> Sarvam -> Azure -> Browser.
+    # Optional (unlike sarvam_api_key) so a deployment with no 60db key
+    # configured degrades to today's exact behavior — the provider raises a
+    # clear ValueError, caught by _synthesize_with_fallback's existing
+    # except-and-fall-through, same as an Azure auth failure does today.
+    sixtydb_api_key: str | None = Field(
+        default=None, description="60db.ai API key — new primary TTS tier"
+    )
+    sixtydb_voice_id: str | None = Field(
+        default=None,
+        description=(
+            "60db.ai voice id (from GET /voices) — no universal default exists "
+            "(unlike sarvam_voice_id/azure_tts_voice); must be set per deployment."
+        ),
+    )
+    sixtydb_model: str = Field(
+        default="60db-quality", description="60db.ai model tier for narration synthesis"
+    )
+    sixtydb_speed: float = Field(
+        default=1.0,
+        ge=0.5,
+        le=2.0,
+        description="60db.ai `speed` parameter for narration synthesis (0.5-2.0)",
+    )
+    sixtydb_enhance: bool = Field(
+        default=True, description="60db.ai `enhance` post-processing flag"
     )
 
     # ── Langfuse ──────────────────────────────────────────────────────────────
@@ -571,21 +608,40 @@ class Settings(BaseSettings):
     )
 
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
+    # Story S5-4: derived from qa_budget_seconds(tier) — the tier's seat time
+    # x SEAT_TIME_SHARES["qa"] (10%). Under S5-4 the Q&A window is SUBTRACTED
+    # from the advertised duration; the pre-S5-4 values (600/300/150) were
+    # additive, so a "45-minute" T1 lesson really ran 55 minutes. Still fully
+    # env-tunable — only the defaults moved.
     learner_tier_t1_qa_seconds: int = Field(
-        default=600,
+        default=qa_budget_seconds("T1"),
         description="Q&A phase duration in seconds for T1 (Full-Depth, 45-min) tier",
     )
     learner_tier_t2_qa_seconds: int = Field(
-        default=300,
+        default=qa_budget_seconds("T2"),
         description="Q&A phase duration in seconds for T2 (Standard, 30-min) tier",
     )
     learner_tier_t3_qa_seconds: int = Field(
-        default=150,
+        default=qa_budget_seconds("T3"),
         description="Q&A phase duration in seconds for T3 (Refresher, 15-min) tier",
     )
     learner_tier_default_qa_seconds: int = Field(
-        default=300,
+        default=qa_budget_seconds(DEFAULT_TIER),
         description="Q&A phase duration in seconds when tier is unknown or absent (T2 equivalent)",
+    )
+
+    # ── Learner Mode — quiz pacing (Story S5-4) ───────────────────────────────
+    quiz_seconds_per_question: int = Field(
+        default=25,
+        gt=0,
+        description=(
+            "Assumed seconds a student spends on one MCQ. Divides the tier's "
+            "quiz_budget_seconds to give the lesson's TOTAL question count, "
+            "which is then allocated across segments in proportion to their "
+            "narration duration. Replaces the pre-S5-4 per-segment count band, "
+            "which multiplied by segment count (15 segments x T1's 3-5 = 45-75 "
+            "questions, 19-31 minutes of a 45-minute lesson)."
+        ),
     )
 
     # ── PDF extraction ────────────────────────────────────────────────────────
@@ -694,6 +750,17 @@ class Settings(BaseSettings):
             "Fallback per-slide duration (ms) when a segment's narration script is "
             "empty (word_count 0), so the estimated timestamp track is still "
             "non-degenerate (start_ms < end_ms)."
+        ),
+    )
+
+    # ── Caption lines (Story 4-29, BR-6) ──────────────────────────────────────
+    caption_max_chars_per_line: int = Field(
+        default=120,
+        gt=0,
+        description=(
+            "Maximum characters per caption line before a sentence is sub-split "
+            "at the last word boundary within the limit (package_builder's "
+            "_split_into_caption_lines)."
         ),
     )
 

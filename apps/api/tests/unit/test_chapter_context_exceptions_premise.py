@@ -63,3 +63,30 @@ def test_postgrest_api_error_code_is_string_type() -> None:
             "postgrest.exceptions.APIError constructor signature has changed — "
             "review the FK-violation handler in put_chapter_context"
         ) from err
+
+
+def test_postgrest_api_error_code_is_int_for_non_json_response() -> None:
+    """Issue #245: APIError.code is an INT (the HTTP status), not a string, when
+    the response body was not valid JSON — e.g. Cloudflare's HTML error page
+    for a 521 "origin down". `with_retry`'s postgrest classification branch
+    depends on this being distinguishable from the normal string-code case
+    above (binding rule 3: an executable premise for BOTH shapes, not just one).
+
+    Sourced directly from the installed package's own fallback constructor,
+    `postgrest.exceptions.generate_default_error_message(r)`:
+        {"message": "JSON could not be generated", "code": r.status_code, ...}
+    """
+    from postgrest.exceptions import APIError, generate_default_error_message
+
+    class _FakeResponse:
+        status_code = 521
+        content = b"<html>Cloudflare error 521: origin is down</html>"
+
+    err = APIError(generate_default_error_message(_FakeResponse()))
+    assert hasattr(err, "code"), "APIError instance has no .code attribute"
+    assert isinstance(err.code, int), (
+        f"APIError.code is {type(err.code).__name__}, not int — "
+        "generate_default_error_message's fallback shape has changed; "
+        "with_retry's int-vs-string postgrest classification depends on this"
+    )
+    assert err.code == 521

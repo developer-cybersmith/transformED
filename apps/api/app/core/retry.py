@@ -213,6 +213,52 @@ if not _OPENAI_API_ERRORS:
         "as real exception classes. OpenAI 429/5xx responses will NOT be retried."
     )
 
+# ── PostgREST/Supabase exception classification (issue #245) ─────────────────
+#
+# `postgrest.exceptions.APIError.code` has TWO distinct shapes, verified against
+# the installed package's source (`postgrest/exceptions.py`,
+# `_async|_sync/request_builder.py`):
+#   - a Postgres/PostgREST error-code STRING (e.g. "23503", "PGRST116") when the
+#     response body parsed as valid JSON — a genuine structured DB error. NEVER
+#     retryable: a constraint violation or "no rows" is not transient, and one
+#     real caller (content/router.py's FK-violation check) already depends on
+#     `.code` staying a string for that comparison to keep meaning what it says.
+#   - an INT (`generate_default_error_message`'s fallback: `"code": r.status_code`)
+#     when the response body was NOT valid JSON — e.g. Cloudflare's HTML error
+#     page for a 521 "origin down". This is the transient-network-blip case:
+#     confirmed live (issue #245) against 15 real production book-ingestion
+#     attempts, every one permanently killed by a single Cloudflare 521 with no
+#     retry at any layer (with_retry had no branch for this exception at all;
+#     no Supabase call site in the content pipeline used with_retry regardless;
+#     and ARQ's own job-level retry never fires for a plain RuntimeError either
+#     — see the ARQ-retry-gap register entry this issue also filed).
+#
+# `_POSTGREST_RETRYABLE_STATUS_CODES` extends the shared retryable set with
+# Cloudflare's own origin-error codes (520-527, 530) — httpx/OpenAI call sites
+# never sit behind Cloudflare's proxy in front of Supabase, so this extension is
+# scoped to the postgrest branch only, not merged into `_RETRYABLE_STATUS_CODES`.
+_CLOUDFLARE_ORIGIN_ERROR_CODES: frozenset[int] = frozenset(
+    {520, 521, 522, 523, 524, 525, 526, 527, 530}
+)
+_POSTGREST_RETRYABLE_STATUS_CODES: frozenset[int] = (
+    _RETRYABLE_STATUS_CODES | _CLOUDFLARE_ORIGIN_ERROR_CODES
+)
+
+_POSTGREST_API_ERRORS: tuple[type[BaseException], ...]
+try:
+    import postgrest as _postgrest
+
+    _POSTGREST_API_ERRORS = _exception_classes(_postgrest.exceptions.APIError)
+except (ImportError, AttributeError):
+    _POSTGREST_API_ERRORS = ()
+
+if not _POSTGREST_API_ERRORS:
+    logger.warning(
+        "PostgREST exception classification is DISABLED — the postgrest package "
+        "was not importable as real exception classes. A transient Supabase/"
+        "PostgREST error (e.g. a Cloudflare 521) will NOT be retried."
+    )
+
 
 def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
     """Decorator factory: wrap an async function with exponential-backoff retry.
@@ -361,6 +407,40 @@ def with_retry(max_attempts: int = 3) -> Callable[[F], F]:
                         raise
                     else:
                         last_exc = exc
+
+                except _POSTGREST_API_ERRORS as exc:
+                    # Issue #245. `.code` is either a Postgres/PostgREST error-code
+                    # STRING (a real structured DB error — never retryable) or an
+                    # INT (the HTTP-status fallback for a non-JSON response body,
+                    # e.g. Cloudflare's HTML page for a 521 — the transient case).
+                    # Must not assume one type or the other; check explicitly.
+                    pg_code: Any = getattr(exc, "code", None)
+
+                    if isinstance(pg_code, str):
+                        logger.warning(
+                            "Postgres/PostgREST error code %r from %s — not retrying "
+                            "(a structured DB error is not transient)",
+                            pg_code,
+                            func.__qualname__,
+                        )
+                        raise
+                    elif isinstance(pg_code, int) and pg_code in _POSTGREST_RETRYABLE_STATUS_CODES:
+                        last_exc = exc
+                    elif isinstance(pg_code, int):
+                        logger.warning(
+                            "Unclassified PostgREST status %s from %s — not retrying",
+                            pg_code,
+                            func.__qualname__,
+                        )
+                        raise
+                    else:
+                        # No code at all — nothing to classify on; conservative.
+                        logger.warning(
+                            "PostgREST %s with no usable code from %s — not retrying",
+                            type(exc).__name__,
+                            func.__qualname__,
+                        )
+                        raise
 
                 except Exception:
                     # Unknown exception — do not retry. Bare `raise` preserves

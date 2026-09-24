@@ -22,10 +22,13 @@ the entire suite green (641 passed) before these tests existed.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from app.config import get_settings
 
 
 def _state(tier: str) -> dict[str, Any]:
@@ -39,6 +42,14 @@ def _state(tier: str) -> dict[str, Any]:
             {"title": "Next", "body": "Body two."},
         ],
     }
+
+
+def _requested_count(prompt: str) -> int:
+    """Parse the question count out of quiz_generator's rendered prompt."""
+    m = re.search(r"Write (\d+) to (\d+) multiple-choice questions", prompt)
+    assert m, f"could not find the count instruction in prompt: {prompt[:200]}"
+    assert m.group(1) == m.group(2), "S5-4 requests an exact count, not a band"
+    return int(m.group(1))
 
 
 @pytest.mark.unit
@@ -94,15 +105,25 @@ def test_tier_is_declared_in_fan_out_state_keys() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("tier", "lo", "hi"), [("T1", 3, 5), ("T2", 2, 3), ("T3", 1, 2)])
-async def test_tier_reaches_quiz_generator_through_the_fan_out(tier: str, lo: int, hi: int) -> None:
+@pytest.mark.parametrize(("tier", "lesson_total"), [("T1", 16), ("T2", 10), ("T3", 5)])
+async def test_tier_reaches_quiz_generator_through_the_fan_out(
+    tier: str, lesson_total: int
+) -> None:
     """End-to-end for AC-3's own promise: 'A T1 lesson must produce a T1
     quiz-count band.'
 
     Drives the REAL fan-out, then feeds a real Send payload into the REAL
-    quiz_generator_node, and asserts the band it requests matches the tier.
+    quiz_generator_node, and asserts the count it requests came from the tier.
     Existing tier tests bypass the fan-out entirely, so only this path proves
     the plumbing.
+
+    Story S5-4 rewrote the expectation (AC22): the per-segment band (T1 3-5,
+    T2 2-3, T3 1-2) is gone, because a per-segment count multiplies by segment
+    count — 15 sections x T1's band was 45-75 questions in a lesson advertised
+    as 45 minutes TOTAL. The budget is now lesson-level and allocated across
+    sections by the fan-out, so the invariant worth pinning is the LESSON
+    total, not a per-section band. The plumbing property this file exists to
+    guard is unchanged and still asserted: the tier must survive the fan-out.
     """
     from app.modules.content.pipeline import graph as g
 
@@ -128,7 +149,7 @@ async def test_tier_reaches_quiz_generator_through_the_fan_out(tier: str, lo: in
                     explanation="because",
                     difficulty="medium",
                 )
-                for n in range(lo)
+                for n in range(_requested_count(captured_prompt[-1]))
             ]
         )
 
@@ -144,10 +165,24 @@ async def test_tier_reaches_quiz_generator_through_the_fan_out(tier: str, lo: in
         result = await g.quiz_generator_node(quiz_send.arg)  # type: ignore[arg-type]
 
     assert captured_prompt, "quiz_generator never called the LLM — test vacuous"
-    assert f"{lo} to {hi}" in captured_prompt[0], (
-        f"tier {tier} should request the {lo}-{hi} band; prompt was: {captured_prompt[0][:400]}"
+    requested = _requested_count(captured_prompt[0])
+
+    # This section's allocated share, recomputed from the real allocator over
+    # the same two sections the fan-out saw — not a hardcoded number that would
+    # drift from the budget table.
+    expected_per_section = g._quiz_budget_per_segment(
+        tier,
+        [float(len(s["body"])) for s in _state(tier)["sections"]],
+        get_settings().quiz_seconds_per_question,
     )
-    assert lo <= len(result["quiz_questions"]) <= hi
+    assert sum(expected_per_section) == lesson_total, (
+        f"tier {tier} should budget {lesson_total} questions for the whole lesson"
+    )
+    assert requested == expected_per_section[0], (
+        f"tier {tier} section 0 should request {expected_per_section[0]} questions; "
+        f"prompt was: {captured_prompt[0][:400]}"
+    )
+    assert len(result["quiz_questions"]) == requested
 
 
 # ── Story 2-31 AC-3: cached Phase-1 work must match the lesson's tier ────────
@@ -359,7 +394,19 @@ async def test_narration_fan_out_payload_carries_every_declared_key_plus_plan_se
         for k in ("_section", "_section_index", "_total_sections", "_plan_segment"):
             assert k in send.arg, f"{send.node} payload missing {k}"
         plan_segment = send.arg["_plan_segment"]
-        assert set(plan_segment) == {"segment_id", "title", "continuity_notes"}
+        # S5-4 (AC9) adds duration_min: this segment's share of the lesson's
+        # narration budget, which narration_generator_node turns into an
+        # explicit word target. It rides _plan_segment rather than
+        # _FAN_OUT_STATE_KEYS precisely so no new fan-out key is introduced.
+        assert set(plan_segment) == {"segment_id", "title", "continuity_notes", "duration_min"}
+        # Presence is not enough: a None here silently disables the word budget
+        # for that segment (narration falls back to no length instruction at
+        # all), which is the pre-S5-4 behaviour wearing a post-S5-4 key.
+        assert isinstance(plan_segment["duration_min"], (int, float)), (
+            f"{send.arg['_plan_segment']['segment_id']}: duration_min must be a real "
+            "number — a missing/None value silently restores the unbudgeted narration"
+        )
+        assert plan_segment["duration_min"] > 0
 
 
 @pytest.mark.unit
