@@ -484,3 +484,33 @@ S5-3 chapter-context vs Gate 5 idempotency defect this story's Scale & Load Q6 p
 (issue-led, matching `feature/236-narration-post-planner-ordering`) rather than
 `sprint5/s5-4-duration-driven-lessons`. Both conventions are live in this repo; the branch was
 created before the story was numbered S5-4, and renaming it now would orphan PR #243.
+
+### Post-review merges (2026-09-24)
+
+`main` moved twice while this story was in review, and both merges changed
+behaviour rather than just resolving text:
+
+1. **Story 232 made 60db.ai the PRIMARY TTS tier** at a default `speed` of 1.0,
+   ahead of Sarvam. `_effective_narration_wpm` derived its rate from
+   `sarvam_narration_pace` (0.85), so from the moment #240 merged, every
+   deployment holding 60db credentials would have been budgeting ~18% fewer
+   words than its audio actually needed — silently, on every lesson. The helper
+   now reads the pace of whichever tier is configured primary
+   (`sixtydb_api_key` + `sixtydb_voice_id` present ⇒ `sixtydb_speed`), with a
+   test pinning both configurations. This is the same class of defect the story
+   exists to fix, arriving from the side while the story was open.
+2. **Story S5-1/S5-9** changed `_planner_system_prompt` to accept `book_context`
+   and return `(prompt, was_truncated)`, and routed the narration system prompt
+   through `_merge_bc`. Both S5-4 signals were folded into the new shapes: the
+   narration budget replaces `tier_framing` in the planner, and the length
+   instruction is spliced into `_narration_base_prompt` **before** the
+   untrusted-content guard and **before** the book-context merge, so a long book
+   context can never push the length target out of the prompt.
+   `lesson_jobs.node_outputs` keeps both `duration_report` and
+   `book_context_truncated` — siblings, not alternatives.
+
+**Register IDs were renumbered twice** (D173-D176 → D180-D183 → D184-D187):
+Story 232 had claimed D168-D179 and PR #246 then took D180. Worth a process
+note for the next long-lived branch — a `D-nn` claimed when an entry is written
+is not still free when the branch merges, which is precisely the collision the
+register's own banner describes.
