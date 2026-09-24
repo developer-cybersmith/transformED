@@ -254,3 +254,87 @@ def test_config_defaults_and_planner_batch_invariant() -> None:
     # gt=0 guard present on lesson_planner_batch_size (rejects 0 / negative)
     assert any(getattr(m, "gt", None) == 0 for m in fields["lesson_planner_batch_size"].metadata)
     assert any(getattr(m, "ge", None) == 1 for m in fields["structure_max_sections"].metadata)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Story 233 (piece 1 of 4): merge_section_range — collapse an arbitrary-length
+# section range into a single topic dict for topic_selection_node.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+def test_merge_section_range_preserves_all_text() -> None:
+    """Every original title and body token survives across an N-section merge."""
+    from app.modules.content.pipeline.nodes.structure_detection import merge_section_range
+
+    sections = _sections([f"UNIQUE_BODY_TOKEN_{i}" for i in range(6)])
+    out = merge_section_range(sections)
+
+    for i in range(6):
+        assert f"UNIQUE_BODY_TOKEN_{i}" in out["body"]
+        assert f"{i}. Step {i}" in out["body"] or i == 0  # first title lives in out["title"]
+    assert sections[0]["title"] in out["title"]
+
+
+@pytest.mark.unit
+def test_merge_section_range_keeps_first_title() -> None:
+    from app.modules.content.pipeline.nodes.structure_detection import merge_section_range
+
+    sections = _sections(["a" * 50, "b" * 50, "c" * 50])
+    out = merge_section_range(sections)
+
+    assert out["title"] == sections[0]["title"]
+
+
+@pytest.mark.unit
+def test_merge_section_range_uses_coarsest_level() -> None:
+    """Same coarsest-level contract as _merge_two, extended across N sections."""
+    from app.modules.content.pipeline.nodes.structure_detection import merge_section_range
+
+    sections = [
+        {"id": "s0", "title": "A", "level": "topic", "body": "x", "page_start": 1, "page_end": 1},
+        {"id": "s1", "title": "B", "level": "section", "body": "y", "page_start": 2, "page_end": 2},
+        {"id": "s2", "title": "C", "level": "chapter", "body": "z", "page_start": 3, "page_end": 3},
+    ]
+    out = merge_section_range(sections)
+
+    assert out["level"] == "chapter"
+
+
+@pytest.mark.unit
+def test_merge_section_range_unions_page_range() -> None:
+    from app.modules.content.pipeline.nodes.structure_detection import merge_section_range
+
+    sections = [
+        {"id": "s0", "title": "A", "level": "topic", "body": "x", "page_start": 5, "page_end": 7},
+        {"id": "s1", "title": "B", "level": "topic", "body": "y", "page_start": 1, "page_end": 2},
+        {"id": "s2", "title": "C", "level": "topic", "body": "z", "page_start": 9, "page_end": 12},
+    ]
+    out = merge_section_range(sections)
+
+    assert out["page_start"] == 1
+    assert out["page_end"] == 12
+
+
+@pytest.mark.unit
+def test_merge_section_range_single_section_is_near_identity() -> None:
+    """A single-section input returns an equivalent section (re-sequenced id)."""
+    from app.modules.content.pipeline.nodes.structure_detection import merge_section_range
+
+    sections = _sections(["only body here"])
+    out = merge_section_range(sections)
+
+    assert out["id"] == "s0"
+    assert out["title"] == sections[0]["title"]
+    assert out["body"] == sections[0]["body"]
+    assert out["level"] == sections[0]["level"]
+    assert out["page_start"] == sections[0]["page_start"]
+    assert out["page_end"] == sections[0]["page_end"]
+
+
+@pytest.mark.unit
+def test_merge_section_range_empty_list_raises() -> None:
+    from app.modules.content.pipeline.nodes.structure_detection import merge_section_range
+
+    with pytest.raises(ValueError, match="non-empty"):
+        merge_section_range([])

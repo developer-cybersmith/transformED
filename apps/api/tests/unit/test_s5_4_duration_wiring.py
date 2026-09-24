@@ -434,13 +434,22 @@ def test_oversized_section_cannot_take_the_whole_quiz_budget() -> None:
 
     settings = get_settings()
     cap = settings.section_body_max_chars
-    weights = [float(min(500_000, cap))] + [float(min(3_000, cap)) for _ in range(14)]
+    oversized_weight = float(min(500_000, cap))
+    normal_weight = float(min(3_000, cap))
+    weights = [oversized_weight] + [normal_weight for _ in range(14)]
     counts = g._quiz_budget_per_segment("T1", weights, settings.quiz_seconds_per_question)
 
     assert sum(counts) == 16
-    assert counts[0] <= 6, (
-        f"the oversized section took {counts[0]} of 16 questions — weights must be "
-        "capped at the text the LLM is actually shown"
+    # Bound computed from the LIVE cap (Story 233 re-derived section_body_max_chars
+    # upward, so a fixed magic number here would go stale the next time this value
+    # is re-tuned) rather than a proportional match — the invariant under test is
+    # "capped, not the section's raw uncapped length", not an exact ratio.
+    expected_share = oversized_weight / (oversized_weight + 14 * normal_weight)
+    max_expected = round(16 * expected_share) + 2
+    assert counts[0] <= max_expected, (
+        f"the oversized section took {counts[0]} of 16 questions for a "
+        f"{expected_share:.0%} weight share (cap={cap}) — weights must be capped "
+        "at the text the LLM is actually shown, not the section's raw (uncapped) length"
     )
     assert sum(1 for c in counts if c > 0) >= 8, "most sections must still get questions"
 

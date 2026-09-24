@@ -204,35 +204,35 @@ arithmetic shown, not left as a latent, undocumented risk.
 ## Tasks
 
 ### Task 1 — Guard-test survey (AC 12)
-- [ ] 1.1 Run the CLAUDE.md-mandated grep across `apps/api/tests/` for guard tests touching
+- [x] 1.1 Run the CLAUDE.md-mandated grep across `apps/api/tests/` for guard tests touching
   `structure_node`/`structure_detection`/`graph.py`'s Phase-1 fan-out; list results in Dev
   Agent Record.
 
 ### Task 2 — RED
-- [ ] 2.1 Write tests against the desired `topic_selection_node`/`merge_section_range`
+- [x] 2.1 Write tests against the desired `topic_selection_node`/`merge_section_range`
   behavior and confirm they fail against the current (pre-fix) code.
 
 ### Task 3 — GREEN: schema + structure_detection
-- [ ] 3.1 Add `TIER_TOPIC_COUNT` (AC 1).
-- [ ] 3.2 Add `merge_section_range` (AC 2).
-- [ ] 3.3 Re-derive `section_body_max_chars` (AC 9).
+- [x] 3.1 Add `TIER_TOPIC_COUNT` (AC 1).
+- [x] 3.2 Add `merge_section_range` (AC 2).
+- [x] 3.3 Re-derive `section_body_max_chars` (AC 9).
 
 ### Task 4 — GREEN: graph wiring
-- [ ] 4.1 Add `topic_selection_node` (AC 4, 5, 6, 7, 8, 10).
-- [ ] 4.2 Rewire `_build_pipeline_graph()` (AC 3).
-- [ ] 4.3 Verify `chunk_node`/`embed_node` unaffected (AC 11).
-- [ ] 4.4 Update module docstring's node-order diagram.
+- [x] 4.1 Add `topic_selection_node` (AC 4, 5, 6, 7, 8, 10).
+- [x] 4.2 Rewire `_build_pipeline_graph()` (AC 3).
+- [x] 4.3 Verify `chunk_node`/`embed_node` unaffected (AC 11).
+- [x] 4.4 Update module docstring's node-order diagram.
 
 ### Task 5 — GREEN: tests
-- [ ] 5.1 New `test_topic_selection_node.py`; new `merge_section_range` tests.
-- [ ] 5.2 Full regression run, ruff/format/mypy (AC 13, 14).
+- [x] 5.1 New `test_topic_selection_node.py`; new `merge_section_range` tests.
+- [x] 5.2 Full regression run, ruff/format/mypy (AC 13, 14).
 
 ### Task 6 — Review
 - [ ] 6.1 Parallel adversarial agent review (all 6 CLAUDE.md layers), same approach used for
   issue #236's PR #237.
 
 ### Task 7 — Commit
-- [ ] 7.1 Story-first commit (this file alone).
+- [x] 7.1 Story-first commit (this file alone) — `1f43589`, pushed.
 - [ ] 7.2 Implementation commit(s).
 - [ ] 7.3 `docs/dev1-tracker.md` entry referencing #233.
 
@@ -241,16 +241,100 @@ arithmetic shown, not left as a latent, undocumented risk.
 ### Implementation Plan
 See the approved plan at implementation time
 (`/Users/apple/.claude/plans/whimsical-tickling-rocket.md` as of this story's creation) —
-summarized in Context & Scope Boundary above.
+summarized in Context & Scope Boundary above. Implemented exactly as planned; no design
+deviations.
 
 ### Debug Log
-_(filled in during implementation)_
+
+**Guard-test survey (Task 1)**, `grep -rln "test_.*structure\|test_.*graph\|test_no_hardcoded\|test_dunder_all\|test_node_return_shape\|test_unbounded_queries" apps/api/tests/`, narrowed to
+what this story's files actually touch:
+- `test_node_return_shape.py`, `test_unbounded_queries.py` — repo-wide guards, re-run clean.
+- `test_structure_no_llm.py` — investigated; its only `__all__` assertion is about
+  `app.schemas.DocumentStructure`, unrelated to `structure_detection.py` (which has no
+  `__all__` at all) — no allowlist update needed for `merge_section_range`.
+- `test_structure_node.py`, `test_coalesce_sections.py` — direct coverage of the merge
+  primitives `merge_section_range` is built on; new tests appended to the latter.
+- `test_fan_out_state_keys.py`, `test_phase1_economy_nodes.py`,
+  `test_phase1_checkpoint_idempotency.py` — Phase-1 fan-out shape; one test in
+  `test_phase1_economy_nodes.py` needed `topic_selection_node` added to its sequential-node
+  stub list (see below).
+- `test_pipeline_tier1.py`, `test_s5_4_duration_wiring.py` — tier-driven behavior; one test in
+  the latter needed its hardcoded assertion bound recomputed from the live (now-changed)
+  `section_body_max_chars` value.
+- `test_chunk_node.py` — re-run clean, confirms `chunk_node`/`embed_node` unaffected (AC 11).
+
+**Real regressions found and fixed while making the guard-test/full-suite runs pass (all
+expected, direct consequences of collapsing sections into 1-2 topics before Phase 1 —
+not defects in the change itself):**
+1. `test_oversized_section_cannot_take_the_whole_quiz_budget`
+   (`test_s5_4_duration_wiring.py`) — hardcoded `counts[0] <= 6` assumed the old 6,000-char
+   cap; rewrote the bound to compute from the live `section_body_max_chars` so it stays
+   correct if this value is re-tuned again later, instead of hardcoding a new magic number.
+2. `test_economy_nodes_run_before_lesson_planner_and_fan_out_per_section`
+   (`test_phase1_economy_nodes.py`) — the real `topic_selection_node` was running
+   un-stubbed inside this end-to-end graph test, collapsing its 3-section fixture to 2
+   topics and breaking the "one call per section" assertion. Added
+   `topic_selection_node` to the test's existing sequential-node pass-through stub list —
+   this test verifies fan-out mechanics, not topic-collapsing (that's this story's own
+   test file's job).
+3. `test_tier_changes_the_delivered_package` (`test_tier_differentiation_and_cost.py`) —
+   asserted `len(set(seg_counts.values())) == 1` (segment count must be identical across
+   tiers), a premise this story exists to break. Replaced with the actual new contract:
+   `T3 == 1 topic, T1/T2 == 2 topics`, verified end-to-end through the real graph — turns a
+   stale check into a positive regression test for `TIER_TOPIC_COUNT`.
+4. Both integration tests' fake LLM router (`test_howto_pipeline_e2e.py`) had no case for
+   the new `_StructureTopicSplitLLM` — added one (parses the requested section count from
+   the prompt, returns a middle split). This also surfaced that the fake's quiz-batch size
+   (previously 3, tuned for ~15 small per-section allocations) was now the binding
+   constraint once allocations concentrate on 1-2 much-larger topics — raised to a new
+   shared `_QUIZ_FAKE_BATCH_SIZE = 20` constant (comfortably above the largest real tier
+   lesson-total budget), referenced (not re-hardcoded) everywhere it's checked.
+5. One pre-existing, unrelated failure confirmed on this branch's base commit before any
+   of this story's changes (`test_effective_wpm_is_not_the_raw_rate`,
+   `test_s5_4_duration_budget.py`) — verified via `git stash` that it fails identically
+   with zero implementation changes applied. Not touched; not in scope.
 
 ### Completion Notes
-_(filled in during implementation)_
+All 14 ACs implemented and verified:
+- `TIER_TOPIC_COUNT` (`schemas/lesson.py`), `merge_section_range` (`structure_detection.py`,
+  18/18 tests including the 6 new ones), `section_body_max_chars` re-derived 6,000 → 45,000
+  with the arithmetic in its own `description=` (`config.py`).
+- `topic_selection_node`, `_StructureTopicSplitLLM`, `_topic_selection_llm_split`,
+  `_topic_selection_midpoint_split` in `graph.py`, wired `embed -> topic_selection ->
+  <Phase-1 fan-out>`; module docstring's 17-node diagram updated.
+- 12 new tests in `test_topic_selection_node.py` (no-op both tiers, 1-topic merge, 2-topic
+  LLM split, 3 distinct degrade-not-fabricate fallback paths, section-shape contract,
+  checkpoint-always-written, idempotent cache-hit).
+- Full regression: 1,663 unit tests + 20 integration tests passing (1 pre-existing,
+  unrelated failure noted above — not a regression from this change). `ruff check .` and
+  `ruff format --check .` clean repo-wide. `mypy app`: 4 pre-existing errors, all in
+  `providers/llm|stt|image|embeddings` (httpx/OpenAI typing), none in any file this story
+  touched.
+- Not yet done: Task 6 (6-layer adversarial review) and Task 7.2/7.3 (implementation
+  commit, dev1-tracker entry) — next steps.
 
 ### File List
-_(filled in during implementation)_
+- `apps/api/app/config.py` — `section_body_max_chars` default + description re-derived.
+- `apps/api/app/schemas/lesson.py` — new `TIER_TOPIC_COUNT`.
+- `apps/api/app/modules/content/pipeline/nodes/structure_detection.py` — new
+  `merge_section_range`.
+- `apps/api/app/modules/content/pipeline/graph.py` — new `topic_selection_node`,
+  `_StructureTopicSplitLLM`, `_topic_selection_llm_split`,
+  `_topic_selection_midpoint_split`; `_build_pipeline_graph()` rewired; module docstring
+  updated.
+- `apps/api/tests/unit/test_topic_selection_node.py` — new file, 12 tests.
+- `apps/api/tests/unit/test_coalesce_sections.py` — 6 new `merge_section_range` tests.
+- `apps/api/tests/unit/test_s5_4_duration_wiring.py` — 1 test's hardcoded bound made
+  dynamic (regression fix #1 above).
+- `apps/api/tests/unit/test_phase1_economy_nodes.py` — `topic_selection_node` added to a
+  stub list (regression fix #2 above).
+- `apps/api/tests/integration/test_tier_differentiation_and_cost.py` — stale invariant
+  replaced with the real new contract (regression fix #3 above).
+- `apps/api/tests/integration/test_howto_pipeline_e2e.py` — new
+  `_StructureTopicSplitLLM` mock case, new shared `_QUIZ_FAKE_BATCH_SIZE` constant
+  (regression fix #4 above), one stale comment corrected.
 
 ### Change Log
 - 2026-09-24: Story file created (story-first commit), branch `feature/233-topic-selection-step`.
+- 2026-09-25: Implementation complete (Tasks 1-5) — see Dev Agent Record above. Full
+  regression green. Task 6 (adversarial review) and Task 7.2/7.3 next.

@@ -182,6 +182,27 @@ def _merge_two(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def merge_section_range(sections: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge an arbitrary-length list of sections into a single section dict.
+
+    Story 233 (piece 1 of 4): the primitive `topic_selection_node` uses to
+    collapse a chapter's sections into one topic. A left-fold over the same
+    text-preserving `_merge_two` `coalesce_sections` already uses — no new
+    merge logic. Keeps the first section's title, the coarsest level among
+    all members, and the union of every member's page range; every title and
+    body is folded into the result, so no source text is ever dropped.
+
+    Raises ``ValueError`` on an empty list — callers must not invoke this with
+    zero sections (there is nothing to merge)."""
+    if not sections:
+        raise ValueError("merge_section_range: sections must be non-empty")
+    merged = dict(sections[0])
+    for nxt in sections[1:]:
+        merged = _merge_two(merged, nxt)
+    merged["id"] = "s0"
+    return merged
+
+
 def coalesce_sections(
     sections: list[dict[str, Any]],
     *,

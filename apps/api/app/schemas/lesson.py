@@ -77,6 +77,17 @@ SEAT_TIME_SHARES: dict[str, float] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Topic count by tier (Story 233, piece 1 of 4 — issue #233)
+# ---------------------------------------------------------------------------
+# Every lesson teaches exactly 1 topic (15-min, T3) or 2 topics (30/45-min,
+# T1/T2) — never however many sections a chapter happens to have.
+# `topic_selection_node` reads this to decide how many topics to collapse
+# `state["sections"]` down to. Same duration meaning as TIER_SEAT_MINUTES
+# above, not a separate tier semantics.
+TIER_TOPIC_COUNT: dict[str, int] = {"T1": 2, "T2": 2, "T3": 1}
+
+
 def _seat_minutes(tier: str | None) -> int:
     """Seat minutes for *tier*, falling back to the default tier.
 
