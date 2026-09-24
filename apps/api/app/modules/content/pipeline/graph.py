@@ -66,12 +66,15 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
 from pydantic import BaseModel
+from supabase import Client
+
+from app.core.db import rows, single_row
+from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace, traced_node
+from app.core.retry import with_retry
+from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
 
 # Single source of truth for the Learner Mode tier default (also used by
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
-from app.core.db import rows, single_row
-from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace, traced_node
-from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import (
     TIER_SEAT_MINUTES,
@@ -785,6 +788,18 @@ def _existing_chunks_for_chapter(
         offset += page_size
 
 
+@with_retry(max_attempts=3)
+async def _upsert_new_chunk_rows(supabase: Client, db_rows: list[dict[str, Any]]) -> None:
+    """Bulk-upsert newly-detected chunk rows (embedding left NULL).
+
+    Retried (issue #245): a transient PostgREST/Cloudflare error here (e.g. a
+    Cloudflare 521 "origin down") previously discarded chunk-detection work
+    permanently on the first blip -- with_retry now classifies
+    postgrest.exceptions.APIError and retries the retryable subset.
+    """
+    supabase.table("chunks").upsert(db_rows).execute()
+
+
 @traced_node("chunk_node")
 async def chunk_node(state: PipelineState) -> PipelineState:
     """Node 3: Split sections into token-bounded chunks and write to Supabase.
@@ -940,7 +955,7 @@ async def chunk_node(state: PipelineState) -> PipelineState:
     ]
     if db_rows:
         try:
-            supabase.table("chunks").upsert(db_rows).execute()
+            await _upsert_new_chunk_rows(supabase, db_rows)
         except Exception as exc:
             raise RuntimeError(
                 f"chunk_node: failed to upsert {len(db_rows)} chunks for lesson_id={lesson_id}"
@@ -967,6 +982,28 @@ async def chunk_node(state: PipelineState) -> PipelineState:
 #   - ~8191 tokens per single input — one oversized input 400s the WHOLE batch
 _MAX_EMBED_BATCH_ITEMS = 2048
 _MAX_EMBED_INPUT_TOKENS = 8000  # safety margin under the ~8191-token model cap
+
+
+@with_retry(max_attempts=3)
+async def _upsert_embedded_chunk_batch(supabase: Client, rows: list[dict[str, Any]]) -> None:
+    """Bulk-upsert one batch of embedded chunk rows.
+
+    Retried (issue #245): this call sits downstream of real, already-spent
+    OpenAI embedding cost for the batch -- a transient PostgREST/Cloudflare
+    error here previously discarded that spend permanently on the first blip,
+    with zero retry at any layer. with_retry now classifies
+    postgrest.exceptions.APIError and retries the retryable subset.
+    """
+    import asyncio
+
+    await asyncio.to_thread(
+        # mypy cannot infer a keyword-defaulted lambda passed to
+        # asyncio.to_thread (ParamSpec limitation); the default-capture idiom
+        # is intentional, so a rewrite would alter runtime behavior.
+        lambda rows=rows: (  # type: ignore[misc]
+            supabase.table("chunks").upsert(rows, on_conflict="chunk_id").execute()
+        )
+    )
 
 
 @traced_node("embed_node")
@@ -1153,14 +1190,7 @@ async def embed_node(state: PipelineState) -> PipelineState:
                 for (c, _), embedding in zip(batch, embeddings, strict=False)
             ]
             try:
-                await asyncio.to_thread(
-                    # mypy cannot infer a keyword-defaulted lambda passed to
-                    # asyncio.to_thread (ParamSpec limitation); the default-capture
-                    # idiom is intentional, so a rewrite would alter runtime behavior.
-                    lambda rows=rows: (  # type: ignore[misc]
-                        supabase.table("chunks").upsert(rows, on_conflict="chunk_id").execute()
-                    )
-                )
+                await _upsert_embedded_chunk_batch(supabase, rows)
             except Exception as exc:
                 raise RuntimeError(
                     f"embed_node: failed to bulk-write {len(rows)} embeddings "
