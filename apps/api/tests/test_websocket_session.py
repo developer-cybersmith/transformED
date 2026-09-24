@@ -563,6 +563,7 @@ def test_g8_qa_phase_seconds_helper_maps_all_tiers(mocker):
 def test_g9_settings_have_learner_tier_fields():
     """AC5: all four learner_tier_* fields exist on Settings with correct defaults."""
     from app.config import Settings
+    from app.schemas.lesson import DEFAULT_TIER, qa_budget_seconds
 
     fields = Settings.model_fields
     assert "learner_tier_t1_qa_seconds" in fields
@@ -570,10 +571,16 @@ def test_g9_settings_have_learner_tier_fields():
     assert "learner_tier_t3_qa_seconds" in fields
     assert "learner_tier_default_qa_seconds" in fields
 
-    assert fields["learner_tier_t1_qa_seconds"].default == 600
-    assert fields["learner_tier_t2_qa_seconds"].default == 300
-    assert fields["learner_tier_t3_qa_seconds"].default == 150
-    assert fields["learner_tier_default_qa_seconds"].default == 300
+    # Story S5-4 rebased these from 600/300/150 to 270/180/90. Under S5-4 the
+    # tier's minutes are TOTAL SEAT TIME and the Q&A phase is the 10% share of
+    # it (SEAT_TIME_SHARES["qa"]) — SUBTRACTED from the advertised duration.
+    # The old values were added ON TOP: a nominally 45-minute T1 lesson really
+    # ran 55. Derived from the shared table rather than retyped, so this test
+    # cannot drift from the budget it is asserting.
+    assert fields["learner_tier_t1_qa_seconds"].default == qa_budget_seconds("T1") == 270
+    assert fields["learner_tier_t2_qa_seconds"].default == qa_budget_seconds("T2") == 180
+    assert fields["learner_tier_t3_qa_seconds"].default == qa_budget_seconds("T3") == 90
+    assert fields["learner_tier_default_qa_seconds"].default == qa_budget_seconds(DEFAULT_TIER)
 
 
 @pytest.mark.unit

@@ -383,6 +383,36 @@ def test_narration_audio_provider_enum() -> None:
         )
 
 
+def test_narration_audio_provider_accepts_sixtydb() -> None:
+    """Story 232 (review finding, AC 8): "sixtydb" was added to the frozen
+    AudioProvider enum across 3 files (schemas/lesson.py, lesson.ts,
+    lesson_package.schema.json) with no test asserting it — this closes that
+    gap, checking both the Pydantic model and the raw JSON schema (the same
+    round-trip convention every other AC in this file already uses)."""
+    narration = Narration(
+        script="x",
+        audio_url="https://x.com/a.mp3",
+        audio_provider="sixtydb",
+        timestamps=[],
+    )
+    assert narration.audio_provider == "sixtydb"
+
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    package_dict = {
+        **MINIMAL_PACKAGE_DICT,
+        "segments": [
+            {
+                **MINIMAL_PACKAGE_DICT["segments"][0],
+                "narration": {
+                    **MINIMAL_PACKAGE_DICT["segments"][0]["narration"],
+                    "audio_provider": "sixtydb",
+                },
+            }
+        ],
+    }
+    jsonschema.validate(instance=package_dict, schema=schema)
+
+
 # ---------------------------------------------------------------------------
 # LessonRecord
 # ---------------------------------------------------------------------------

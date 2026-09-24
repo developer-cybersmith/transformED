@@ -5,6 +5,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useBook } from "@/hooks/useBooks";
 import { useChapters } from "@/hooks/useChapters";
 import { isNotFoundError } from "@/services/books.service";
+import { BookContextForm } from "./BookContextForm";
 import { ChapterRow } from "./ChapterRow";
 
 export function BookDetail({ bookId }: { bookId: string }) {
@@ -62,6 +63,18 @@ export function BookDetail({ bookId }: { bookId: string }) {
                     </p>
                 )}
             </div>
+
+            {/* S5-9: Show the form as soon as the book record exists, so the learner
+                can fill it while chapters are detecting — form-filling and chapter
+                detection run in parallel (industry-standard "upload + form during
+                processing" UX). Hidden only when the book failed to process (no
+                chapters will ever appear; the form context would be wasted). */}
+            {book != null && book.status !== "failed" && (
+                <BookContextForm
+                    bookId={bookId}
+                    isProcessing={book.status === "processing"}
+                />
+            )}
 
             {/* A poll failure must not hide chapters the student can already see. */}
             {staleError && (

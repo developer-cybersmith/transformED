@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fish Audio TTS API — Technical Research Report</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1117; color: #e2e8f0; line-height: 1.6; padding: 2rem 1rem; }
+    .container { max-width: 900px; margin: 0 auto; }
+    h1 { font-size: 1.8rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.25rem; }
+    .subtitle { color: #94a3b8; font-size: 0.9rem; margin-bottom: 2.5rem; }
+    .tag { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 12px; margin-left: 6px; vertical-align: middle; }
+    .tag-verified { background: #14532d; color: #86efac; }
+    .tag-partial { background: #7c2d12; color: #fdba74; }
+    .tag-unverified { background: #581c87; color: #d8b4fe; }
+    .tag-no { background: #1e293b; color: #94a3b8; }
+    section { margin-bottom: 2rem; background: #1e2130; border: 1px solid #2d3348; border-radius: 10px; padding: 1.5rem; }
+    section h2 { font-size: 1.1rem; font-weight: 700; color: #f1f5f9; margin-bottom: 1rem; border-bottom: 1px solid #2d3348; padding-bottom: 0.5rem; }
+    section h3 { font-size: 0.9rem; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin: 1rem 0 0.5rem; }
+    p { color: #cbd5e1; font-size: 0.95rem; margin-bottom: 0.75rem; }
+    ul { margin: 0.5rem 0 0.75rem 1.25rem; color: #cbd5e1; font-size: 0.95rem; }
+    li { margin-bottom: 0.3rem; }
+    .verdict { padding: 0.75rem 1rem; border-radius: 6px; font-size: 0.9rem; font-weight: 600; margin-top: 0.75rem; }
+    .verdict-no { background: #1c1917; border-left: 3px solid #ef4444; color: #fca5a5; }
+    .verdict-yes { background: #052e16; border-left: 3px solid #22c55e; color: #86efac; }
+    .verdict-partial { background: #1c1107; border-left: 3px solid #f97316; color: #fdba74; }
+    code { font-family: "Fira Code", "Cascadia Code", monospace; background: #0f1117; color: #7dd3fc; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; }
+    pre { background: #0f1117; border: 1px solid #2d3348; border-radius: 6px; padding: 1rem; overflow-x: auto; font-size: 0.82rem; color: #94a3b8; margin: 0.75rem 0; }
+    pre code { background: none; padding: 0; font-size: 0.82rem; color: #e2e8f0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.88rem; margin: 0.75rem 0; }
+    th { background: #0f1117; color: #94a3b8; font-weight: 600; text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #2d3348; }
+    td { padding: 0.45rem 0.75rem; border-bottom: 1px solid #1e2130; color: #cbd5e1; }
+    tr:last-child td { border-bottom: none; }
+    .highlight { color: #fbbf24; font-weight: 600; }
+    .sources { margin-top: 0.75rem; padding: 0.75rem; background: #0f1117; border-radius: 6px; font-size: 0.8rem; color: #64748b; }
+    .sources a { color: #60a5fa; text-decoration: none; }
+    .sources a:hover { text-decoration: underline; }
+    .meta-banner { background: #1e2840; border: 1px solid #2d4a7a; border-radius: 8px; padding: 1rem 1.25rem; margin-bottom: 2rem; font-size: 0.85rem; color: #93c5fd; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Fish Audio TTS API — Technical Research Report</h1>
+  <div class="subtitle">Researched 2026-09-03 &nbsp;|&nbsp; Sources: docs.fish.audio, fish.audio, 3rd-party docs, GitHub</div>
+
+  <div class="meta-banner">
+    <strong>Context:</strong> This report evaluates Fish Audio as a potential TTS provider for the TransformED platform (replacing or supplementing Sarvam Bulbul v2 → Azure → Browser Speech fallback chain). Key question is whether it can provide word-level timing for audio-timeline synchronization in the lesson player.
+  </div>
+
+  <!-- Q1: Timestamps / Alignment -->
+  <section>
+    <h2>1. Word-Level Timestamps / Alignment Data <span class="tag tag-verified">VERIFIED</span></h2>
+
+    <div class="verdict verdict-yes">YES — Fish Audio has a dedicated streaming endpoint that returns segment-level timestamp data.</div>
+
+    <h3>The Endpoint</h3>
+    <p><code>POST https://api.fish.audio/v1/tts/stream/with-timestamp</code></p>
+    <p>Returns a <strong>Server-Sent Events stream</strong> where each event carries a JSON payload:</p>
+
+    <pre><code>{
+  "audio_base64": "string",      // base64 chunk of audio
+  "content": "string",           // text content of this chunk
+  "chunk_seq": 1,                // sequence number
+  "chunk_audio_offset_sec": 0.0, // global offset for this chunk
+  "alignment": {
+    "segments": [
+      { "text": "Hello", "start": 0.0, "end": 0.35 },
+      { "text": "world", "start": 0.35, "end": 0.72 }
+    ],
+    "audio_duration": 0.72
+  } // null before first snapshot or when unavailable
+}</code></pre>
+
+    <h3>Critical Details</h3>
+    <ul>
+      <li>Timestamps are <span class="highlight">segment-level, not word-level</span>. The "segments" array corresponds to text segments chunked by the <code>chunk_length</code> parameter — typically phrases/sentences, not individual words.</li>
+      <li>Segment times are <strong>relative to chunk start</strong>. Add <code>chunk_audio_offset_sec</code> to get absolute timeline position.</li>
+      <li><code>alignment</code> replaces (not appends) the previous snapshot for the same <code>chunk_seq</code> — store in a map keyed by <code>chunk_seq</code>.</li>
+      <li>The <strong>standard TTS endpoint</strong> (<code>/v1/tts</code>) returns raw binary audio only — no timing data whatsoever.</li>
+      <li><strong>No phoneme-level timing output.</strong> Phoneme control (CMU Arpabet etc.) is input-only — it tells the model how to pronounce, does not return timestamps.</li>
+      <li><strong>No forced-alignment endpoint.</strong> No separate endpoint to align pre-existing audio to text.</li>
+    </ul>
+
+    <h3>Phoneme INPUT Control (not output)</h3>
+    <p>Fish Audio accepts phoneme-level pronunciation hints via inline tags in the request text. This is input control only — it does NOT return phoneme timestamps.</p>
+    <pre><code>// English (CMU Arpabet)
+"I am an &lt;|phoneme_start|&gt;EH1 N JH AH0 N IH1 R&lt;|phoneme_end|&gt;."
+
+// Chinese (tone-number pinyin)
+"我是&lt;|phoneme_start|&gt;gong1&lt;|phoneme_end|&gt;&lt;|phoneme_start|&gt;cheng2&lt;|phoneme_end|&gt;"</code></pre>
+    <p>Supported for: English (CMU Arpabet), Chinese (Pinyin), Japanese (OpenJTalk romaji). <span class="highlight">Hindi and Indian scripts: not documented for phoneme control.</span></p>
+
+    <div class="sources">Sources: <a href="https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech-stream-with-timestamps">docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech-stream-with-timestamps</a> | <a href="https://docs.fish.audio/developer-guide/core-features/fine-grained-control">docs.fish.audio — fine-grained-control</a></div>
+  </section>
+
+  <!-- Q2: Audio Formats -->
+  <section>
+    <h2>2. Audio Output Formats <span class="tag tag-verified">VERIFIED</span></h2>
+
+    <table>
+      <tr><th>Format</th><th>Sample Rate</th><th>Bitrate Options</th><th>Notes</th></tr>
+      <tr><td><code>mp3</code> (default)</td><td>32–44.1 kHz (default 44.1 kHz)</td><td>64 / 128 / 192 kbps</td><td>Broadest compatibility</td></tr>
+      <tr><td><code>wav</code></td><td>8–44.1 kHz (default 44.1 kHz)</td><td>16-bit mono, no compression</td><td>Largest payload</td></tr>
+      <tr><td><code>pcm</code></td><td>8–44.1 kHz</td><td>Raw uncompressed</td><td>For direct DSP pipelines</td></tr>
+      <tr><td><code>opus</code></td><td>48 kHz (fixed)</td><td>−1000 (auto) / 24k / 32k / 48k / 64k bps</td><td><strong>Recommended for streaming</strong></td></tr>
+    </table>
+
+    <p>The timestamp streaming endpoint docs explicitly recommend <strong>Opus at 48 kHz</strong> for streaming: "designed for streaming and gives the best balance of quality, latency, and bandwidth for this endpoint."</p>
+
+    <div class="sources">Sources: <a href="https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech">docs.fish.audio — TTS endpoint</a></div>
+  </section>
+
+  <!-- Q3: Languages -->
+  <section>
+    <h2>3. Language Support <span class="tag tag-verified">VERIFIED</span></h2>
+
+    <table>
+      <tr><th>Model</th><th>Language Count</th><th>Hindi</th><th>Indian English</th></tr>
+      <tr><td><code>s2.1-pro</code> (current)</td><td>83</td><td>Yes (confirmed)</td><td>Unspecified — automatic detection</td></tr>
+      <tr><td><code>s2-pro</code> (prev gen)</td><td>80+</td><td>Likely</td><td>Unspecified</td></tr>
+      <tr><td><code>s1</code> (legacy)</td><td>13</td><td>No</td><td>No</td></tr>
+    </table>
+
+    <h3>Full Language List (S2.1-Pro, 83 languages)</h3>
+    <p>Confirmed via testingcatalog.com announcement of S2.1-Pro launch:</p>
+    <p style="font-size:0.85rem; color:#94a3b8; line-height:1.8;">
+      Afrikaans, Amharic, Arabic, Assamese, Azerbaijani, Belarusian, <strong class="highlight">Bengali</strong>, Bosnian, Bulgarian, Catalan, Czech, Welsh, Danish, German, Greek, <strong class="highlight">English</strong>, Estonian, Basque, Persian, Finnish, French, Galician, <strong class="highlight">Gujarati</strong>, Haitian, Hebrew, <strong class="highlight">Hindi</strong>, Croatian, Hungarian, Armenian, Indonesian, Icelandic, Italian, Javanese, Japanese, <strong class="highlight">Kannada</strong>, Georgian, Kazakh, Khmer, Korean, Latin, Latvian, Lithuanian, <strong class="highlight">Malayalam</strong>, <strong class="highlight">Marathi</strong>, Mongolian, Malay, Burmese, <strong class="highlight">Nepali</strong>, Dutch, Norwegian, <strong class="highlight">Punjabi</strong>, Polish, Portuguese, Romanian, Russian, Sanskrit, Sinhala, Slovak, Sindhi, Spanish, Albanian, Serbian, Swahili, Swedish, <strong class="highlight">Tamil</strong>, <strong class="highlight">Telugu</strong>, Tagalog, Thai, Turkish, Ukrainian, <strong class="highlight">Urdu</strong>, Vietnamese, Yiddish, Yoruba, Chinese (Simplified), Chinese (Traditional), Tibetan, Maori, and more.
+    </p>
+
+    <div class="verdict verdict-partial">PARTIAL — Hindi is confirmed. "Indian English" as a distinct accent is NOT documented. Language detection is automatic (no language parameter needed), which means an Indian-accented English voice can be cloned from a reference clip, but the base model's English accent provenance is unspecified.</div>
+
+    <p><strong>Practical workaround for Indian English:</strong> Use voice cloning with a reference audio clip of an Indian English speaker. Fish Audio supports zero-shot voice cloning from 10–30 seconds of reference audio across all 83 languages.</p>
+
+    <div class="sources">Sources: <a href="https://www.testingcatalog.com/fish-audio-launches-s2-1-pro-with-support-for-83-languages/">testingcatalog.com — S2.1-Pro launch</a> | <a href="https://docs.fish.audio/developer-guide/models-pricing/models-overview">docs.fish.audio — models overview</a></div>
+  </section>
+
+  <!-- Q4: SSML -->
+  <section>
+    <h2>4. SSML / Structured Timing Output <span class="tag tag-no">NOT SUPPORTED</span></h2>
+
+    <div class="verdict verdict-no">Fish Audio does NOT support SSML. They use a custom inline tag syntax instead.</div>
+
+    <h3>Their Alternative: Inline Bracket Tags</h3>
+    <p>Place natural-language emotion/delivery instructions directly in text using square brackets:</p>
+    <pre><code>[whispering] I didn't want to go inside.
+I didn't want to [emphasis] really mean it.
+[angry] How dare you!</code></pre>
+
+    <h3>Supported Tag Categories (S2-Pro / S2.1-Pro)</h3>
+    <ul>
+      <li><strong>Emotion:</strong> <code>[angry]</code>, <code>[sad]</code>, <code>[excited]</code>, <code>[embarrassed]</code></li>
+      <li><strong>Voice style:</strong> <code>[whispering]</code>, <code>[soft]</code>, <code>[breathy]</code>, <code>[shouting]</code></li>
+      <li><strong>Pacing:</strong> <code>[pause]</code>, <code>[long pause]</code></li>
+      <li><strong>Vocal sounds:</strong> <code>[laughing]</code>, <code>[chuckling]</code>, <code>[sobbing]</code>, <code>[sighing]</code>, <code>[panting]</code>, <code>[clear throat]</code></li>
+      <li><strong>Open-domain:</strong> Any natural-language description accepted — "whispers sweetly", "says nervously"</li>
+    </ul>
+
+    <h3>S1 Model (Legacy)</h3>
+    <p>S1 uses parenthesis syntax instead: <code>(angry)</code>, <code>(laughing)</code> etc. — 64+ predefined expressions.</p>
+
+    <h3>Paralanguage Controls</h3>
+    <p>Special parenthesis tokens for non-verbal sounds: <code>(break)</code>, <code>(long-break)</code>, <code>(breath)</code>, <code>(laugh)</code>, <code>(cough)</code>, <code>(lip-smacking)</code>, <code>(sigh)</code></p>
+
+    <div class="sources">Sources: <a href="https://fish.audio/blog/fish-audio-s2-fine-grained-ai-voice-control-at-the-word-level/">fish.audio blog — S2 word-level control</a> | <a href="https://docs.fish.audio/developer-guide/core-features/fine-grained-control">docs.fish.audio — fine-grained-control</a></div>
+  </section>
+
+  <!-- Q5: Forced Alignment -->
+  <section>
+    <h2>5. Forced-Alignment Endpoint <span class="tag tag-no">NOT FOUND</span></h2>
+
+    <div class="verdict verdict-no">No forced-alignment endpoint exists in Fish Audio's documented API surface.</div>
+
+    <p>Fish Audio offers:</p>
+    <ul>
+      <li><strong>TTS with inline timestamps</strong> — generates audio AND returns segment offsets simultaneously</li>
+      <li><strong>Speech-to-Text (ASR)</strong> — transcribes audio with segment-level timestamps (see Q1 above for STT details)</li>
+    </ul>
+    <p>There is no "give me existing audio + transcript, return aligned timestamps" endpoint. If forced alignment is required, an external tool (WhisperX, Montreal Forced Aligner, etc.) would be needed.</p>
+  </section>
+
+  <!-- Q6: Pricing -->
+  <section>
+    <h2>6. Pricing <span class="tag tag-verified">VERIFIED</span></h2>
+
+    <h3>Subscription Plans</h3>
+    <table>
+      <tr><th>Plan</th><th>Price/Month</th><th>Credits</th><th>~Generation Time</th><th>Commercial Use</th></tr>
+      <tr><td>Free</td><td>$0</td><td>8,000</td><td>~7 min/month</td><td>No</td></tr>
+      <tr><td>Plus</td><td>$11</td><td>250,000</td><td>~200 min/month</td><td>Yes</td></tr>
+      <tr><td>Pro</td><td>$75</td><td>2,000,000</td><td>~1,620 min/month</td><td>Yes</td></tr>
+      <tr><td>Max</td><td>$749</td><td>25,000,000</td><td>~6,250 min/month</td><td>Yes</td></tr>
+    </table>
+
+    <p><em>Annual billing saves ~33% across all plans.</em></p>
+
+    <h3>Pay-As-You-Go API Pricing</h3>
+    <table>
+      <tr><th>Service</th><th>Rate</th><th>Notes</th></tr>
+      <tr><td>TTS (S2-Pro / S2.1-Pro)</td><td>$15 / 1M UTF-8 bytes</td><td>≈ $15/1M English chars; non-Latin 3–4 bytes/char → ~$45–60/1M Hindi chars</td></tr>
+      <tr><td>TTS (S1)</td><td>$15 / 1M UTF-8 bytes</td><td>Same rate</td></tr>
+      <tr><td>ASR (Speech-to-Text)</td><td>$0.36 / audio hour</td><td></td></tr>
+    </table>
+
+    <div class="verdict verdict-partial">CAUTION: Hindi/Indic script billing — UTF-8 encoding means Hindi Devanagari characters (3 bytes each) cost 3× more than English. A 1M character Hindi script costs ~$45 not $15.</div>
+
+    <h3>Free API Tier (S2.1-Pro-Free)</h3>
+    <ul>
+      <li>Model string: <code>s2.1-pro-free</code></li>
+      <li>No hard character cap (Fair Use Policy applies)</li>
+      <li>No TTFA or uptime guarantees</li>
+      <li>Free access was extended through August 31, 2026 — <span class="highlight">status after that date UNVERIFIED</span></li>
+      <li>Commercial restriction: products generating &gt;$1M ARR must contact Fish Audio</li>
+    </ul>
+
+    <h3>Free Subscription Tier Limits</h3>
+    <ul>
+      <li>500 characters per generation maximum</li>
+      <li>3 public voice slots</li>
+      <li>Personal use only — no commercial rights</li>
+    </ul>
+
+    <div class="sources">Sources: <a href="https://texttolab.com/blog/fish-audio-pricing">texttolab.com — Fish Audio pricing</a> | <a href="https://fish.audio/blog/s2-1-pro-free-api/">fish.audio blog — S2.1 Pro free API</a></div>
+  </section>
+
+  <!-- Q7: Streaming / Latency -->
+  <section>
+    <h2>7. Streaming &amp; Latency <span class="tag tag-verified">VERIFIED</span></h2>
+
+    <h3>Delivery Modes</h3>
+    <table>
+      <tr><th>Mode</th><th>Endpoint</th><th>Protocol</th></tr>
+      <tr><td>Standard batch</td><td><code>POST /v1/tts</code></td><td>HTTP chunked transfer (audio binary)</td></tr>
+      <tr><td>Streaming with timestamps</td><td><code>POST /v1/tts/stream/with-timestamp</code></td><td>Server-Sent Events (SSE)</td></tr>
+      <tr><td>WebSocket TTS</td><td>WebSocket endpoint</td><td>WebSocket (real-time streaming)</td></tr>
+    </table>
+
+    <h3>Latency Mode Parameter</h3>
+    <p>The <code>latency</code> field on TTS requests accepts:</p>
+    <ul>
+      <li><code>"low"</code> — lowest TTFA, may trade quality</li>
+      <li><code>"balanced"</code> — ~300ms TTFA, good for interactive apps (docs call this recommended for voice agents)</li>
+      <li><code>"normal"</code> (default) — most stable output, slightly higher latency</li>
+    </ul>
+
+    <h3>TTFA Benchmarks (from Fish Audio blog)</h3>
+    <ul>
+      <li><strong>S2.1-Pro:</strong> ~70ms TTFA at single request on production infrastructure</li>
+      <li><strong>S2-Pro:</strong> ~100ms TTFA (documented in models overview)</li>
+      <li><strong>Streaming first chunk:</strong> 80–150ms (blog claim, varies by region/load)</li>
+      <li><strong>"Under 200ms on a normal connection"</strong> for streaming audio start</li>
+    </ul>
+
+    <div class="verdict verdict-partial">CAUTION: Fish Audio's blog self-reports these numbers. No independent benchmark data found. Actual latency from India (Railway is US-hosted) will be higher. Fish Audio doesn't have confirmed India-region infrastructure.</div>
+
+    <h3>chunk_length Parameter (Latency Tuning)</h3>
+    <p>Controls text batching before generation: range 100–300 (default 300, but some docs say 200). Smaller values → lower TTFA but less efficient. The <code>min_chunk_length</code> parameter (0–100, default 50) sets a minimum batch size floor.</p>
+
+    <div class="sources">Sources: <a href="https://fish.audio/blog/lowest-latency-text-to-speech-api-real-time/">fish.audio blog — lowest latency TTS</a> | <a href="https://fish.audio/blog/s2-1-pro-free-api/">fish.audio — S2.1-Pro free API</a></div>
+  </section>
+
+  <!-- Additional: Models Overview -->
+  <section>
+    <h2>Model Summary <span class="tag tag-verified">VERIFIED</span></h2>
+
+    <table>
+      <tr><th>Model ID</th><th>Languages</th><th>Control Style</th><th>TTFA</th><th>Cost</th></tr>
+      <tr><td><code>s2.1-pro</code></td><td>83</td><td><code>[bracket]</code> open-domain tags</td><td>~70ms</td><td>$15/1M bytes</td></tr>
+      <tr><td><code>s2.1-pro-free</code></td><td>83</td><td>Same as above</td><td>No guarantee</td><td>$0 (Fair Use)</td></tr>
+      <tr><td><code>s2-pro</code></td><td>80+</td><td><code>[bracket]</code> open-domain tags</td><td>~100ms</td><td>$15/1M bytes</td></tr>
+      <tr><td><code>s1</code></td><td>13 (no Hindi)</td><td><code>(parenthesis)</code> 64+ emotions</td><td>Higher</td><td>$15/1M bytes</td></tr>
+    </table>
+  </section>
+
+  <!-- Quick Reference: TransformED Fit -->
+  <section>
+    <h2>TransformED Fit Assessment</h2>
+
+    <table>
+      <tr><th>Requirement</th><th>Fish Audio Capability</th><th>Verdict</th></tr>
+      <tr><td>Word-level timestamps for audio-timeline sync</td><td>Segment-level only (not word-level). Via <code>/v1/tts/stream/with-timestamp</code>.</td><td>Partial — granularity may be insufficient for word-highlight sync</td></tr>
+      <tr><td>Hindi TTS</td><td>Hindi confirmed in S2.1-Pro 83-language list</td><td>Yes</td></tr>
+      <tr><td>Indian English</td><td>Not documented as a distinct accent — use voice cloning workaround</td><td>Possible via clone</td></tr>
+      <tr><td>Streaming</td><td>SSE + WebSocket options; 70–150ms TTFA claimed</td><td>Yes</td></tr>
+      <tr><td>SSML</td><td>Not supported — uses custom <code>[bracket]</code> tags</td><td>No</td></tr>
+      <tr><td>Forced alignment</td><td>Not available</td><td>No</td></tr>
+      <tr><td>Fallback chain position</td><td>Could replace or supplement Sarvam Bulbul v2 in the chain</td><td>Evaluate against Sarvam on Hindi quality</td></tr>
+      <tr><td>Pricing vs. Sarvam</td><td>$15/1M bytes; Hindi costs ~$45/1M chars due to UTF-8 encoding</td><td>Compare to Sarvam's pricing</td></tr>
+    </table>
+  </section>
+
+  <!-- Sources -->
+  <section>
+    <h2>All Sources</h2>
+    <ul style="list-style:none; margin-left:0;">
+      <li><a href="https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech-stream-with-timestamps" style="color:#60a5fa;">docs.fish.audio — TTS Stream with Timestamps endpoint</a></li>
+      <li><a href="https://docs.fish.audio/api-reference/endpoint/openapi-v1/text-to-speech" style="color:#60a5fa;">docs.fish.audio — TTS endpoint</a></li>
+      <li><a href="https://docs.fish.audio/api-reference/endpoint/openapi-v1/speech-to-text" style="color:#60a5fa;">docs.fish.audio — Speech-to-Text endpoint</a></li>
+      <li><a href="https://docs.fish.audio/developer-guide/core-features/fine-grained-control" style="color:#60a5fa;">docs.fish.audio — Fine-Grained Control (phoneme tags)</a></li>
+      <li><a href="https://docs.fish.audio/developer-guide/models-pricing/models-overview" style="color:#60a5fa;">docs.fish.audio — Models Overview</a></li>
+      <li><a href="https://docs.fish.audio/features/text-to-speech" style="color:#60a5fa;">docs.fish.audio — TTS Features</a></li>
+      <li><a href="https://fish.audio/blog/s2-1-pro-free-api/" style="color:#60a5fa;">fish.audio blog — S2.1 Pro Free API announcement</a></li>
+      <li><a href="https://fish.audio/blog/fish-audio-s2-fine-grained-ai-voice-control-at-the-word-level/" style="color:#60a5fa;">fish.audio blog — S2 Word-Level Control</a></li>
+      <li><a href="https://fish.audio/blog/lowest-latency-text-to-speech-api-real-time/" style="color:#60a5fa;">fish.audio blog — Lowest Latency TTS</a></li>
+      <li><a href="https://texttolab.com/blog/fish-audio-pricing" style="color:#60a5fa;">texttolab.com — Fish Audio Pricing 2026</a></li>
+      <li><a href="https://www.testingcatalog.com/fish-audio-launches-s2-1-pro-with-support-for-83-languages/" style="color:#60a5fa;">testingcatalog.com — S2.1-Pro 83 languages launch</a></li>
+      <li><a href="https://ourcodeworld.com/articles/read/4308/fish-audio-tts-api-developer-guide" style="color:#60a5fa;">ourcodeworld.com — Fish Audio API Developer Guide</a></li>
+    </ul>
+  </section>
+
+</div>
+</body>
+</html>

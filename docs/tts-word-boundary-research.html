@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TTS Word Boundary Capability Report — Azure vs Sarvam Bulbul v2</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.65;
+    color: #1a1a2e;
+    background: #f5f6fa;
+    padding: 2rem 1rem;
+  }
+  .page { max-width: 900px; margin: 0 auto; }
+
+  h1 {
+    font-size: 1.7rem;
+    font-weight: 700;
+    color: #0f3460;
+    margin-bottom: 0.25rem;
+  }
+  .subtitle {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 2rem;
+    border-bottom: 2px solid #e0e4f0;
+    padding-bottom: 1rem;
+  }
+  h2 {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #0f3460;
+    margin: 2rem 0 0.75rem;
+    padding-left: 0.6rem;
+    border-left: 4px solid #3a86ff;
+  }
+  h3 {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #333;
+    margin: 1.2rem 0 0.4rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  /* Summary verdict box */
+  .verdict {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+  .verdict-card {
+    border-radius: 8px;
+    padding: 1.1rem 1.3rem;
+    border: 1.5px solid;
+  }
+  .verdict-card.yes {
+    background: #e8f5e9;
+    border-color: #43a047;
+  }
+  .verdict-card.no {
+    background: #fff3e0;
+    border-color: #fb8c00;
+  }
+  .verdict-card .provider {
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 0.2rem;
+  }
+  .verdict-card .status {
+    font-size: 1.05rem;
+    font-weight: 700;
+  }
+  .verdict-card.yes .status { color: #2e7d32; }
+  .verdict-card.no .status { color: #e65100; }
+  .verdict-card .detail {
+    font-size: 0.85rem;
+    color: #555;
+    margin-top: 0.4rem;
+  }
+
+  /* Tables */
+  .table-wrap { overflow-x: auto; margin: 0.75rem 0 1.25rem; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+  th {
+    background: #0f3460;
+    color: #fff;
+    padding: 0.55rem 0.8rem;
+    text-align: left;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  td {
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid #e4e8f0;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #f0f3fb; }
+  td.tick { color: #2e7d32; font-weight: 700; }
+  td.cross { color: #c62828; font-weight: 700; }
+  td.warn { color: #e65100; font-weight: 700; }
+
+  /* Code blocks */
+  pre {
+    background: #1e2235;
+    color: #c9d1d9;
+    padding: 1rem 1.2rem;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.82rem;
+    margin: 0.6rem 0 1rem;
+    line-height: 1.55;
+  }
+  code { font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace; }
+  p > code, li > code {
+    background: #e8eaf6;
+    color: #283593;
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    font-size: 0.85em;
+  }
+
+  /* Callouts */
+  .callout {
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin: 0.75rem 0 1rem;
+    font-size: 0.88rem;
+    border-left: 4px solid;
+  }
+  .callout.info { background: #e3f2fd; border-color: #1e88e5; color: #0d47a1; }
+  .callout.warn { background: #fff8e1; border-color: #ffa000; color: #6d4c00; }
+  .callout.danger { background: #fce4ec; border-color: #e53935; color: #7f0000; }
+
+  ul, ol { padding-left: 1.5rem; margin: 0.4rem 0 0.8rem; }
+  li { margin-bottom: 0.25rem; }
+
+  /* Sources */
+  .sources {
+    margin-top: 2.5rem;
+    padding-top: 1rem;
+    border-top: 1px solid #ccd;
+    font-size: 0.82rem;
+    color: #555;
+  }
+  .sources h2 { font-size: 0.95rem; margin-top: 0; }
+  .sources a { color: #1a6fc4; text-decoration: none; word-break: break-all; }
+  .sources a:hover { text-decoration: underline; }
+  .sources li { margin-bottom: 0.3rem; }
+
+  .pill {
+    display: inline-block;
+    padding: 0.15em 0.6em;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    vertical-align: middle;
+  }
+  .pill.sdk { background: #e3f2fd; color: #0d47a1; }
+  .pill.rest { background: #e8f5e9; color: #1b5e20; }
+  .pill.no { background: #fce4ec; color: #880e4f; }
+
+  @media (max-width: 600px) {
+    .verdict { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <h1>TTS Word Boundary &amp; Timestamp Capabilities</h1>
+  <p class="subtitle">Azure Cognitive Services TTS vs Sarvam AI Bulbul v2 — Technical Comparison Report &nbsp;|&nbsp; Research date: 2026-09-03 &nbsp;|&nbsp; All findings sourced from official documentation</p>
+
+  <!-- Top-line verdict -->
+  <div class="verdict">
+    <div class="verdict-card yes">
+      <div class="provider">Azure Cognitive Services TTS</div>
+      <div class="status">Word boundary events: YES</div>
+      <div class="detail">Rich per-word timing via SDK callback. Batch REST API also produces a word.json file. Standard real-time REST API does not expose timing.</div>
+    </div>
+    <div class="verdict-card no">
+      <div class="provider">Sarvam AI Bulbul v2</div>
+      <div class="status">Word boundary events: NO</div>
+      <div class="detail">Response contains only base64 audio + request_id. No timing, alignment, or phoneme data of any kind documented or observed.</div>
+    </div>
+  </div>
+
+  <!-- ===================== AZURE ===================== -->
+  <h2>Azure Cognitive Services TTS — Full Technical Detail</h2>
+
+  <h3>1. Mechanism: SDK-Streamed Events (primary path)</h3>
+  <p>Word boundary data is delivered via <strong>SDK event callbacks</strong>, not via the standard real-time REST API HTTP response body. The REST endpoint at <code>/cognitiveservices/v1</code> returns raw audio bytes only — no timing metadata is in the HTTP response. Microsoft's own documentation states:</p>
+  <div class="callout info">
+    "Use cases for the text to speech REST API are limited. Use it only in cases where you can't use the Speech SDK. For example, with the Speech SDK you can subscribe to events for more insights about the text to speech processing and results."
+    <br><em>— learn.microsoft.com/azure/ai-services/speech-service/rest-text-to-speech</em>
+  </div>
+  <p>The SDK event is called <code>WordBoundary</code> (C#/.NET), <code>synthesis_word_boundary</code> (Python), and <code>wordBoundary</code> (JavaScript). It fires <em>before</em> the corresponding word is played — in real time as audio chunks arrive from the service.</p>
+
+  <h3>2. Exact SDK Event Properties</h3>
+  <p>Confirmed from the official .NET, Python, and JavaScript SDK reference pages. The event arguments class is <code>SpeechSynthesisWordBoundaryEventArgs</code>.</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Property name (Python)</th>
+          <th>Property name (C#)</th>
+          <th>Property name (JS)</th>
+          <th>Type</th>
+          <th>Unit</th>
+          <th>Description</th>
+          <th>SDK version added</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><code>audio_offset</code></td>
+          <td><code>AudioOffset</code></td>
+          <td><code>audioOffset</code></td>
+          <td>int / uint64</td>
+          <td><strong>Ticks (100 ns)</strong></td>
+          <td>Elapsed audio time from start of synthesis to start of this word</td>
+          <td>1.7.0</td>
+        </tr>
+        <tr>
+          <td><code>duration</code></td>
+          <td><code>Duration</code></td>
+          <td><code>duration</code></td>
+          <td>TimeSpan / int</td>
+          <td><strong>Ticks (100 ns)</strong></td>
+          <td>Audio duration of the word</td>
+          <td>1.21.0</td>
+        </tr>
+        <tr>
+          <td><code>text</code></td>
+          <td><code>Text</code></td>
+          <td><code>text</code></td>
+          <td>string</td>
+          <td>—</td>
+          <td>The word text that triggered this event</td>
+          <td>1.21.0</td>
+        </tr>
+        <tr>
+          <td><code>text_offset</code></td>
+          <td><code>TextOffset</code></td>
+          <td><code>textOffset</code></td>
+          <td>int</td>
+          <td>Characters</td>
+          <td>Character position in input text immediately before this word</td>
+          <td>1.7.0</td>
+        </tr>
+        <tr>
+          <td><code>word_length</code></td>
+          <td><code>WordLength</code></td>
+          <td><code>wordLength</code></td>
+          <td>int</td>
+          <td>Characters</td>
+          <td>Character length of the word in input text</td>
+          <td>1.7.0</td>
+        </tr>
+        <tr>
+          <td><code>boundary_type</code></td>
+          <td><code>BoundaryType</code></td>
+          <td><code>boundaryType</code></td>
+          <td>enum</td>
+          <td>—</td>
+          <td>Word, Punctuation, or Sentence</td>
+          <td>1.21.0</td>
+        </tr>
+        <tr>
+          <td><code>result_id</code></td>
+          <td><code>ResultId</code></td>
+          <td>—</td>
+          <td>string</td>
+          <td>—</td>
+          <td>Unique synthesis result ID</td>
+          <td>1.25.0</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>Unit conversion required:</strong> Both <code>audio_offset</code> and <code>duration</code> are in <strong>ticks (100 nanoseconds)</strong>. To convert to milliseconds: divide by 10,000. The official Python sample uses <code>(evt.audio_offset + 5000) / 10000</code> to convert with rounding.
+  </div>
+
+  <h3>3. How to Subscribe (Python, C#, JS examples)</h3>
+
+<pre><code># Python
+def word_boundary_cb(evt):
+    print(f"Word: '{evt.text}'")
+    print(f"  AudioOffset: {(evt.audio_offset + 5000) / 10000:.1f} ms")
+    print(f"  Duration:    {evt.duration.total_seconds() * 1000:.1f} ms")
+    print(f"  TextOffset:  {evt.text_offset} chars")
+    print(f"  WordLength:  {evt.word_length} chars")
+    print(f"  BoundaryType: {evt.boundary_type}")
+
+synthesizer.synthesis_word_boundary.connect(word_boundary_cb)</code></pre>
+
+<pre><code>// C#
+synthesizer.WordBoundary += (s, e) => {
+    Console.WriteLine($"Word: \"{e.Text}\"");
+    Console.WriteLine($"  AudioOffset: {(e.AudioOffset + 5000) / 10000} ms");
+    Console.WriteLine($"  Duration:    {e.Duration.TotalMilliseconds} ms");
+    Console.WriteLine($"  BoundaryType: {e.BoundaryType}");
+};</code></pre>
+
+<pre><code>// JavaScript
+synthesizer.wordBoundary = (s, e) => {
+    console.log(`Word: "${e.text}"`);
+    console.log(`  audioOffset: ${(e.audioOffset + 5000) / 10000} ms`);
+    console.log(`  duration: ${e.duration / 10000} ms`);   // ticks → ms
+    console.log(`  boundaryType: ${e.boundaryType}`);
+};</code></pre>
+
+  <h3>4. Enabling Sentence-Level Boundaries</h3>
+  <p>By default, <code>WordBoundary</code> fires on words and punctuation. To additionally receive sentence-level events, set this SDK property:</p>
+<pre><code># Python
+speech_config.set_property(
+    property_id=speechsdk.PropertyId.SpeechServiceResponse_RequestSentenceBoundary,
+    value='true'
+)</code></pre>
+
+  <h3>5. Viseme Events (lip-sync)</h3>
+  <p>A separate <code>VisemeReceived</code> event is also available in the SDK. It fires with each phoneme transition and is intended for animating a character's mouth/face. This is distinct from the <code>WordBoundary</code> event.</p>
+
+  <h3>6. Alternative: Batch Synthesis REST API + <code>wordBoundaryEnabled</code></h3>
+  <p>The <strong>Batch Synthesis API</strong> (asynchronous, not real-time) is the one REST-accessible path that produces word timing data. When <code>"wordBoundaryEnabled": true</code> is set in the job request, the results ZIP includes a <code>[nnnn].word.json</code> file.</p>
+  <div class="callout info">
+    <strong>Important difference from SDK:</strong> The <code>.word.json</code> file uses <strong>milliseconds</strong> — not ticks. The SDK uses ticks.
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Field</th><th>Type</th><th>Unit</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>Text</code></td><td>string</td><td>—</td><td>The word</td></tr>
+        <tr><td><code>AudioOffset</code></td><td>number</td><td><strong>Milliseconds</strong></td><td>Start of word relative to audio start</td></tr>
+        <tr><td><code>Duration</code></td><td>number</td><td><strong>Milliseconds</strong></td><td>Duration of the word</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Example <code>0001.word.json</code> output (directly from official Microsoft docs):</p>
+<pre><code>[
+  { "Text": "The",     "AudioOffset": 50,   "Duration": 137 },
+  { "Text": "rainbow", "AudioOffset": 200,  "Duration": 350 },
+  { "Text": "has",     "AudioOffset": 562,  "Duration": 175 },
+  { "Text": "seven",   "AudioOffset": 750,  "Duration": 300 },
+  { "Text": "colors",  "AudioOffset": 1062, "Duration": 625 },
+  { "Text": ".",        "AudioOffset": 1700, "Duration": 100 }
+]</code></pre>
+
+  <div class="callout warn">
+    <strong>Batch API is NOT real-time.</strong> P50 latency is 10–20 seconds; P95 is 120 seconds. This path is unsuitable for TransformED's per-segment narration pipeline. It is documented here for completeness only.
+  </div>
+
+  <h3>7. Mechanism Summary (Azure)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Delivery path</th>
+          <th>Word boundary data?</th>
+          <th>Unit</th>
+          <th>Real-time?</th>
+          <th>Fields</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Speech SDK (Python/C#/JS/Go/…)</td>
+          <td class="tick">YES — event callback</td>
+          <td>Ticks (100 ns)</td>
+          <td class="tick">YES</td>
+          <td>audio_offset, duration, text, text_offset, word_length, boundary_type</td>
+        </tr>
+        <tr>
+          <td>Real-time REST API (<code>/cognitiveservices/v1</code>)</td>
+          <td class="cross">NO</td>
+          <td>—</td>
+          <td>—</td>
+          <td>Raw audio bytes only</td>
+        </tr>
+        <tr>
+          <td>Batch Synthesis REST API (<code>wordBoundaryEnabled: true</code>)</td>
+          <td class="tick">YES — <code>[nnnn].word.json</code></td>
+          <td>Milliseconds</td>
+          <td class="cross">NO (async, P50 ~15s)</td>
+          <td>Text, AudioOffset, Duration</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>8. Known Reliability Caveat</h3>
+  <p>A tracked GitHub issue on <code>azure-sdk-for-python</code> (issue #39683) documents that <code>WordBoundary</code> events are <em>sometimes not triggered at all</em>, particularly in multithreaded scenarios. This is a known SDK bug, not a design limitation. Events firing before corresponding audio is heard is the intended behavior; the caller must synchronize streaming with real-time playback.</p>
+
+  <!-- ===================== SARVAM ===================== -->
+  <h2>Sarvam AI Bulbul v2 — Full Technical Detail</h2>
+
+  <h3>1. Does Bulbul v2 Return Timing Data?</h3>
+  <p><strong>No.</strong> The Sarvam TTS REST API returns exactly two fields:</p>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>request_id</code></td><td>string</td><td>Unique identifier for the API request</td></tr>
+        <tr><td><code>audios</code></td><td>array of strings</td><td>Base64-encoded audio file(s); one element per input text chunk</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Example response (from official Sarvam API reference):</p>
+<pre><code>{
+  "request_id": "20241115_12345678-1234-5678-1234-567812345678",
+  "audios": [
+    "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQAAAAA..."
+  ]
+}</code></pre>
+
+  <p>There is no phoneme, word-level, sentence-level, or any other alignment/timing field. No streaming event system exists in the Sarvam TTS API. No documentation or community discussion found indicating this is planned.</p>
+
+  <h3>2. Audio Formats Supported</h3>
+  <p>Bulbul v2 (and v3) support the following audio encoding formats (set via request parameter):</p>
+  <ul>
+    <li>WAV</li>
+    <li>MP3</li>
+    <li>Linear16 (PCM)</li>
+    <li>Mulaw</li>
+    <li>Alaw</li>
+    <li>Opus</li>
+    <li>FLAC</li>
+    <li>AAC</li>
+  </ul>
+
+  <h3>3. Bulbul v2 API Parameters</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Parameter</th><th>Values / Range</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><code>model</code></td><td><code>bulbul:v2</code></td><td>Legacy; v3 is current</td></tr>
+        <tr><td><code>text</code></td><td>string, up to 2,500 chars (REST)</td><td>Input text</td></tr>
+        <tr><td><code>language_code</code></td><td>BCP-47 (e.g. <code>hi-IN</code>, <code>en-IN</code>)</td><td>11 Indian languages + English</td></tr>
+        <tr><td><code>speaker</code></td><td>Named voice ID</td><td>Multiple voices available</td></tr>
+        <tr><td><code>speech_sample_rate</code></td><td>8k / 16k / 22050 (default) / 24k Hz</td><td>v2 default: 22050 Hz</td></tr>
+        <tr><td><code>pitch</code></td><td>float</td><td>v2 only; removed in v3</td></tr>
+        <tr><td><code>loudness</code></td><td>float</td><td>v2 only; removed in v3</td></tr>
+        <tr><td><code>pace</code></td><td>0.3–3.0 (v2)</td><td>Playback speed multiplier</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>4. Community / GitHub Evidence</h3>
+  <p>A search across GitHub, Dev.to, and developer community discussions (2025–2026) found no evidence of:</p>
+  <ul>
+    <li>Any Sarvam TTS word alignment or timestamp feature</li>
+    <li>Any roadmap or issue tracker entry requesting/planning such a feature</li>
+    <li>Any unofficial workaround or third-party wrapper providing timing data</li>
+  </ul>
+  <p>Third-party integrations (LiveKit, Pipecat, Mastra) all consume only the raw audio from <code>audios[0]</code>. None attempt to extract or use timing data.</p>
+
+  <!-- ===================== HEAD-TO-HEAD ===================== -->
+  <h2>Head-to-Head Comparison (TransformED Context)</h2>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Azure TTS (SDK)</th>
+          <th>Sarvam Bulbul v2</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Word-level start timestamp</td>
+          <td class="tick">YES — <code>audio_offset</code> (ticks)</td>
+          <td class="cross">NO</td>
+        </tr>
+        <tr>
+          <td>Word-level duration</td>
+          <td class="tick">YES — <code>duration</code> (ticks)</td>
+          <td class="cross">NO</td>
+        </tr>
+        <tr>
+          <td>Word text in event</td>
+          <td class="tick">YES — <code>text</code></td>
+          <td class="cross">NO</td>
+        </tr>
+        <tr>
+          <td>Character offset in input</td>
+          <td class="tick">YES — <code>text_offset</code></td>
+          <td class="cross">NO</td>
+        </tr>
+        <tr>
+          <td>Sentence boundary events</td>
+          <td class="tick">YES — via SDK config flag</td>
+          <td class="cross">NO</td>
+        </tr>
+        <tr>
+          <td>Viseme / phoneme events</td>
+          <td class="tick">YES — <code>VisemeReceived</code> event</td>
+          <td class="cross">NO</td>
+        </tr>
+        <tr>
+          <td>Real-time streaming delivery</td>
+          <td class="tick">YES (SDK event fires as audio streams)</td>
+          <td class="warn">Streaming API exists; no word events</td>
+        </tr>
+        <tr>
+          <td>REST API timing data</td>
+          <td class="warn">Batch API only (async, not real-time)</td>
+          <td class="cross">NO</td>
+        </tr>
+        <tr>
+          <td>Indian language support</td>
+          <td class="warn">Partial (Hindi, some Indic via Neural)</td>
+          <td class="tick">YES — 11 Indian languages natively</td>
+        </tr>
+        <tr>
+          <td>Audio formats</td>
+          <td>MP3, WAV, OGG, PCM, Opus, WebM, AMR-WB, and more (~30 formats)</td>
+          <td>WAV, MP3, Linear16, Mulaw, Alaw, Opus, FLAC, AAC</td>
+        </tr>
+        <tr>
+          <td>Default sample rate</td>
+          <td>24 kHz (standard); 48 kHz (hi-fi)</td>
+          <td>22,050 Hz (v2 default)</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- ===================== IMPLICATION FOR TRANSFORMMED ===================== -->
+  <h2>Implications for TransformED</h2>
+
+  <p>TransformED's TTS fallback chain is <strong>Sarvam Bulbul v2 → Azure TTS → Browser Speech</strong>. Given this comparison:</p>
+
+  <ul>
+    <li><strong>Word-synchronised karaoke / subtitle highlighting</strong> during lesson playback is only possible when Azure TTS is the active provider. It is not possible when Sarvam is the primary provider, because Sarvam returns no timing data.</li>
+    <li><strong>Any React audio-timeline feature that depends on per-word timing must degrade gracefully</strong> when Sarvam is used — either no highlighting, or a time-estimated fallback based on audio duration and word count.</li>
+    <li><strong>Azure SDK integration (not REST)</strong> is required to get word boundaries in real-time. The <code>/cognitiveservices/v1</code> REST endpoint returns audio bytes only.</li>
+    <li>If word-boundary sync is a product requirement, it drives preference for Azure TTS as the primary provider (rather than the fallback), with Sarvam used only where Indic language fidelity is the priority and sync is explicitly degraded.</li>
+    <li><strong>Vexyl / Fish Audio comparison:</strong> whether those providers beat one or both of these two on timing depends on their documented feature sets — but the data above establishes the baseline: Azure has rich, real-time timing data; Sarvam has none.</li>
+  </ul>
+
+  <!-- ===================== SOURCES ===================== -->
+  <div class="sources">
+    <h2>Sources (all official documentation, fetched 2026-09-03)</h2>
+    <ol>
+      <li><a href="https://learn.microsoft.com/en-us/dotnet/api/microsoft.cognitiveservices.speech.speechsynthesiswordboundaryeventargs?view=azure-dotnet">SpeechSynthesisWordBoundaryEventArgs Class — .NET SDK Reference (Microsoft Learn)</a></li>
+      <li><a href="https://learn.microsoft.com/en-us/python/api/azure-cognitiveservices-speech/azure.cognitiveservices.speech.speechsynthesiswordboundaryeventargs?view=azure-python">SpeechSynthesisWordBoundaryEventArgs — Python SDK Reference (Microsoft Learn)</a></li>
+      <li><a href="https://learn.microsoft.com/en-us/javascript/api/microsoft-cognitiveservices-speech-sdk/speechsynthesiswordboundaryeventargs?view=azure-node-latest">SpeechSynthesisWordBoundaryEventArgs — JavaScript SDK Reference (Microsoft Learn)</a></li>
+      <li><a href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/how-to-speech-synthesis">How to use speech synthesis / Subscribe to synthesizer events (Microsoft Learn)</a></li>
+      <li><a href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/rest-text-to-speech">Text to speech REST API reference — Azure AI services (Microsoft Learn)</a></li>
+      <li><a href="https://learn.microsoft.com/en-us/azure/ai-services/speech-service/batch-synthesis">Batch synthesis API for text to speech (Microsoft Learn)</a></li>
+      <li><a href="https://learn.microsoft.com/en-us/answers/questions/531771/text-to-speech-with-timestamp-in-json-format">Q&amp;A: Text to speech with timestamp in JSON format (Microsoft Q&amp;A)</a></li>
+      <li><a href="https://learn.microsoft.com/en-us/answers/questions/2118922/nnnn-word-json-file-not-found-in-results-wordboundaryenabled-true">Q&amp;A: [nnnn].word.json file not found with wordBoundaryEnabled: true (Microsoft Q&amp;A)</a></li>
+      <li><a href="https://github.com/Azure/azure-sdk-for-python/issues/39683">WordBoundary events not firing reliably — GitHub Issue #39683 (azure-sdk-for-python)</a></li>
+      <li><a href="https://docs.sarvam.ai/api-reference/text-to-speech/convert">Sarvam TTS REST API — convert endpoint (docs.sarvam.ai)</a></li>
+      <li><a href="https://docs.sarvam.ai/api-reference-docs/text-to-speech/api/rest-api">Sarvam TTS REST API reference (docs.sarvam.ai)</a></li>
+      <li><a href="https://docs.sarvam.ai/api-reference-docs/models/bulbul">Sarvam Bulbul model documentation (docs.sarvam.ai)</a></li>
+      <li><a href="https://github.com/Azure-Samples/Cognitive-Speech-TTS/wiki/How-to-get-word-time-stamp-events-using-Azure-TTS">How to get word timestamp events using Azure TTS (GitHub Wiki — Azure-Samples)</a></li>
+    </ol>
+  </div>
+
+</div>
+</body>
+</html>
