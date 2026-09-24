@@ -233,8 +233,8 @@ arithmetic shown, not left as a latent, undocumented risk.
 
 ### Task 7 — Commit
 - [x] 7.1 Story-first commit (this file alone) — `1f43589`, pushed.
-- [ ] 7.2 Implementation commit(s).
-- [ ] 7.3 `docs/dev1-tracker.md` entry referencing #233.
+- [x] 7.2 Implementation commit(s) — `d38d884`.
+- [x] 7.3 `docs/dev1-tracker.md` entry referencing #233.
 
 ## Dev Agent Record
 
