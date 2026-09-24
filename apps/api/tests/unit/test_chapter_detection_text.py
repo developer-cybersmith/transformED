@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.modules.content.chapter_detection.text import CONTENTS_HDR_RE, title_present
+from app.modules.content.chapter_detection.text import CHAPTER_RE, CONTENTS_HDR_RE, title_present
 
 
 @pytest.mark.unit
@@ -56,6 +56,28 @@ def test_tail_window_title_with_middle_chars_in_the_skipped_region_is_not_found(
     window's neighbour "R" being skipped, so "TARGET" never reconstructs."""
     page = "TA" + "R" + ("f" * 400) + "GET"  # "TARGET"'s middle "R" is skipped
     assert not title_present(page, "TARGET", window=2, tail_window=3)
+
+
+class TestChapterRePostNumberSeparator:
+    """D182 — a real production title, 'Chapter 1. Picking an' / 'Interpreter'
+    on the PDF's next line, shipped as '. Picking an' because CHAPTER_RE only
+    ever stripped a separator BEFORE the number, not after it."""
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize(
+        ("line", "expected_tail"),
+        [
+            ("Chapter 1. Picking an", "Picking an"),
+            ("Chapter 1: Some Title", "Some Title"),
+            ("Chapter 1 - Some Title", "Some Title"),
+            ("Chapter 1 Some Title", "Some Title"),  # no separator: unchanged
+            ("Chapter 1", ""),  # bare number: unchanged
+        ],
+    )
+    def test_group_2_never_carries_a_leading_separator(self, line: str, expected_tail: str) -> None:
+        m = CHAPTER_RE.match(line)
+        assert m is not None
+        assert (m.group(2) or "").strip() == expected_tail
 
 
 class TestContentsHeaderRegexWidening:

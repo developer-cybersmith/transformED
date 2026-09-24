@@ -804,6 +804,64 @@ fix.
 
 ---
 
+## D182 — Chapter titles silently truncated when they wrap onto the PDF's next line
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 1 (content pipeline) · **Detected:** 2026-09-24, live
+production smoke-test, inspecting the actually-stored chapter titles for a real successfully-
+ingested book (`_OceanofPDF.com_The_Hitchhikers_Guide_to_Python_-_Kenneth_Reitz.pdf`, book_id
+`9d3345ef-c196-4fc1-b618-35a62896af76`, 11 chapters, all `boundary_confidence='heading'`) ·
+**Fixed:** 2026-09-24, same day, `docs/stories/chapter-title-line-wrap-truncation.md`
+
+`SELECT title FROM chapters` returned, verbatim: `". Picking an"`, `". Properly"`, `". Your"`,
+`". Writing Great"`, `". Reading Great"`, `". Shipping Great"`, `". User"`, `". Code Management"`,
+`". Software"`, `". Data"`, `". Data"` — every title truncated to 1-3 words with a stray leading
+`". "`. Confirmed against the real extracted page text (page 11, 0-based, chapter 1's opener):
+`'Chapter 1. Picking an\r\nInterpreter\r\n...'` — the real title, **"Picking an Interpreter"**,
+wraps across two physical lines in the PDF's own typography (common chapter-opener styling, not
+specific to this book).
+
+Two compounding bugs in `chapter_detection/rungs.py`'s `_openers()` (used by both the `heading`
+rung and `r2_contents_page`'s contents-page parsing — both consume `CHAPTER_RE`'s `group(2)`):
+1. `CHAPTER_RE` (`chapter_detection/text.py`) had an optional separator **before** the chapter
+   number but nothing symmetric **after** it — `"Chapter 1. Picking an"` left the period as part
+   of the captured tail, and `.strip()` only removes whitespace, not punctuation.
+2. `_openers()` took the captured/fallback tail as the *whole* title and never looked further —
+   when the remainder is typeset on its own visual line, it is silently dropped. No error, no
+   degradation flag; `boundary_confidence` still reports the normal `'heading'` rung.
+
+Exactly the class of defect CLAUDE.md's Silent Truncation rule exists to catch: a fixed
+assumption (title fits on the chapter-number's own line) meeting a variable input (real
+publisher typography) that fails silently and cheaply rather than loudly.
+
+**Resolution:** (1) `CHAPTER_RE` gained a symmetric optional separator group after the number,
+cleanly stripping a trailing `.`/`:`/`-` before the title capture. (2) `_openers()` now stitches
+in up to `_MAX_TITLE_CONTINUATION_LINES` (2) more physical lines when the captured title is
+short (`< _TITLE_WORD_TARGET`, 3 words) — but only lines that look like a title continuation
+(not a new chapter opener, not a TOC section row, `<= 6` words). Both the word-count target and
+the line-count bound are explicit, fixed budgets, not an unbounded scan.
+
+Confirmed **no regression risk**: neither `test_chapter_detection.py` nor
+`test_chapter_detection_text.py` previously exercised `_openers()`'s title-continuation
+behavior — the D2L/NCERT/`evading-edr` fixtures resolve via the `toc`/`contents` rungs, whose
+titles come from a different source. All 57 tests in both files pass after the fix, including
+every pre-existing fixture-based assertion.
+
+**Enforcement:** `test_chapter_detection_text.py::TestChapterRePostNumberSeparator` (regex-level,
+5 cases) and `test_chapter_detection.py`'s new D182 section — the exact real-world wrap
+(3-chapter synthetic fixture, since the gate's `MAX_SHARE=0.40` rule mathematically cannot be
+satisfied by only 2 chapters), a rejection test for a candidate line that is itself a chapter
+opener, a rejection test for ordinary body prose, and a bound test proving the continuation loop
+cannot run away.
+
+**Out of scope, tracked separately, not folded into this fix:** the real structural fix
+(font-size-aware extraction) is deferred to the Sprint 3 docling migration, per the existing
+`r4_font_signals`/D28 precedent — this is a heuristic, bounded improvement, not a rewrite.
+Re-running detection against the 11 already-generated chapters of the book that surfaced this
+is a follow-up operational action (fresh upload or explicit re-ingestion), not part of this
+code change.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
