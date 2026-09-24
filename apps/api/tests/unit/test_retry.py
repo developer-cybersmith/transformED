@@ -437,6 +437,155 @@ async def test_guarded_import_ignores_a_non_class_openai_stub() -> None:
             pass
 
 
+# ── PostgREST/Supabase exception classification (issue #245) ─────────────────
+
+
+def _postgrest_int_code_error(code: int) -> Exception:
+    """Build a real postgrest.exceptions.APIError the way generate_default_
+    error_message() actually produces one — .code is an int (the HTTP status),
+    the shape a Cloudflare 521's non-JSON HTML error page produces."""
+    from postgrest.exceptions import APIError, generate_default_error_message
+
+    class _FakeResponse:
+        status_code = code
+        content = b"<html>error</html>"
+
+    return APIError(generate_default_error_message(_FakeResponse()))
+
+
+def _postgrest_string_code_error(code: str) -> Exception:
+    """Build a real postgrest.exceptions.APIError the way a genuine parsed
+    Postgres/PostgREST error body produces one — .code is a string."""
+    from postgrest.exceptions import APIError
+
+    return APIError({"message": "db error", "code": code, "details": "", "hint": ""})
+
+
+@pytest.mark.parametrize("code", [429, 500, 502, 503, 504, 520, 521, 522, 530])
+async def test_postgrest_retryable_int_code_is_retried(code: int) -> None:
+    """Both the existing PRD §14 set and Cloudflare's origin-error codes must
+    be retried when APIError.code is an int in that set."""
+    counter = _Counter(_postgrest_int_code_error(code), fail_times=1)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    assert await wrapped() == "ok"
+    assert counter.calls == 2, f"PostgREST int code {code} must be retried"
+
+
+@pytest.mark.parametrize("code", [400, 401, 404, 418, 451])
+async def test_postgrest_non_retryable_int_code_is_not_retried(code: int) -> None:
+    from postgrest.exceptions import APIError
+
+    counter = _Counter(_postgrest_int_code_error(code), fail_times=99)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    with pytest.raises(APIError):
+        await wrapped()
+    assert counter.calls == 1, f"PostgREST int code {code} must NOT be retried"
+
+
+@pytest.mark.parametrize("code", ["23503", "23502", "PGRST116", "PGRST100"])
+async def test_postgrest_string_code_is_never_retried(code: str) -> None:
+    """A genuine Postgres/PostgREST error code is a structured DB error, never
+    transient — must never be retried regardless of what the string happens to
+    look like (a FK violation, a NOT NULL violation, a .single() 'no rows')."""
+    from postgrest.exceptions import APIError
+
+    counter = _Counter(_postgrest_string_code_error(code), fail_times=99)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    with pytest.raises(APIError):
+        await wrapped()
+    assert counter.calls == 1, f"PostgREST string code {code!r} must NEVER be retried"
+
+
+async def test_postgrest_apierror_without_code_is_not_retried() -> None:
+    """A bare APIError with no code at all has nothing to classify on — must
+    take the conservative no-retry branch, mirroring the OpenAI
+    apierror-without-status test above."""
+    from postgrest.exceptions import APIError
+
+    counter = _Counter(APIError({"message": "unknown"}), fail_times=99)
+    wrapped = with_retry(max_attempts=3)(counter)
+
+    with pytest.raises(APIError):
+        await wrapped()
+    assert counter.calls == 1
+
+
+async def test_postgrest_exceptions_are_not_httpx_derived() -> None:
+    """Pins the premise this whole classification branch depends on — if a
+    future postgrest release makes APIError httpx-derived, the branch below
+    becomes redundant rather than silently wrong."""
+    import httpx
+    from postgrest.exceptions import APIError
+
+    assert not issubclass(APIError, httpx.HTTPError), (
+        "postgrest.exceptions.APIError is now httpx-derived — revisit "
+        "with_retry's postgrest classification"
+    )
+
+
+async def test_retry_module_imports_and_still_classifies_httpx_without_postgrest() -> None:
+    """AC1: the postgrest import must be GUARDED, mirroring the openai/redis
+    guards — core/ must not hard-depend on an optional dependency being
+    importable. Run in a subprocess for the same reason the analogous
+    without-openai test above does (class-identity capture by other modules)."""
+    import subprocess
+    import sys
+    import textwrap
+
+    program = textwrap.dedent(
+        """
+        import builtins, sys
+        real_import = builtins.__import__
+
+        def _no_postgrest(name, *a, **k):
+            if name == "postgrest" or name.startswith("postgrest."):
+                raise ModuleNotFoundError("No module named 'postgrest'")
+            return real_import(name, *a, **k)
+
+        sys.modules.pop("postgrest", None)
+        builtins.__import__ = _no_postgrest
+
+        import asyncio
+        import httpx
+        from app.core.retry import with_retry, _POSTGREST_API_ERRORS
+
+        assert _POSTGREST_API_ERRORS == (), _POSTGREST_API_ERRORS
+
+        calls = {"n": 0}
+
+        async def flaky():
+            calls["n"] += 1
+            if calls["n"] == 1:
+                request = httpx.Request("GET", "https://p.example/x")
+                raise httpx.HTTPStatusError(
+                    "503", request=request, response=httpx.Response(503, request=request)
+                )
+            return "ok"
+
+        async def main():
+            wrapped = with_retry(max_attempts=3)(flaky)
+            assert await wrapped() == "ok"
+            assert calls["n"] == 2, calls
+
+        asyncio.run(main())
+        print("SUBPROCESS_OK")
+        """
+    )
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", program],
+        capture_output=True,
+        text=True,
+        cwd=str(Path(__file__).resolve().parents[2]),
+        timeout=120,
+    )
+    assert "SUBPROCESS_OK" in proc.stdout, (
+        "absent-postgrest run failed\nstdout:\n" + proc.stdout + "\nstderr:\n" + proc.stderr
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Story 2-36 — D19 (redis) and D20 (RemoteProtocolError)
 # ═══════════════════════════════════════════════════════════════════════════
