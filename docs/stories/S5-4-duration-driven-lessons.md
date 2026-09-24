@@ -452,7 +452,7 @@ response, with the finding that prompted each:
    `test_howto_pipeline_e2e.py`, and a widened regex in `ModeSelection.test.tsx`. All restored.
 9. **A test comment claiming a guarantee the test could not give** — the batched-planner pro-rata
    split; now guarded where it is actually visible, in the per-batch prompt.
-10. **D78 conflict and the capacity/truncation conflation** — registered as **D180** and **D181**
+10. **D78 conflict and the capacity/truncation conflation** — registered as **D184** and **D185**
     rather than resolved silently.
 
 ---
@@ -466,18 +466,18 @@ response, with the finding that prompted each:
 | **Test Coverage** | invoking prompt | REJECT → addressed | Reducer guard weakened to a one-sided bound; a test documenting a property it could not detect; the three most consequential behaviours had no test that would fail on deletion |
 | **AC Completeness** | invoking prompt | 5 of 22 ACs not satisfiable as written → addressed | AC13 not implemented, AC14 contradicted by its code, AC21 violated (gating-bucket regression), AC17 defective, AC20 paperwork unmet |
 | **Process Integrity** | invoking prompt | REJECT → addressed | Gating bucket red (`test_g9`); zero-quiz allocation not surfaced or persisted; `D-nn`-less assumption; promised register entry never opened |
-| **Scale & Load** | invoking prompt | REJECT → addressed + escalated | The D78 reversal (**D180**); Q2 missing the slide→image→cost-ceiling consequence; Q5 missing three inherited caps; the `_quiz_count` fallback |
+| **Scale & Load** | invoking prompt | REJECT → addressed + escalated | The D78 reversal (**D184**); Q2 missing the slide→image→cost-ceiling consequence; Q5 missing three inherited caps; the `_quiz_count` fallback |
 
 Note for future invocations: the shipped `bmad-code-review` skill supplies only Blind Hunter, Edge
 Case Hunter, Acceptance Auditor and Scale & Load. Story Quality, Test Coverage, AC Completeness and
 Process Integrity were requested explicitly in the invoking prompt, as CLAUDE.md's review-gate
 section requires.
 
-**Escalated rather than decided by the implementer:** **D180** (this story reverses D78's recorded
+**Escalated rather than decided by the implementer:** **D184** (this story reverses D78's recorded
 "lesson length must be driven by the chapter's real content, not by any duration target" — at T2 an
-ordinary 29-page chapter now generates roughly a third of the narration it did before), **D181**
+ordinary 29-page chapter now generates roughly a third of the narration it did before), **D185**
 (`content_limited` cannot distinguish a thin chapter from one our own `section_body_max_chars` cap
-truncated), **D182** (fallback-TTS lessons cannot meet a Sarvam-derived target), **D183** (the
+truncated), **D186** (fallback-TTS lessons cannot meet a Sarvam-derived target), **D187** (the
 S5-3 chapter-context vs Gate 5 idempotency defect this story's Scale & Load Q6 promised to raise).
 
 **Known deviation, not a finding:** the branch is named `feature/230-duration-driven-lessons`

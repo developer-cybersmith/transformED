@@ -1438,7 +1438,7 @@ def _effective_narration_wpm(settings: Any) -> float:  # noqa: ANN401 — Settin
     raises without them (falling through to Sarvam), so their presence is what
     decides which pace is real.
 
-    KNOWN ASSUMPTION — D182 (docs/DEFECT-REGISTER.md), not just a comment: this
+    KNOWN ASSUMPTION — D186 (docs/DEFECT-REGISTER.md), not just a comment: this
     still assumes the primary tier SUCCEEDS. A lesson that falls through to
     Azure or browser speech synthesises at a pace this cannot know in advance,
     so its measured duration can miss the target by more than the tolerance
