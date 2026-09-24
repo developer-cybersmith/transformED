@@ -1335,11 +1335,12 @@ async def _topic_selection_llm_split(
                 "preview), return split_index: the index of the first "
                 "section that belongs to Topic II. Sections before "
                 "split_index form Topic I; sections from split_index onward "
-                "form Topic II. split_index must be a single integer "
-                "strictly between 0 and the last index, chosen so the two "
-                "groups are contiguous, roughly balanced, and pedagogically "
-                "coherent — sections are already in their original book "
-                "order and must stay in that order." + _UNTRUSTED_CONTENT_GUARD
+                "form Topic II. split_index must be a single integer greater "
+                "than 0 and less than or equal to the last index (so Topic I "
+                "is never empty), chosen so the two groups are contiguous, "
+                "roughly balanced, and pedagogically coherent — sections are "
+                "already in their original book order and must stay in that "
+                "order." + _UNTRUSTED_CONTENT_GUARD
             ),
         },
         {"role": "user", "content": preview_lines},
@@ -1427,7 +1428,7 @@ async def topic_selection_node(state: PipelineState) -> PipelineState:
     if "topic_selection" in node_outputs:
         cached = node_outputs["topic_selection"]
         logger.info("[%s] topic_selection_node: cache hit", lesson_id)
-        return {"sections": cached["sections"]}
+        return {"sections": cached["sections"], "progress_pct": 32.0}
 
     def _write_checkpoint(checkpoint: dict[str, Any]) -> None:
         try:
@@ -1453,7 +1454,7 @@ async def topic_selection_node(state: PipelineState) -> PipelineState:
             }
         )
         await _update_job_progress(lesson_id, 32.0, "topic_selection")
-        return {"sections": sections}
+        return {"sections": sections, "progress_pct": 32.0}
 
     if target_topic_count <= 1:
         # ── AC 5: 1-topic case — merge everything, zero LLM calls ─────────────
@@ -1487,7 +1488,7 @@ async def topic_selection_node(state: PipelineState) -> PipelineState:
         }
     )
     await _update_job_progress(lesson_id, 32.0, "topic_selection")
-    return {"sections": new_sections}
+    return {"sections": new_sections, "progress_pct": 32.0}
 
 
 class _LessonPlanSegmentLLM(BaseModel):
@@ -7158,9 +7159,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # A fixed budget (16/10/5) meeting a variable segment count means some
         # segments legitimately get zero questions — but "legitimate" is not the
         # same as "invisible". CLAUDE.md requires a surfaced, PERSISTED
-        # degradation, not a logger.info nobody reads: at T3 over 15 segments
-        # this is 10 of 15 segments with no assessment at all, which an admin
-        # must be able to see without reconstructing the allocation by hand.
+        # degradation, not a logger.info nobody reads: e.g. a T2 lesson whose
+        # quiz weight concentrates on one of its (now at most 2, post-Story-233
+        # topic_selection_node) topics can leave the other with no assessment
+        # at all, which an admin must be able to see without reconstructing the
+        # allocation by hand. (Pre-233 this could be up to 10 of 15 sections —
+        # unreachable via the real pipeline now that topic_selection_node
+        # collapses sections to 1-2 topics before this dispatch ever runs.)
         "segments_without_quiz": sum(1 for s in segments_out if not (s.get("quiz") or [])),
         "quiz_budget_questions": int(
             quiz_budget_seconds(state.get("tier")) // max(1, settings.quiz_seconds_per_question)

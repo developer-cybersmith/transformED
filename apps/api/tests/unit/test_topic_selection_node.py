@@ -463,3 +463,87 @@ def test_section_body_max_chars_description_states_the_arithmetic() -> None:
     assert "structure_max_sections" in description
     assert "TIER_TOPIC_COUNT" in description
     assert "45,000" in description or "45000" in description
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_realistic_oversized_t3_chapter_still_surfaces_truncation_end_to_end() -> None:
+    """Review-round finding (independent audit round): D185's residual gap is
+    that a T3 chapter above section_body_max_chars gets truncated at every
+    downstream LLM call, and no test exercised a realistically oversized
+    (>cap) single-merged T3 chapter through topic_selection_node to prove the
+    surfacing mechanism (_get_section_body/section_truncations) still fires
+    correctly post-collapse — every existing test used tiny synthetic bodies.
+
+    This does not change the cap value (that needs real usage data, per
+    config.py's own description) — it proves the ALREADY-TESTED, cap-agnostic
+    truncation-surfacing mechanism (test_phase1_economy_nodes.py's
+    TestSectionTruncationSurfaced) is genuinely still reachable end-to-end
+    through topic_selection_node's merge path, not just at the unit level."""
+    from app.config import get_settings
+    from app.modules.content.pipeline.graph import _get_section_body, topic_selection_node
+
+    cap = get_settings().section_body_max_chars
+    # A realistic textbook chapter (per graph.py's own structure_node comment:
+    # "30,000-100,000" chars) split into several sections whose combined body
+    # exceeds the cap once topic_selection_node merges them all into one T3 topic.
+    per_section = (cap // 4) + 1000
+    sections = _sections([f"S{i} " + ("word " * (per_section // 5)) for i in range(6)])
+    assert sum(len(s["body"]) for s in sections) > cap, "fixture must exceed the cap once merged"
+
+    provider = AsyncMock()
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        result = await topic_selection_node(_base_state(sections, tier="T3"))
+
+    assert len(result["sections"]) == 1
+    merged_topic = result["sections"][0]
+    assert len(merged_topic["body"]) > cap, "merge_section_range must not itself truncate anything"
+
+    section_body = _get_section_body(
+        merged_topic, lesson_id=FAKE_LESSON_ID, section_id="section_0_merged"
+    )
+    assert section_body.was_truncated is True
+    assert len(section_body.body) == cap
+
+
+@pytest.mark.unit
+def test_slide_budget_per_segment_known_interim_gap_d188() -> None:
+    """Review-round finding (independent audit round), registered as D188
+    (docs/DEFECT-REGISTER.md): `_tier_slide_budget_per_segment` was never
+    re-derived for topic_selection_node's 1-2 (much larger) topics — with
+    only 1-2 segments, it allocates well past issue #233's own mandated fixed
+    totals (7 slides for T3, 10 for T1/T2), not exactly them. This test does
+    NOT assert the mandated totals (that's piece #4's job, not this story's)
+    — it PINS today's actual interim output for a realistic post-collapse
+    duration split, so a future accidental change to this function's math
+    is caught here instead of silently drifting further from both the old
+    and the new target with nobody noticing (the gap this whole finding was
+    about: the existing integration test already computes these numbers but
+    never asserts on them, per D188's own test-coverage note)."""
+    from app.modules.content.pipeline.graph import _tier_slide_budget_per_segment
+
+    # Realistic near-equal duration split of each tier's narration budget
+    # across topic_selection_node's collapsed topic count (2 for T1/T2, 1 for
+    # T3) — see TIER_SEAT_MINUTES/SEAT_TIME_SHARES for the source numbers.
+    t1 = _tier_slide_budget_per_segment("T1", [14.6, 14.6])
+    t2 = _tier_slide_budget_per_segment("T2", [9.75, 9.75])
+    t3 = _tier_slide_budget_per_segment("T3", [9.75])
+
+    t1_total = sum(seg_max for _, seg_max in t1)
+    t2_total = sum(seg_max for _, seg_max in t2)
+    t3_total = sum(seg_max for _, seg_max in t3)
+
+    # Today's actual behavior (pinned, not endorsed): T1/T2 over-deliver past
+    # the mandated 10-slide total; T3 under-delivers past the mandated 7.
+    assert t1_total > 10, (
+        f"T1 no longer exceeds its mandated total ({t1_total}) — re-check this pin"
+    )
+    assert t2_total > 10, (
+        f"T2 no longer exceeds its mandated total ({t2_total}) — re-check this pin"
+    )
+    assert t3_total < 7, (
+        f"T3 no longer falls short of its mandated total ({t3_total}) — re-check this pin"
+    )

@@ -840,7 +840,7 @@ class Settings(BaseSettings):
     # letting extract_node's own cleanup (killpg) run instead of orphaning the child.
     arq_job_timeout_s: int = Field(
         default=1800,
-        description="ARQ job_timeout for the whole 15-node pipeline (seconds)",
+        description="ARQ job_timeout for the whole 17-node pipeline (seconds)",
     )
     extract_timeout_cap_s: int = Field(
         default=1500,

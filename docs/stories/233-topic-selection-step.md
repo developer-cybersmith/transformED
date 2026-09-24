@@ -400,6 +400,74 @@ didn't have one.
 1 pre-existing unrelated failure. `ruff check`/`ruff format --check`: clean. `mypy app`: clean on
 every file this story touches.
 
+### Senior Developer Review — Round 2 (2026-09-25, independent "third person" audit of PR #252)
+
+Requested after PR #252 was opened: 4 genuinely blind agents (no knowledge of round 1's findings
+or this story's own review notes — each given only the raw diff, the repo, and a different lens),
+each finding then re-verified by a separate skeptic agent against the real code before being
+trusted. **8 candidate findings, 8 confirmed real by independent re-check, 0 refuted.** All 8
+addressed:
+
+1. **[medium] `topic_selection_node` never set `progress_pct`, unlike every other node in the
+   file (its own docstring claims to match `structure_node`/`chunk_node`'s pattern, but didn't on
+   this point).** Confirmed currently inert (nothing reads `progress_pct` outside `graph.py`
+   today). **Fixed**: all 3 return paths now include it (`32.0`, matching the value already passed
+   to `_update_job_progress`).
+2. **[low] The split-index LLM system prompt said "strictly between 0 and the last index"
+   (excludes the last index), but the code's actual validation accepts it inclusively
+   (`1 <= split_index <= len(sections) - 1`)** — a real claim/implementation mismatch that could
+   bias the model away from a valid split point. **Fixed**: prompt reworded to state the true
+   accepted range.
+3. **[medium] `test_lesson_planner_node.py`'s D75 batching-boundary tests' docstrings called 15
+   segments "the maximal, most common real-world case"** — no longer true: `topic_selection_node`
+   makes >2 segments reaching `lesson_planner_node` unreachable via a real pipeline run. The tests
+   themselves remain valid (they call the node directly, proving its own batching logic), just the
+   justifying comment was stale. **Fixed**: both docstrings corrected to say this is now a
+   direct-call unit-test scenario only.
+4. **[medium] `package_builder_node`'s `segments_without_quiz` comment described "T3 over 15
+   segments... 10 of 15"** — the same now-unreachable scenario. **Fixed**: reworded to the actually
+   reachable T1/T2 (2-topic) case, with the pre-233 number kept for historical context.
+5. **[low] `config.py`'s `arq_job_timeout_s` description still said "15-node pipeline"** — stale
+   even before this diff (issue #236 took it to 16 without updating this string), and this diff
+   updates the graph.py docstring's node count in the same repo without touching this one. **Fixed**:
+   corrected to 17.
+6. **[low] `CLAUDE.md`/`docs/dev1-tracker.md` still say "11-node pipeline"** — pre-existing,
+   explicitly NOT a regression from this diff (confirmed `CLAUDE.md` isn't touched by this diff at
+   all), just six node-count-changes further stale than when last noticed. **Not fixed here** —
+   out of scope for a topic-selection story to edit repo governance docs; noted, not silently
+   dropped.
+7. **[high] A realistic T3 chapter (30,000-100,000 chars, per this file's own documented typical
+   range) above `section_body_max_chars` gets truncated at every Phase-1/planner/narration call
+   site, and no test exercised this path with a realistic (not tiny-synthetic) body — every
+   existing `test_topic_selection_node.py` test used small bodies well under the cap.** This is
+   independent re-confirmation of round 1's own finding #7 / `D185`'s residual gap — not a new
+   defect, but a real, previously-uncovered test gap. **Fixed**: added
+   `test_realistic_oversized_t3_chapter_still_surfaces_truncation_end_to_end`, proving the
+   already-tested, cap-agnostic truncation-surfacing mechanism
+   (`test_phase1_economy_nodes.py::TestSectionTruncationSurfaced`) is genuinely still reachable
+   through `topic_selection_node`'s merge path, not just at the unit level. Does not change the
+   cap value — that still needs real usage data per `config.py`'s own reasoning.
+8. **[high] `_tier_slide_budget_per_segment` (the per-segment slide count allocator) was never
+   re-derived for 1-2 topic-collapsed segments — hand-verified it currently allocates up to 16
+   slides for T1/T2 (mandated fixed total: 10) and 3-5 for T3 (mandated: 7). Already registered as
+   `D188`, but the integration test that already COMPUTES these exact numbers
+   (`test_tier_differentiation_and_cost.py`'s `_package_shape()`) only prints them, never asserts
+   — so a regression here would be invisible to the suite.** Investigated adding the assertion
+   directly to that integration test as the finding suggested, but that test's own comment
+   explicitly documents why it can't: the fake LLM provider returns a fixed slide count regardless
+   of what's requested, making `slides_total` there "an artefact of the fake, NOT evidence either
+   way" — asserting on it would be a mock-only assertion (exactly what
+   `docs/DEFECT-REGISTER.md` binding rule 2 forbids). **Fixed properly instead**: added
+   `test_slide_budget_per_segment_known_interim_gap_d188`, a direct unit test of the real, pure
+   `_tier_slide_budget_per_segment` function (no LLM, no mock) with realistic post-collapse
+   duration splits, pinning today's actual interim output (over/under the mandated totals) so a
+   future silent drift is caught. Explicitly does not assert the mandated 7/10 totals — that fix
+   belongs to issue #233's piece 4, per `D188`.
+
+**Post-round-2 regression**: 1,662 unit tests + 20 integration tests passing (same 1 pre-existing,
+unrelated failure). `ruff check`/`ruff format --check`: clean. `mypy app`: clean on every file this
+story touches.
+
 ### File List
 - `apps/api/app/config.py` — `section_body_max_chars` default + description re-derived.
 - `apps/api/app/schemas/lesson.py` — new `TIER_TOPIC_COUNT`.
