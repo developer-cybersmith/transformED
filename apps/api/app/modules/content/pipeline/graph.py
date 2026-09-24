@@ -4179,16 +4179,20 @@ async def _synthesize_with_fallback(
         # Left as `or ""` (not `settings.sixtydb_voice_id` directly) because
         # the ABC's synthesize(text: str, voice_id: str) is non-Optional;
         # passing the raw `str | None` would be a real mypy violation.
+        #
+        # PR #240 follow-up review finding (simplification): synthesize()
+        # structurally cannot return falsy audio_bytes without raising first
+        # — _post_chunk raises on zero parsed PCM pieces, and
+        # _wrap_pcm_as_wav always writes a full WAV header even in edge
+        # cases. The old `if audio_bytes: return ... else: log+fall
+        # through` shape (mirroring Sarvam/Azure below, which genuinely CAN
+        # return falsy audio) was therefore dead code for this provider
+        # specifically — removed to avoid a future reader mistaking it for
+        # a live degrade path.
         audio_bytes, _ = await SixtyDbTTSProvider(lesson_id).synthesize(
             text, settings.sixtydb_voice_id or ""
         )
-        if audio_bytes:
-            return audio_bytes, "sixtydb", len(text) * _SIXTYDB_COST_PER_CHAR
-        logger.warning(
-            "[%s] tts_node: 60db returned empty audio for segment %s, falling back to Sarvam",
-            lesson_id,
-            segment_id,
-        )
+        return audio_bytes, "sixtydb", len(text) * _SIXTYDB_COST_PER_CHAR
     except SixtyDbNotConfiguredError:
         # PR #240 review finding (real bug, fixed): this used to catch bare
         # `ValueError`, but `json.JSONDecodeError` and `binascii.Error` --
@@ -4224,7 +4228,7 @@ async def _synthesize_with_fallback(
         # through to Sarvam, whose cost is the only one ever accumulated
         # against the $3.00/lesson ceiling, silently dropping 60db's actual
         # wallet spend. Record it now, before falling through.
-        from app.core.cost_tracker import accumulate_cost
+        from app.core.cost_tracker import accumulate_cost, check_ceiling
 
         logger.warning(
             "[%s] tts_node: 60db synthesis failed for segment %s after partial spend "
@@ -4235,6 +4239,23 @@ async def _synthesize_with_fallback(
             exc_info=True,
         )
         await accumulate_cost(lesson_id, exc.partial_cost_usd)
+        # PR #240 follow-up review finding (real bug, fixed): tts_node's own
+        # per-segment loop only checks check_ceiling() ONCE, before this
+        # function is called at all. Recording the partial spend above can
+        # itself push the lesson over the $3.00 ceiling, and falling through
+        # to try Sarvam unconditionally meant a single segment could
+        # accumulate TWO real provider costs between ceiling checks — more
+        # than the pre-#232 (Sarvam/Azure-only, all-or-nothing-cost) design
+        # ever allowed for one segment. Re-check immediately after recording,
+        # mirroring tts_node's own per-segment pre-check pattern.
+        if await check_ceiling(lesson_id):
+            logger.warning(
+                "[%s] tts_node: cost ceiling reached after 60db partial spend for "
+                "segment %s — skipping remaining paid providers (browser fallback)",
+                lesson_id,
+                segment_id,
+            )
+            return None, "browser", 0.0
     except Exception:  # noqa: BLE001
         logger.warning(
             "[%s] tts_node: 60db synthesis failed for segment %s, falling back to Sarvam",

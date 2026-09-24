@@ -563,6 +563,72 @@ async def test_sixtydb_two_misaligned_pieces_that_cancel_out_still_raise() -> No
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_sixtydb_circuit_open_mid_segment_propagates_bare_not_wrapped() -> None:
+    """PR #240 follow-up review finding (real bug, fixed): when chunk 1 has
+    already succeeded (chars_completed > 0) and the circuit opens before
+    chunk 2 is attempted, the raised CircuitOpenError must propagate BARE —
+    never wrapped into SixtyDbPartialSpendError. guard_breaker's own
+    `except CircuitOpenError: raise` branch depends on seeing the real type
+    to avoid counting a breaker REJECTION as a provider FAILURE; a wrapped
+    SixtyDbPartialSpendError (a plain RuntimeError subclass) would fall into
+    guard_breaker's generic `except Exception` branch instead and record a
+    failure — a self-reinforcing loop that could keep the circuit open
+    indefinitely."""
+    from app.core.circuit_breaker import CircuitOpenError
+    from app.providers.tts.sixtydb import SixtyDbPartialSpendError, SixtyDbTTSProvider
+
+    with patch(
+        "app.providers.tts.sixtydb._chunk_text",
+        return_value=["First chunk.", "Second chunk."],
+    ):
+        mock_client = AsyncMock()
+        mock_client.post.return_value = _make_sixtydb_response(
+            200, lines=[_top_level_line(_make_raw_pcm(5))]
+        )
+
+        # First is_circuit_open call (chunk 1's own check, inside
+        # @with_retry's per-attempt loop) -> False, chunk 1 succeeds.
+        # Second call (chunk 2's check) -> True, circuit now open.
+        mock_is_open = AsyncMock(side_effect=[False, True])
+        mock_record_failure = AsyncMock()
+
+        with (
+            patch("app.config.get_settings") as mock_settings,
+            patch("app.providers.tts.sixtydb.is_circuit_open", new=mock_is_open),
+            patch("app.core.circuit_breaker.record_failure", new=mock_record_failure),
+            patch("httpx.AsyncClient") as mock_client_cls,
+        ):
+            _patch_settings(mock_settings)
+            mock_client_cls.return_value.__aenter__.return_value = mock_client
+            provider = SixtyDbTTSProvider()
+            with pytest.raises(CircuitOpenError) as exc_info:
+                await provider.synthesize("irrelevant (chunks mocked)", "test-voice")
+
+    assert not isinstance(exc_info.value, SixtyDbPartialSpendError)
+    # The bug this test guards: guard_breaker must see the real CircuitOpenError
+    # and skip record_failure, exactly as it does for a circuit-open rejection
+    # with no prior successful chunk.
+    mock_record_failure.assert_not_called()
+    assert mock_client.post.call_count == 1, "chunk 2 must never reach the HTTP call"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_extract_audio_content_non_dict_line_raises_runtime_error() -> None:
+    """PR #240 follow-up review finding (real bug, fixed): a syntactically
+    valid NDJSON line that decodes to a non-dict JSON value (bare null, a
+    number, a list) must raise this module's own intended, diagnostic
+    RuntimeError -- not an unhandled AttributeError from calling .get() on a
+    non-dict."""
+    from app.providers.tts.sixtydb import _extract_audio_content
+
+    for non_dict_value in (None, 42, [1, 2, 3], "just a string"):
+        with pytest.raises(RuntimeError, match="not a JSON object"):
+            _extract_audio_content(non_dict_value)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_sixtydb_invalid_base64_raises_instead_of_silently_dropping_chars() -> None:
     """Review finding: b64decode() without validate=True silently drops
     non-base64 characters instead of raising — a corrupted response would

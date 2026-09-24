@@ -137,7 +137,7 @@ def _chunk_text(text: str, max_chars: int = _SIXTYDB_MAX_CHARS_PER_REQUEST) -> l
     return chunks
 
 
-def _extract_audio_content(line_obj: dict[str, Any]) -> str:
+def _extract_audio_content(line_obj: Any) -> str:  # noqa: ANN401
     """Return the base64 `audioContent` value from one parsed response line.
 
     Checks the VERIFIED live shape first (`audioContent` at the top level),
@@ -145,7 +145,21 @@ def _extract_audio_content(line_obj: dict[str, Any]) -> str:
     nesting. Raises `RuntimeError` if neither shape yields a value — never
     silently returns empty audio for an unrecognized shape (Scale & Load's
     "quiet wrongness" concern in the story file).
+
+    PR #240 follow-up review finding (real bug, fixed): `line_obj` is
+    whatever `json.loads(line)` returns for one NDJSON line, which can be
+    ANY JSON value (a bare `null`, a number, a list), not just an object —
+    calling `.get()` on a non-dict raised an unhandled `AttributeError`
+    instead of this function's own intended, diagnostic `RuntimeError`. The
+    type hint `dict[str, Any]` described the expected shape, not a runtime
+    guarantee; the explicit isinstance check below closes that gap.
     """
+    if not isinstance(line_obj, dict):
+        raise RuntimeError(
+            "60db TTS response line was not a JSON object — got "
+            f"{type(line_obj).__name__}: {line_obj!r}"
+        )
+
     top_level = line_obj.get("audioContent")
     if isinstance(top_level, str) and top_level:
         return top_level
@@ -380,6 +394,21 @@ class SixtyDbTTSProvider(TTSProvider):
             if generation is not None:
                 error_message = str(exc)
                 safe_trace(lambda: generation.update(level="ERROR", status_message=error_message))
+            if isinstance(exc, CircuitOpenError):
+                # PR #240 follow-up review finding (real bug, fixed): wrapping
+                # a CircuitOpenError into SixtyDbPartialSpendError below (a
+                # plain RuntimeError subclass) strips the type guard_breaker's
+                # own `except CircuitOpenError: raise` branch depends on to
+                # avoid counting a breaker REJECTION as a provider FAILURE.
+                # By the time guard_breaker's `except Exception` branch saw
+                # the wrapped error, it recorded a real failure for a call
+                # that was never actually made to the provider — a
+                # self-reinforcing loop that can keep the circuit open
+                # indefinitely once it opens mid-segment. Must always
+                # propagate bare, even when chars_completed > 0 — losing that
+                # partial-spend accounting for this one rare case is a
+                # strictly smaller cost than a circuit that can never close.
+                raise
             if chars_completed > 0:
                 # Human reviewer finding, PR #240: at least one chunk already
                 # succeeded (and, per wallet-credit billing, was already
