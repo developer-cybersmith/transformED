@@ -175,14 +175,16 @@ class TestPlannerPromptAnchor:
     def test_prompt_states_the_narration_budget(self):
         from app.modules.content.pipeline.graph import _planner_system_prompt
 
-        prompt = _planner_system_prompt(narration_budget_min=19.5)
+        # S5-1 (#231) made this return (prompt, was_book_context_truncated).
+        prompt, _ = _planner_system_prompt(narration_budget_min=19.5)
         assert "19.5" in prompt
         assert "duration_min" in prompt
 
     def test_prompt_no_longer_carries_depth_wording(self):
         from app.modules.content.pipeline.graph import _planner_system_prompt
 
-        prompt = _planner_system_prompt(narration_budget_min=29.25).upper()
+        prompt, _ = _planner_system_prompt(narration_budget_min=29.25)
+        prompt = prompt.upper()
         assert "FULL-DEPTH" not in prompt
         assert "CRITICAL-TOPICS-ONLY" not in prompt
 
@@ -191,7 +193,7 @@ class TestPlannerPromptAnchor:
         # while rewriting the signature.
         from app.modules.content.pipeline.graph import _planner_system_prompt
 
-        prompt = _planner_system_prompt(
+        prompt, _ = _planner_system_prompt(
             narration_budget_min=19.5, chapter_context="[Chapter Instructions]\nfocus on osmosis"
         )
         assert "osmosis" in prompt
@@ -206,8 +208,40 @@ class TestEffectiveNarrationRate:
         from app.modules.content.pipeline.graph import _effective_narration_wpm
 
         settings = get_settings()
-        expected = settings.narration_words_per_minute * settings.sarvam_narration_pace
+        # The pace comes from whichever tier is configured PRIMARY. Story 232
+        # put 60db ahead of Sarvam at speed 1.0, so pinning this to Sarvam's
+        # 0.85 would silently mis-budget every 60db deployment by ~18%.
+        primary_pace = (
+            settings.sixtydb_speed
+            if (settings.sixtydb_api_key and settings.sixtydb_voice_id)
+            else settings.sarvam_narration_pace
+        )
+        expected = settings.narration_words_per_minute * primary_pace
         assert math.isclose(_effective_narration_wpm(settings), expected, abs_tol=1e-9)
+
+    def test_effective_wpm_follows_the_primary_tier_not_a_hardcoded_vendor(self):
+        """A deployment with 60db credentials narrates at 60db's speed; one
+        without falls through to Sarvam and must use Sarvam's pace."""
+        from types import SimpleNamespace
+
+        from app.modules.content.pipeline.graph import _effective_narration_wpm
+
+        with_60db = SimpleNamespace(
+            narration_words_per_minute=150,
+            sarvam_narration_pace=0.85,
+            sixtydb_api_key="k",
+            sixtydb_voice_id="v",
+            sixtydb_speed=1.0,
+        )
+        without_60db = SimpleNamespace(
+            narration_words_per_minute=150,
+            sarvam_narration_pace=0.85,
+            sixtydb_api_key=None,
+            sixtydb_voice_id=None,
+            sixtydb_speed=1.0,
+        )
+        assert _effective_narration_wpm(with_60db) == 150.0
+        assert _effective_narration_wpm(without_60db) == pytest.approx(127.5)
 
     def test_effective_wpm_is_not_the_raw_rate(self):
         # The whole point: using the raw 150 as a generation target overshoots

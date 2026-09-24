@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import os
 import sys
-from unittest.mock import MagicMock
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -69,6 +70,53 @@ def _stub_openai_package() -> None:
     sys.modules.setdefault("openai.AsyncOpenAI", stub.AsyncOpenAI)
     sys.modules.setdefault("openai.types", stub.types)
     sys.modules.setdefault("openai.types.chat", stub.types.chat)
+
+
+@contextmanager
+def sixtydb_unconfigured_default():
+    """Story 232: default SixtyDbTTSProvider to "not configured" (raises
+    SixtyDbNotConfiguredError) wherever `_synthesize_with_fallback`/`tts_node`
+    runs.
+
+    60db is tried FIRST in the TTS fallback chain, ahead of Sarvam. Every
+    pre-Story-232 test that exercises that chain mocks only
+    SarvamTTSProvider/AzureTTSProvider directly — without this default, each
+    would exercise the REAL SixtyDbTTSProvider (no SIXTYDB_API_KEY test stub
+    exists, by design: the setting is optional so an unconfigured deployment
+    degrades gracefully). Kept as an explicit, deliberate default (not relied
+    on implicitly) so these tests stay correct regardless of ambient test env
+    state, and so every test in files using it constructs the SAME mock
+    rather than each incidentally hitting the real provider's __init__ (a
+    real Langfuse-init attempt) and raising ValueError by coincidence of
+    unset env vars. (Independent PR review, 2026-09-22: an earlier version of
+    this docstring claimed the missing-config ValueError would reach
+    guard_breaker and attempt a real Redis connection — stale, since the
+    config-precondition checks in `synthesize()` were already moved before
+    `guard_breaker` is entered by the time this docstring was written;
+    corrected here.)
+
+    Shared here (review finding) rather than duplicated as a private fixture
+    in both test_tts_node.py and test_audio_duration_s3_38.py — kept as a
+    plain context manager, NOT an autouse fixture at this (conftest) level,
+    so test_tts_providers_sixtydb.py's own dedicated tests (which import and
+    exercise the REAL class directly) are unaffected. Each file that needs
+    the default wraps this in its own local `@pytest.fixture(autouse=True)`.
+    """
+    from app.providers.tts.sixtydb import SixtyDbNotConfiguredError
+
+    mock_sixtydb = AsyncMock()
+    # PR #240 review finding: must raise the same SixtyDbNotConfiguredError
+    # subclass the real provider raises, not bare ValueError — graph.py's
+    # fallback chain now catches that specific subclass (not bare
+    # ValueError, which also matches genuine json.JSONDecodeError/
+    # binascii.Error corruption) to avoid mislabeling a real bug as
+    # "not configured". A bare ValueError here would silently stop
+    # exercising the "not configured" code path this fixture exists for.
+    mock_sixtydb.synthesize.side_effect = SixtyDbNotConfiguredError(
+        "sixtydb not configured in test"
+    )
+    with patch("app.providers.tts.sixtydb.SixtyDbTTSProvider", return_value=mock_sixtydb):
+        yield
 
 
 @pytest.fixture(autouse=True, scope="session")

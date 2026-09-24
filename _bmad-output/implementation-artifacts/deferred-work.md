@@ -12,6 +12,10 @@
 - **`baseline_commit` SHA retroactively set inside implementation commit** [`docs/stories/4-20-learner-qa-phase-length.md`] — process irregularity; the SHA was finalized in the `feat` commit rather than the story-creation commit. Cannot be retroactively fixed; document in PR description.
 - **Timed-out quiz (`quiz_accuracy=None`) indistinguishable from completed quiz in data layer** — `quiz_complete` is dispatched identically on timeout and on genuine completion; no flag differentiates them in session records or analytics. Deliberate MVP trade-off per story Context section. Future Learner DNA or session report story should add a `timed_out: bool` payload field to the `quiz_complete` event.
 
+## Deferred from: code review of S5-1-book-context-form (2026-09-21)
+
+- **F10 — Service-role client in `context.py` bypasses RLS** [`apps/api/app/modules/content/context.py`] — `get_supabase()` returns the service-role (admin) Supabase client; RLS policies on `book_context` provide zero protection for server-side calls. Ownership is enforced only by `_fetch_owned_book` in the router. This is the established pattern for all content-module DB access; future callers of `get_book_context_row` or `upsert_book_context` that bypass the router must explicitly call the ownership check themselves. A broader decision on whether direct service-layer calls should include an ownership guard is required before expanding context.py usage.
+
 ## Deferred from: code review of 4-21-learner-ws-tier (2026-07-23)
 
 - **Repeated `session_start` re-overrides tier mid-session (no idempotency guard)** [`apps/api/app/core/websocket.py`] — a client that sends `session_start` twice re-writes the tier keys and re-dispatches the FSM event each time. A second `session_start` carrying a different tier mid-session would change `qa_phase_seconds` underneath an in-progress Q&A phase (the FSM itself rejects the IDLE→TEACHING re-transition, but the tier keys are overwritten first). Low severity; a guard needs a product decision on whether mid-session tier changes are ever legitimate.

@@ -5,7 +5,9 @@
 export type LessonStatus = 'generating' | 'ready' | 'failed';
 
 export type ComplexityLevel = 'low' | 'medium' | 'high';
-export type AudioProvider = 'sarvam' | 'azure' | 'browser';
+// "sixtydb" added by Story 232 — FROZEN CONTRACT CHANGE, requires the
+// 4-developer-reviewed PR per CLAUDE.md/PRD §16 before merge.
+export type AudioProvider = 'sarvam' | 'azure' | 'browser' | 'sixtydb';
 export type QuizType = 'mcq' | 'concept_check';
 export type QuizDifficulty = 'easy' | 'medium' | 'hard';
 export type LessonTier = 'T1' | 'T2' | 'T3';

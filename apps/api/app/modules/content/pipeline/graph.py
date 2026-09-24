@@ -71,6 +71,7 @@ from pydantic import BaseModel
 # router.py) — see app/schemas/lesson.py's DEFAULT_TIER/VALID_TIERS.
 from app.core.db import rows, single_row
 from app.core.langfuse import deterministic_trace_context, get_langfuse, safe_trace, traced_node
+from app.modules.content.pipeline.prompt_context import _BOOK_CONTEXT_MAX_CHARS
 from app.schemas.lesson import DEFAULT_TIER as _DEFAULT_TIER
 from app.schemas.lesson import (
     TIER_SEAT_MINUTES,
@@ -139,6 +140,11 @@ class PipelineState(TypedDict, total=False):
 
     # Node 5: lesson_planner
     lesson_plan: dict[str, Any]  # {title, objectives: [], segments: [], total_duration_min}
+    # Story S5-1 (Issue #231): book-level personalization context, fetched once
+    # in lesson_planner_node and propagated to slide_generator and
+    # narration_generator via _FAN_OUT_STATE_KEYS. Empty string when the
+    # student submitted no context.
+    book_context: str
 
     # Node 6: slide_generator
     slides: list[
@@ -204,6 +210,14 @@ class PipelineState(TypedDict, total=False):
     section_truncations: Annotated[
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, node, original_chars, capped_chars}]
+
+    # S5-1/S5-9: set to True by any of the 3 book-context merge sites
+    # (lesson_planner_node, slide_generator_node, narration_generator_node)
+    # when merge_book_context() had to truncate the context block. Written to
+    # lesson_jobs.node_outputs by package_builder_node so admins can query for
+    # truncated lessons. Default False (most lessons have no book context at all).
+    # Last-write-wins (not a reducer) — True is sticky; once set it stays set.
+    book_context_truncated: bool
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
@@ -1380,19 +1394,32 @@ def _effective_narration_wpm(settings: Any) -> float:  # noqa: ANN401 — Settin
 
     `narration_words_per_minute` (150) is a raw speaking rate, introduced by
     Story 2-19 to ESTIMATE a finished script's duration for the slide timeline.
-    Using it unmodified as a GENERATION target overshoots the clock: the TTS
-    pace (`sarvam_narration_pace`, default 0.85) stretches the real audio, so
-    150 words occupy ~1.18 minutes, not 1.0. At T1 that is a ~5-minute miss on
-    a 29.25-minute budget.
+    Using it unmodified as a GENERATION target overshoots the clock whenever the
+    TTS tier slows the delivery: at Sarvam's 0.85 pace, 150 words occupy ~1.18
+    minutes, not 1.0 — a ~5-minute miss on T1's 29.25-minute budget.
 
-    KNOWN ASSUMPTION — D175 (docs/DEFECT-REGISTER.md), not just a comment:
-    this uses Sarvam's pace because Sarvam is the primary TTS tier. A lesson
-    that falls back to Azure or browser speech synthesises at a different pace,
+    The pace therefore comes from whichever tier is actually configured as
+    PRIMARY, not from a hardcoded vendor. Story 232 put 60db.ai ahead of Sarvam
+    in the fallback chain (`sixtydb -> sarvam -> azure -> browser`) at a default
+    `speed` of 1.0, so a deployment with 60db credentials narrates at a
+    different rate to one without — and a budget pinned to Sarvam's 0.85 would
+    have been silently ~18% wrong on every 60db lesson the moment that story
+    merged. `sixtydb_api_key`/`sixtydb_voice_id` are optional and the provider
+    raises without them (falling through to Sarvam), so their presence is what
+    decides which pace is real.
+
+    KNOWN ASSUMPTION — D182 (docs/DEFECT-REGISTER.md), not just a comment: this
+    still assumes the primary tier SUCCEEDS. A lesson that falls through to
+    Azure or browser speech synthesises at a pace this cannot know in advance,
     so its measured duration can miss the target by more than the tolerance
     without the generator being at fault — which is why `duration_report`
-    records the measurement rather than the pipeline asserting on it.
+    records the measurement (with `measured_source`) rather than asserting on it.
     """
-    return float(settings.narration_words_per_minute) * float(settings.sarvam_narration_pace)
+    if settings.sixtydb_api_key and settings.sixtydb_voice_id:
+        pace = float(settings.sixtydb_speed)
+    else:
+        pace = float(settings.sarvam_narration_pace)
+    return float(settings.narration_words_per_minute) * pace
 
 
 def _rescale_segment_durations(
@@ -1529,25 +1556,32 @@ def _classify_duration_outcome(
     return "target_missed"
 
 
-def _planner_system_prompt(narration_budget_min: float, chapter_context: str = "") -> str:
+def _planner_system_prompt(
+    narration_budget_min: float, chapter_context: str = "", book_context: str = ""
+) -> tuple[str, bool]:
     """The lesson_planner system prompt, shared by the single-call and batched
     paths (Story 2-16 RC-3) so both issue an identical instruction.
 
+    Returns ``(system_prompt, was_book_context_truncated)``.
+
     S5-3: `chapter_context` appended at the 'chapter instructions' precedence
     slot (§5 strategy doc). Empty string is safe.
+    S5-1 (Issue #231): `book_context` merged via merge_book_context (2,000-char budget).
 
-    S5-4: takes the lesson's narration budget in place of the old
-    `tier_framing` depth wording. The planner is the ONLY node that sees every
-    segment at once, so it is the only place a whole-lesson duration target can
-    be allocated — before S5-4 it was told nothing about lesson length at all,
-    invented per-segment `duration_min` values freely, and the slide budget was
-    then derived from that unanchored number.
+    S5-4: takes the lesson's narration budget in place of the old `tier_framing`
+    depth wording. The planner is the ONLY node that sees every segment at once,
+    so it is the only place a whole-lesson duration target can be allocated —
+    before S5-4 it was told nothing about lesson length at all, invented
+    per-segment `duration_min` values freely, and the slide budget was then
+    derived from that unanchored number.
 
     The budget is stated as a target the sum should approach, not a hard
     constraint: `_rescale_segment_durations` corrects the sum deterministically
     afterwards, so a model that misjudges it costs nothing extra.
     """
-    return (
+    from app.modules.content.pipeline.prompt_context import merge_book_context
+
+    base = (
         "Produce a lesson plan outline from the section summaries below. "
         "Return an overall title, subject, 2-5 learning objectives, an "
         "overall complexity_level (low/medium/high), and return EXACTLY "
@@ -1574,6 +1608,7 @@ def _planner_system_prompt(narration_budget_min: float, chapter_context: str = "
         + chapter_context
         + _UNTRUSTED_CONTENT_GUARD
     )
+    return merge_book_context(base, book_context)
 
 
 _PLANNER_BATCH_MAX_ATTEMPTS = 3
@@ -1586,6 +1621,7 @@ async def _run_planner_batch(
     narration_budget_min: float,
     lesson_id: str,
     chapter_context: str = "",
+    book_context: str = "",
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
@@ -1622,11 +1658,17 @@ async def _run_planner_batch(
     summaries_text = "\n".join(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
+    _planner_prompt, _planner_ctx_truncated = _planner_system_prompt(
+        narration_budget_min, chapter_context, book_context
+    )
+    if _planner_ctx_truncated:
+        logger.warning(
+            "[%s] _run_planner_batch: book_context truncated to 2000 chars — "
+            "lesson plan will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
-        {
-            "role": "system",
-            "content": _planner_system_prompt(narration_budget_min, chapter_context),
-        },
+        {"role": "system", "content": _planner_prompt},
         {"role": "user", "content": summaries_text},
     ]
 
@@ -1691,9 +1733,21 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     """
     from app.config import get_settings
     from app.core.db import get_supabase
+    from app.modules.content.context import get_book_context_prompt_context
     from app.providers.llm.factory import get_llm_provider
 
     lesson_id = state["lesson_id"]
+
+    # Story S5-1 (Issue #231): fetch book context BEFORE the idempotency cache
+    # check so the context is always returned in state — even on a cache hit,
+    # slide_generator and narration_generator (dispatched after this node)
+    # need it from state["book_context"] via _FAN_OUT_STATE_KEYS. Graceful
+    # on DB error: get_book_context_prompt_context never raises, returns "".
+    book_context = await get_book_context_prompt_context(
+        book_id=state.get("book_id", ""),
+        user_id=state.get("user_id", ""),
+    )
+
     segment_summaries = state.get("segment_summaries", [])
     logger.info(
         "[%s] lesson_planner_node: generating lesson plan from %d segment summaries",
@@ -1758,7 +1812,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-        return {"lesson_plan": cached, "progress_pct": 38.0}
+        return {"lesson_plan": cached, "progress_pct": 38.0, "book_context": book_context}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -1922,6 +1976,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             narration_budget_min,
             lesson_id,
             chapter_context=chapter_ctx_block,
+            book_context=book_context,
         )
     else:
         batches = [
@@ -1953,6 +2008,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 batch_budget_min,
                 lesson_id,
                 chapter_context=chapter_ctx_block,
+                book_context=book_context,
             )
             if plan_head is None:
                 plan_head = batch_response
@@ -2141,7 +2197,20 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         has_chapter_context,
     )
     await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-    return {"lesson_plan": lesson_plan, "progress_pct": 38.0}
+    _lp_ctx_truncated = len(book_context) > _BOOK_CONTEXT_MAX_CHARS
+    if _lp_ctx_truncated:
+        logger.warning(
+            "[%s] lesson_planner_node: book_context exceeded %d chars — "
+            "truncation occurred; setting book_context_truncated=True in state",
+            lesson_id,
+            _BOOK_CONTEXT_MAX_CHARS,
+        )
+    return {
+        "lesson_plan": lesson_plan,
+        "progress_pct": 38.0,
+        "book_context": book_context,
+        "book_context_truncated": _lp_ctx_truncated,
+    }
 
 
 class _SlideLLM(BaseModel):
@@ -2328,21 +2397,36 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         f"{budget_by_id[s['segment_id']][1]} slides for this segment)"
         for s in plan_segments
     )
+    # Story S5-1 (Issue #231): inject book context at the "book context"
+    # precedence slot via the shared merge helper.
+    from app.modules.content.pipeline.prompt_context import merge_book_context
+
+    _slide_book_context = state.get("book_context") or ""
+    _slide_base_prompt = (
+        "Produce a slide deck from the lesson plan segments below. "
+        "Each segment specifies its own slide-count range — respect "
+        "it exactly. Each slide has a short title and a list of "
+        "bullet points. Each bullet must be a single concise point "
+        f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
+        "a full sentence or paragraph; split a longer idea into "
+        "multiple bullets instead. Return EXACTLY one slide-set per "
+        "segment provided, echoing back each segment's segment_id "
+        "UNCHANGED — do not invent, merge, split, omit, or reorder "
+        "segment_ids." + _UNTRUSTED_CONTENT_GUARD
+    )
+    _slide_system_prompt, _slide_ctx_truncated = merge_book_context(
+        _slide_base_prompt, _slide_book_context
+    )
+    if _slide_ctx_truncated:
+        logger.warning(
+            "[%s] slide_generator_node: book_context truncated to 2000 chars — "
+            "slides will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
         {
             "role": "system",
-            "content": (
-                "Produce a slide deck from the lesson plan segments below. "
-                "Each segment specifies its own slide-count range — respect "
-                "it exactly. Each slide has a short title and a list of "
-                "bullet points. Each bullet must be a single concise point "
-                f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
-                "a full sentence or paragraph; split a longer idea into "
-                "multiple bullets instead. Return EXACTLY one slide-set per "
-                "segment provided, echoing back each segment's segment_id "
-                "UNCHANGED — do not invent, merge, split, omit, or reorder "
-                "segment_ids." + _UNTRUSTED_CONTENT_GUARD
-            ),
+            "content": _slide_system_prompt,
         },
         {"role": "user", "content": segments_text},
     ]
@@ -2528,7 +2612,11 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     ).eq("lesson_id", lesson_id).execute()
 
     await _update_job_progress(lesson_id, 48.0, "slide_generator")
-    return {"slides": slides_out, "progress_pct": 48.0}
+    return {
+        "slides": slides_out,
+        "progress_pct": 48.0,
+        "book_context_truncated": _slide_ctx_truncated,
+    }
 
 
 class _SegmentSummaryLLM(BaseModel):
@@ -4311,16 +4399,40 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # move the interpolation into the user-role message alongside the section
     # body — same trust level as every other untrusted value, covered by the
     # same guard.
+    # Story S5-1 (Issue #231): inject book context at the "book context"
+    # precedence slot via the shared merge helper. book_context arrives via
+    # _FAN_OUT_STATE_KEYS — added in this story so Send()-dispatched nodes
+    # receive it without re-querying the DB on every section dispatch.
+    from app.modules.content.pipeline.prompt_context import merge_book_context as _merge_bc
+
+    _narration_book_context = state.get("book_context") or ""
+    _narration_base_prompt = (
+        "Write a conversational narration script for this section, as "
+        "if a tutor is speaking it aloud to a learner. Keep it natural "
+        "and paced for spoken delivery."
+        # S5-4: the segment's word budget. Placed BEFORE the untrusted-content
+        # guard so it reads as an instruction rather than as part of the
+        # quoted source material, and before the book-context merge so a long
+        # book context can never displace the length target.
+        f"{length_instruction}"
+        f"{_UNTRUSTED_CONTENT_GUARD}"
+    )
+    _narration_system_prompt, _narration_ctx_truncated = _merge_bc(
+        _narration_base_prompt, _narration_book_context
+    )
+    # lesson_planner_node (Phase 2, sequential, runs before this fan-out) already
+    # logged the truncation warning with the same book_context string. Suppress
+    # the per-section repeat to avoid N identical warnings for N dispatched sections.
+    if _narration_ctx_truncated and not state.get("book_context_truncated"):
+        logger.warning(
+            "[%s] narration_generator_node: book_context truncated to 2000 chars — "
+            "narration will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+        )
     messages = [
         {
             "role": "system",
-            "content": (
-                "Write a conversational narration script for this section, as "
-                "if a tutor is speaking it aloud to a learner. Keep it natural "
-                "and paced for spoken delivery."
-                f"{length_instruction}"
-                f"{_UNTRUSTED_CONTENT_GUARD}"
-            ),
+            "content": _narration_system_prompt,
         },
         {
             "role": "user",
@@ -4475,7 +4587,15 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         lesson_id, checkpoint_key, state.get("_total_sections"), phase="narration_post_planner"
     )
 
-    return {"narration_scripts": [result], "section_truncations": section_truncations}
+    return {
+        "narration_scripts": [result],
+        "section_truncations": section_truncations,
+        # book_context_truncated is NOT returned here: narration_generator runs
+        # in PARALLEL (N concurrent dispatches) and LangGraph raises
+        # InvalidUpdateError on concurrent writes to a non-reducer channel.
+        # lesson_planner_node (sequential, runs before this fan-out) already
+        # sets book_context_truncated — same book_context string, same result.
+    }
 
 
 # 2026-07-15 review finding (Blind Hunter): segment_id is used to build a
@@ -4492,7 +4612,8 @@ _SAFE_SEGMENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]+\Z")
 async def _synthesize_with_fallback(
     lesson_id: str, segment_id: str, text: str
 ) -> tuple[bytes | None, str, float]:
-    """Try Sarvam, then Azure, then Browser — never raises (Story 2-8 AC-2).
+    """Try 60db, then Sarvam, then Azure, then Browser — never raises
+    (Story 2-8 AC-2; 60db tier added by Story 232).
 
     Returns (audio_bytes_or_None, audio_provider, cost_usd). audio_bytes is
     None for the browser-fallback case (no server-side audio produced).
@@ -4500,8 +4621,107 @@ async def _synthesize_with_fallback(
     from app.config import get_settings
     from app.providers.tts.sarvam import COST_PER_CHAR as _SARVAM_COST_PER_CHAR
     from app.providers.tts.sarvam import SarvamTTSProvider
+    from app.providers.tts.sixtydb import COST_PER_CHAR as _SIXTYDB_COST_PER_CHAR
+    from app.providers.tts.sixtydb import (
+        SixtyDbNotConfiguredError,
+        SixtyDbPartialSpendError,
+        SixtyDbTTSProvider,
+    )
 
     settings = get_settings()
+
+    try:
+        # Review finding (considered, not changed): `or ""` here plus
+        # synthesize()'s own internal `voice_id or self._voice_id_default`
+        # fallback is a harmless double-indirection, not a bug — both read
+        # the same settings.sixtydb_voice_id and land on the same value.
+        # Left as `or ""` (not `settings.sixtydb_voice_id` directly) because
+        # the ABC's synthesize(text: str, voice_id: str) is non-Optional;
+        # passing the raw `str | None` would be a real mypy violation.
+        #
+        # PR #240 follow-up review finding (simplification): synthesize()
+        # structurally cannot return falsy audio_bytes without raising first
+        # — _post_chunk raises on zero parsed PCM pieces, and
+        # _wrap_pcm_as_wav always writes a full WAV header even in edge
+        # cases. The old `if audio_bytes: return ... else: log+fall
+        # through` shape (mirroring Sarvam/Azure below, which genuinely CAN
+        # return falsy audio) was therefore dead code for this provider
+        # specifically — removed to avoid a future reader mistaking it for
+        # a live degrade path.
+        audio_bytes, _ = await SixtyDbTTSProvider(lesson_id).synthesize(
+            text, settings.sixtydb_voice_id or ""
+        )
+        return audio_bytes, "sixtydb", len(text) * _SIXTYDB_COST_PER_CHAR
+    except SixtyDbNotConfiguredError:
+        # PR #240 review finding (real bug, fixed): this used to catch bare
+        # `ValueError`, but `json.JSONDecodeError` and `binascii.Error` --
+        # both raised deep inside `_post_chunk` for a genuinely CORRUPTED
+        # live response -- are themselves real ValueError subclasses. That
+        # meant a live provider-corruption bug would ALSO match this branch
+        # and get silently mislabeled as "not configured" at DEBUG (no
+        # traceback), hiding a real, actionable bug. Catching this specific
+        # subclass instead means only the three deliberate config/caller-bug
+        # raise sites in synthesize() ever land here; a corrupted response
+        # now correctly falls through to the `except Exception` branch below
+        # (WARNING + traceback), matching what actually happened.
+        #
+        # "not configured" (missing sixtydb_api_key/sixtydb_voice_id, or a
+        # caller passing empty text) is a deliberate, common deployment
+        # state. Before the ORIGINAL fix (this docstring's prior version),
+        # it fell into the except-Exception branch and logged a WARNING with
+        # a full traceback on EVERY narration segment, in EVERY deployment
+        # that hasn't yet set SIXTYDB_* -- i.e. every deployment today --
+        # contradicting this PR's own "degrades to today's exact behavior"
+        # framing. Logged quietly instead.
+        logger.debug(
+            "[%s] tts_node: 60db not configured for segment %s, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+        )
+    except SixtyDbPartialSpendError as exc:
+        # Human reviewer finding, PR #240 (Developer-2-max, real bug, fixed):
+        # at least one chunk of this segment already succeeded against 60db
+        # (and, per its wallet-credit billing, was already paid for) before
+        # a later chunk failed permanently. Without this, that real spend
+        # was never recorded anywhere — _synthesize_with_fallback falls
+        # through to Sarvam, whose cost is the only one ever accumulated
+        # against the $3.00/lesson ceiling, silently dropping 60db's actual
+        # wallet spend. Record it now, before falling through.
+        from app.core.cost_tracker import accumulate_cost, check_ceiling
+
+        logger.warning(
+            "[%s] tts_node: 60db synthesis failed for segment %s after partial spend "
+            "($%.6f already incurred) — recording it, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+            exc.partial_cost_usd,
+            exc_info=True,
+        )
+        await accumulate_cost(lesson_id, exc.partial_cost_usd)
+        # PR #240 follow-up review finding (real bug, fixed): tts_node's own
+        # per-segment loop only checks check_ceiling() ONCE, before this
+        # function is called at all. Recording the partial spend above can
+        # itself push the lesson over the $3.00 ceiling, and falling through
+        # to try Sarvam unconditionally meant a single segment could
+        # accumulate TWO real provider costs between ceiling checks — more
+        # than the pre-#232 (Sarvam/Azure-only, all-or-nothing-cost) design
+        # ever allowed for one segment. Re-check immediately after recording,
+        # mirroring tts_node's own per-segment pre-check pattern.
+        if await check_ceiling(lesson_id):
+            logger.warning(
+                "[%s] tts_node: cost ceiling reached after 60db partial spend for "
+                "segment %s — skipping remaining paid providers (browser fallback)",
+                lesson_id,
+                segment_id,
+            )
+            return None, "browser", 0.0
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] tts_node: 60db synthesis failed for segment %s, falling back to Sarvam",
+            lesson_id,
+            segment_id,
+            exc_info=True,
+        )
 
     try:
         audio_bytes, _ = await SarvamTTSProvider(lesson_id).synthesize(
@@ -5007,7 +5227,11 @@ async def narration_stitch_node(state: PipelineState) -> PipelineState:
 @traced_node("tts_node")
 async def tts_node(state: PipelineState) -> PipelineState:
     """Node 13 (Story 2-8/S2-9): synthesise narration scripts to audio via a
-    Sarvam -> Azure -> Browser Speech fallback chain.
+    60db -> Sarvam -> Azure -> Browser Speech fallback chain (60db tier
+    added by Story 232 — human reviewer finding, PR #240: this docstring had
+    gone stale when that tier was added, even though
+    `_synthesize_with_fallback`'s own docstring immediately above its
+    definition was correctly updated at the same time).
 
     Input is `state["narration_scripts_final"]` ONLY (AC-1; renamed from
     `narration_scripts` by issue #236 — see `narration_stitch_node`, which now
@@ -5151,7 +5375,7 @@ async def tts_node(state: PipelineState) -> PipelineState:
                 # Story 2-13/S2-13 AC-3: proactive per-segment cost-ceiling
                 # pre-check, mirroring image_generator_node's existing
                 # pattern (Story 2-9 AC-3) — skip straight to the free
-                # browser fallback rather than attempting Sarvam/Azure.
+                # browser fallback rather than attempting 60db/Sarvam/Azure.
                 elif await check_ceiling(lesson_id):
                     logger.warning(
                         "[%s] tts_node: cost ceiling reached, skipping paid TTS providers "
@@ -5161,8 +5385,11 @@ async def tts_node(state: PipelineState) -> PipelineState:
                     )
                     audio_bytes, audio_provider, cost = None, "browser", 0.0
                     if not downshift_recorded:
+                        # Story 232: 60db is now the first paid tier tried —
+                        # this label must name every tier being skipped, not
+                        # just the two that predate it (review finding).
                         node_outputs = _record_cost_downshift(
-                            node_outputs, "tts_node", "sarvam/azure", "browser"
+                            node_outputs, "tts_node", "sixtydb/sarvam/azure", "browser"
                         )
                         downshift_recorded = True
                 else:
@@ -6760,6 +6987,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # as content-limited when the cap, not the chapter, was the
                 # real limit.
                 "duration_report": duration_report,
+                # S5-1/S5-9: True when any of the 3 book-context merge sites
+                # (lesson_planner, slide_generator, narration_generator) hit
+                # the 2,000-char budget. False / absent = context was not
+                # truncated. Admins can query lesson_jobs
+                # WHERE node_outputs->'book_context_truncated' = 'true'.
+                "book_context_truncated": state.get("book_context_truncated", False),
             },
         }
     ).eq("lesson_id", lesson_id).execute()
@@ -6782,7 +7015,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
 # _DEFAULT_TIER ("T2") regardless of the lesson's real tier — silently
 # disabling the S2-LM3/LM4/LM5 tier bands (e.g. quiz_generator_node's
 # _TIER_QUIZ_COUNT_BAND) for every T1 and T3 lesson.
-_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier")
+# Story S5-1 (Issue #231): "book_context" is a str key (last-write-wins, NOT
+# an Annotated[list, operator.add] reducer), so adding it does NOT risk the
+# reducer-channel duplication defect documented in CLAUDE.md. It is added here
+# so narration_generator_node (which is Send()-dispatched by
+# _fan_out_narration_after_planning) receives the context fetched once in
+# lesson_planner_node, without each narration dispatch re-querying the DB.
+_FAN_OUT_STATE_KEYS: tuple[str, ...] = ("lesson_id", "user_id", "book_id", "tier", "book_context")
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
 # once, before dispatch, while accumulated cost is still whatever it was
@@ -6880,6 +7119,10 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
 
     state_any: dict[str, Any] = cast("dict[str, Any]", state)
     base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    # book_context is optional (S5-1): lessons without a saved context have it
+    # absent from state. Always include it in the payload so Phase-1 nodes
+    # receive a consistent dict regardless of whether the student filled the form.
+    base.setdefault("book_context", "")
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
     # Uses _PHASE1_INSTRUMENTED_NODES (all 5 as of issue #236 — narration_generator
@@ -7016,6 +7259,10 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
 
     state_any: dict[str, Any] = cast("dict[str, Any]", state)
     base = {k: state_any[k] for k in _FAN_OUT_STATE_KEYS if k in state}
+    # book_context is optional (S5-1): always include it in the payload so
+    # narration_generator receives a consistent dict regardless of whether
+    # the student filled the per-book context form.
+    base.setdefault("book_context", "")
     base["_total_sections"] = len(plan_segments) * len(_POST_PLANNER_FAN_OUT_NODES)
 
     sends: list[Send] = []

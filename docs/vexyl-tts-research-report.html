@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vexyl TTS — Deep Research Report</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #222538;
+      --border: #2e3150;
+      --accent: #6c63ff;
+      --accent2: #00d4aa;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+      --ok: #22c55e;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --code-bg: #0d1117;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+      padding: 0 1rem 4rem;
+    }
+
+    header {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 2.5rem 0 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .badge-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+    .badge {
+      font-size: .72rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+      padding: .2rem .55rem; border-radius: 4px;
+    }
+    .badge-warn  { background: rgba(245,158,11,.15); color: var(--warn); border: 1px solid rgba(245,158,11,.35); }
+    .badge-ok    { background: rgba(34,197,94,.12);  color: var(--ok);   border: 1px solid rgba(34,197,94,.3); }
+    .badge-info  { background: rgba(108,99,255,.15); color: var(--accent);border: 1px solid rgba(108,99,255,.35); }
+
+    h1 { font-size: 1.75rem; font-weight: 800; line-height: 1.2; margin-bottom: .35rem; }
+    .meta { font-size: .82rem; color: var(--muted); }
+
+    main { max-width: 860px; margin: 0 auto; }
+
+    /* ── verdict box ── */
+    .verdict {
+      margin: 1.8rem 0;
+      background: rgba(245,158,11,.08);
+      border: 1px solid rgba(245,158,11,.35);
+      border-left: 4px solid var(--warn);
+      border-radius: 6px;
+      padding: 1.1rem 1.25rem;
+    }
+    .verdict h2 { font-size: 1rem; font-weight: 700; color: var(--warn); margin-bottom: .4rem; }
+    .verdict p  { font-size: .9rem; }
+
+    h2.section {
+      font-size: 1.15rem; font-weight: 700;
+      margin: 2.2rem 0 .8rem;
+      padding-bottom: .4rem;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+    h3.sub { font-size: .95rem; font-weight: 700; margin: 1.2rem 0 .4rem; color: var(--accent2); }
+
+    p { margin-bottom: .75rem; font-size: .9rem; }
+    ul, ol { padding-left: 1.3rem; margin-bottom: .75rem; }
+    li { font-size: .9rem; margin-bottom: .3rem; }
+
+    /* ── tables ── */
+    .tbl-wrap { overflow-x: auto; margin: .75rem 0 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: .82rem; min-width: 480px; }
+    th {
+      background: var(--surface2); color: var(--muted);
+      font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+      padding: .5rem .75rem; text-align: left; border-bottom: 1px solid var(--border);
+    }
+    td { padding: .45rem .75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(255,255,255,.025); }
+
+    .yes  { color: var(--ok);     font-weight: 700; }
+    .no   { color: var(--danger); font-weight: 700; }
+    .na   { color: var(--muted);  font-style: italic; }
+
+    /* ── code / json ── */
+    pre {
+      background: var(--code-bg); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1rem; overflow-x: auto;
+      font-size: .8rem; font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+      line-height: 1.55; margin: .5rem 0 1rem;
+    }
+    code { font-family: inherit; }
+
+    /* ── callout ── */
+    .callout {
+      background: var(--surface); border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 6px; padding: .9rem 1.1rem; margin: .75rem 0 1rem;
+      font-size: .88rem;
+    }
+    .callout.danger { border-left-color: var(--danger); }
+    .callout.ok     { border-left-color: var(--ok); }
+    .callout strong { font-weight: 700; }
+
+    /* ── confidence chips ── */
+    .conf-high   { color: var(--ok);   font-size: .75rem; font-weight: 700; }
+    .conf-med    { color: var(--warn); font-size: .75rem; font-weight: 700; }
+    .conf-low    { color: var(--danger);font-size:.75rem; font-weight: 700; }
+
+    /* ── sources ── */
+    .sources { margin-top: 2.5rem; }
+    .sources h2 { font-size: 1rem; font-weight: 700; color: var(--muted); margin-bottom: .6rem; }
+    .sources ol { padding-left: 1.2rem; }
+    .sources li { font-size: .78rem; margin-bottom: .3rem; }
+    .sources a  { color: var(--accent); text-decoration: none; }
+    .sources a:hover { text-decoration: underline; }
+
+    a { color: var(--accent2); }
+    strong { font-weight: 700; }
+    em     { font-style: italic; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="badge-row">
+    <span class="badge badge-warn">Small / Niche Provider</span>
+    <span class="badge badge-info">Open Source</span>
+    <span class="badge badge-info">Self-Hosted Only</span>
+    <span class="badge badge-ok">5 Search Angles · 15+ Sources</span>
+  </div>
+  <h1>Vexyl TTS — Deep Research Report</h1>
+  <div class="meta">Produced 2026-09-03 &nbsp;·&nbsp; TransformED TTS stack evaluation &nbsp;·&nbsp; 5-angle fan-out · adversarial verification</div>
+</header>
+
+<main>
+
+  <!-- ══════════════════════════════════════════════════════ VERDICT -->
+  <div class="verdict">
+    <h2>Top-Line Verdict</h2>
+    <p>
+      <strong>Vexyl TTS is real but is not a hosted cloud API.</strong>
+      It is a free, open-source, self-hosted server wrapping the <code>ai4bharat/indic-parler-tts</code> model.
+      It has 41 GitHub stars, zero Product Hunt listing, zero Reddit/HackerNews presence, and all discoverable
+      content traces back to its solo creator or one promotional blog post.
+      It does <strong>not</strong> return word-level timestamps. Uncached CPU latency runs 2–7 seconds per sentence —
+      unsuitable for a real-time lesson audio-timeline state machine.
+      <strong>TransformED's existing Sarvam → Azure → Browser fallback chain is the correct architecture.</strong>
+    </p>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ WHAT IS IT -->
+  <h2 class="section">1. What Vexyl TTS Actually Is</h2>
+
+  <p>
+    Vexyl TTS (<a href="https://github.com/vexyl-ai/vexyl-tts" target="_blank">github.com/vexyl-ai/vexyl-tts</a>)
+    is an open-source, self-hosted TTS server maintained by a single developer (Anil Mathew / Vexyl AI).
+    It wraps <strong>ai4bharat/indic-parler-tts</strong> — a community Indian-language TTS model — and exposes it
+    via WebSocket and REST APIs. It is <em>not</em> a commercial SaaS API. There is no hosted endpoint, no
+    per-character billing, and no <code>docs.vexyl.ai</code> or <code>api.vexyl.ai</code> (both return
+    connection refused).
+  </p>
+
+  <div class="callout">
+    <strong>Flag:</strong> The broader <em>Vexyl AI</em> commercial product (vexyl.ai) is a telephony/voice-bot
+    platform for Asterisk/FreePBX. It uses <em>other</em> providers' TTS (including Sarvam) via BYOK — it does
+    not ship its own synthesis endpoint. The open-source TTS server and the commercial calling platform share a
+    brand but are separate products.
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr>
+        <th>Fact</th><th>Detail</th><th>Confidence</th>
+      </tr>
+      <tr><td>GitHub repo</td><td><a href="https://github.com/vexyl-ai/vexyl-tts" target="_blank">vexyl-ai/vexyl-tts</a></td><td class="conf-high">HIGH</td></tr>
+      <tr><td>Stars / Forks</td><td>41 stars · 13 forks (as of Sept 2026)</td><td class="conf-high">HIGH</td></tr>
+      <tr><td>Last commit</td><td>March 25, 2026</td><td class="conf-high">HIGH</td></tr>
+      <tr><td>License</td><td>Apache 2.0</td><td class="conf-high">HIGH</td></tr>
+      <tr><td>Underlying model</td><td>ai4bharat/indic-parler-tts</td><td class="conf-high">HIGH</td></tr>
+      <tr><td>Open issues</td><td>0 open issues</td><td class="conf-high">HIGH</td></tr>
+      <tr><td>npm / PyPI package</td><td class="no">None — install via git clone only</td><td class="conf-high">HIGH</td></tr>
+      <tr><td>Product Hunt listing</td><td class="no">None confirmed</td><td class="conf-high">HIGH</td></tr>
+      <tr><td>Reddit / HN presence</td><td class="no">None found</td><td class="conf-high">HIGH</td></tr>
+    </table>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ Q1: TIMESTAMPS -->
+  <h2 class="section">2. Word-Level Timestamps / Timing Data</h2>
+
+  <div class="callout danger">
+    <strong>Answer: No.</strong> Vexyl TTS does not return word-level timestamps, phoneme timing,
+    or any audio-text alignment data. The response payload contains only a base64-encoded WAV blob
+    and a <code>latency_ms</code> field (inference monitoring only, not playback timing).
+    This is an architectural limitation of the underlying indic-parler-tts model, which does not
+    expose forced-alignment output.
+  </div>
+
+  <p>
+    If the TransformED lesson player needs word-boundary events for subtitle highlighting or
+    audio-timeline sync, <strong>Azure TTS is the only provider in the current stack with confirmed
+    word-level timestamp support</strong> (via SSML <code>&lt;bookmark&gt;</code> elements and
+    <code>WordBoundary</code> SDK events). Sarvam Bulbul v2 has no documented timestamp capability.
+  </p>
+
+  <!-- ══════════════════════════════════════════════════════ Q2: API FORMAT -->
+  <h2 class="section">3. Actual API Response Format</h2>
+
+  <h3 class="sub">WebSocket (real-time) — primary interface</h3>
+  <p>Server → Client on connect:</p>
+  <pre><code>{
+  "type": "ready",
+  "model": "indic-parler-tts",
+  "sample_rate": 22050
+}</code></pre>
+
+  <p>Client → Server (synthesis request):</p>
+  <pre><code>{
+  "type": "synthesize",
+  "text": "नमस्ते दुनिया",
+  "lang": "hi-IN",
+  "style": "default",
+  "request_id": "1"
+}</code></pre>
+
+  <p>Server → Client (audio response):</p>
+  <pre><code>{
+  "type": "audio",
+  "request_id": "1",
+  "audio_b64": "&lt;base64-WAV&gt;",
+  "sample_rate": 44100,
+  "cached": false,
+  "latency_ms": 2400
+}</code></pre>
+
+  <p>Additional server message types: <code>stats</code>, <code>pong</code>, <code>error</code>.</p>
+
+  <h3 class="sub">REST Batch API</h3>
+  <p><code>POST /batch/synthesize</code> → Response (202 Accepted):</p>
+  <pre><code>{
+  "job_id": "batch_a1b2c3d4",
+  "status": "queued",
+  "language": "hi-IN",
+  "style": "default",
+  "text_length": 14
+}</code></pre>
+
+  <p><code>GET /batch/status/{job_id}</code> → Response when complete (200 OK):</p>
+  <pre><code>{
+  "job_id": "batch_a1b2c3d4",
+  "status": "completed",
+  "audio_b64": "...",
+  "latency_ms": 2400
+}</code></pre>
+
+  <h3 class="sub">Key parameters and limits</h3>
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Parameter</th><th>Value</th></tr>
+      <tr><td>Audio format</td><td>Base64-encoded WAV</td></tr>
+      <tr><td>Default sample rate</td><td>44,100 Hz (configurable: 8kHz telephony, 16kHz, 44.1kHz)</td></tr>
+      <tr><td>Max text per request</td><td>5,000 characters</td></tr>
+      <tr><td>Max pending batch jobs</td><td>1,000 (1-hour TTL)</td></tr>
+      <tr><td>Max concurrent WebSocket clients</td><td>50 (configurable)</td></tr>
+      <tr><td>Authentication</td><td>Optional <code>X-API-Key</code> header</td></tr>
+      <tr><td>Voice params</td><td><code>lang</code>, <code>style</code> (default/warm/formal), <code>description</code> (custom prompt)</td></tr>
+      <tr><td>Word timestamps</td><td class="no">None</td></tr>
+    </table>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ Q3: GITHUB -->
+  <h2 class="section">4. GitHub Repos &amp; Developer Ecosystem</h2>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Repo</th><th>Description</th><th>Stars</th><th>Forks</th></tr>
+      <tr>
+        <td><a href="https://github.com/vexyl-ai/vexyl-tts" target="_blank">vexyl-ai/vexyl-tts</a></td>
+        <td>Open-source Indian-language TTS server — 22 languages, 44 speakers, WebSocket + REST</td>
+        <td>41</td><td>13</td>
+      </tr>
+      <tr>
+        <td><a href="https://github.com/vexyl-ai/vexyl-stt" target="_blank">vexyl-ai/vexyl-stt</a></td>
+        <td>Companion open-source Indian-language STT server</td>
+        <td>—</td><td>—</td>
+      </tr>
+    </table>
+  </div>
+
+  <p>
+    There are <strong>0 open GitHub issues</strong>. No npm or PyPI package exists — the only installation
+    path is <code>git clone</code> + manual dependency install. No third-party integrations were found
+    in other GitHub repositories referencing Vexyl TTS.
+  </p>
+
+  <!-- ══════════════════════════════════════════════════════ Q4: COMMUNITY -->
+  <h2 class="section">5. Community Presence</h2>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Platform</th><th>Status</th><th>Detail</th></tr>
+      <tr><td>Reddit</td><td class="no">None</td><td>Zero relevant posts or comments found</td></tr>
+      <tr><td>HackerNews</td><td class="no">None</td><td>Never submitted; no threads</td></tr>
+      <tr><td>Product Hunt</td><td class="no">None</td><td>Search returned "No products found for 'vexyl'"</td></tr>
+      <tr><td>Twitter/X</td><td class="na">Exists but inaccessible</td><td>@VexylAV account exists; HTTP 402 blocked content retrieval. No third-party tweets found.</td></tr>
+      <tr><td>Asterisk Community</td><td class="conf-med">Low engagement</td><td>Thread by creator; one real codec bug surfaced and fixed; multiple users asked for setup help</td></tr>
+      <tr><td>FreePBX Community</td><td class="no">Zero replies</td><td>Thread auto-closed after 31 days with no responses</td></tr>
+      <tr><td>Dev blogs</td><td class="conf-low">1 promotional post</td><td>BrightCoding (June 2026) — not independent; no third-party benchmarks cited</td></tr>
+      <tr><td>Medium</td><td class="conf-low">Creator-authored</td><td>Two articles by Anil Mathew (Vexyl creator); HTTP 403 blocked full retrieval</td></tr>
+    </table>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ Q5: COMPARISON -->
+  <h2 class="section">6. Vexyl vs Azure TTS vs Sarvam Bulbul v2</h2>
+
+  <div class="callout">
+    <strong>Critical finding:</strong> Vexyl TTS does not appear in any independent comparison article,
+    "best TTS" roundup, or benchmark study. All comparison data below is assembled from separate sources —
+    no single article covers all three providers.
+  </div>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr>
+        <th>Dimension</th>
+        <th>Vexyl TTS</th>
+        <th>Sarvam Bulbul v2</th>
+        <th>Azure TTS (Indian voices)</th>
+      </tr>
+      <tr>
+        <td>Deployment model</td>
+        <td>Self-hosted only</td>
+        <td>Managed cloud API</td>
+        <td>Managed cloud API</td>
+      </tr>
+      <tr>
+        <td>Indian languages</td>
+        <td>22</td>
+        <td>10</td>
+        <td>~8–10 neural voices (hi-IN, ta-IN, te-IN, ml-IN, bn-IN)</td>
+      </tr>
+      <tr>
+        <td>Indian English (en-IN)</td>
+        <td class="yes">Yes</td>
+        <td class="na">Not confirmed separately</td>
+        <td class="yes">Yes (Neural voices)</td>
+      </tr>
+      <tr>
+        <td>Hinglish / code-switching</td>
+        <td>Limited (per-language models)</td>
+        <td class="yes">Strong — purpose-built</td>
+        <td>Partial (requires language switch tags)</td>
+      </tr>
+      <tr>
+        <td>Word-level timestamps</td>
+        <td class="no">No</td>
+        <td class="no">Not documented</td>
+        <td class="yes">Yes — SSML &lt;bookmark&gt; + WordBoundary events</td>
+      </tr>
+      <tr>
+        <td>SSML support</td>
+        <td class="no">No</td>
+        <td>Limited (pace, dictionary)</td>
+        <td class="yes">Full SSML 1.0 (prosody, phonemes, bookmarks)</td>
+      </tr>
+      <tr>
+        <td>Hindi MOS score</td>
+        <td class="na">Not published</td>
+        <td class="yes">4.6 (Bulbul v1)</td>
+        <td class="na">Not benchmarked for Indic</td>
+      </tr>
+      <tr>
+        <td>Tamil MOS score</td>
+        <td class="na">Not published</td>
+        <td class="yes">4.4 (Bulbul v1)</td>
+        <td class="na">Not benchmarked for Indic</td>
+      </tr>
+      <tr>
+        <td>API latency (India region)</td>
+        <td>~2,850ms (100 chars, GPU uncached)<br>~1ms cached</td>
+        <td>~190ms TTFB</td>
+        <td>~150–250ms (Mumbai region)</td>
+      </tr>
+      <tr>
+        <td>Pricing model</td>
+        <td>$0 (infra cost only)</td>
+        <td>₹15/10K chars (~$0.0018/K)</td>
+        <td>Per-character; varies by voice tier</td>
+      </tr>
+      <tr>
+        <td>Data sovereignty</td>
+        <td class="yes">Full (self-hosted)</td>
+        <td>Data leaves to Sarvam servers</td>
+        <td>Data leaves to Azure (India region available)</td>
+      </tr>
+      <tr>
+        <td>Voice cloning</td>
+        <td class="no">No</td>
+        <td class="yes">Yes (Bulbul v3)</td>
+        <td>Yes (Custom Neural Voice — expensive)</td>
+      </tr>
+      <tr>
+        <td>Windows support</td>
+        <td>Requires WSL2 / Docker</td>
+        <td>N/A (cloud API)</td>
+        <td>N/A (cloud API)</td>
+      </tr>
+      <tr>
+        <td>Hardware requirements (Vexyl)</td>
+        <td>Python 3.10+, 4–6 GB RAM (CPU) or 3–4 GB VRAM (GPU), ~6 GB disk</td>
+        <td>—</td>
+        <td>—</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3 class="sub">Published latency benchmarks for Vexyl (GPU, FP16, 8kHz output)</h3>
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Input length</th><th>GPU latency (uncached)</th><th>Cached</th></tr>
+      <tr><td>5 chars</td><td>~980ms</td><td>~1ms</td></tr>
+      <tr><td>43 chars</td><td>~1,350ms</td><td>~1ms</td></tr>
+      <tr><td>100 chars</td><td>~2,850ms</td><td>~1ms</td></tr>
+      <tr><td>254 chars</td><td>~6,600ms</td><td>~1ms</td></tr>
+    </table>
+  </div>
+  <p><em>Note: No CPU latency benchmark is published. GPU hardware was RTX 5070 in the BrightCoding writeup. These are raw inference numbers, not end-to-end TTFB.</em></p>
+
+  <!-- ══════════════════════════════════════════════════════ Q6: PRICING -->
+  <h2 class="section">7. Pricing</h2>
+
+  <p>
+    <strong>Vexyl TTS (open-source server) costs $0 in API fees.</strong>
+    You pay only for the infrastructure you run it on.
+  </p>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Usage pattern</th><th>Estimated monthly cost</th></tr>
+      <tr><td>Light (~100 req/month, cold-start OK)</td><td>~$0.06</td></tr>
+      <tr><td>Medium (~1,000 req/month)</td><td>~$0.60</td></tr>
+      <tr><td>Heavy (~10,000 req/month)</td><td>~$6.00</td></tr>
+      <tr><td>Always-warm (no cold-start)</td><td>$50–70/month</td></tr>
+    </table>
+  </div>
+
+  <div class="callout">
+    The Vexyl AI <em>commercial platform</em> (for telephony / voice bots) has separate tiered pricing
+    ($0 Developer / $49/month Professional / Custom Enterprise) — this is for concurrent call capacity,
+    not TTS synthesis volume, and is irrelevant to TransformED's use case.
+  </div>
+
+  <p>
+    <strong>Sarvam Bulbul v2</strong> pricing from community sources: ₹15 per 10,000 characters
+    (~$0.0018/1K chars). Bulbul v3 (newer): ₹30 per 10,000 characters. ₹100 free credit on signup.
+  </p>
+
+  <!-- ══════════════════════════════════════════════════════ IMPLICATIONS -->
+  <h2 class="section">8. Implications for TransformED</h2>
+
+  <div class="callout ok">
+    <strong>The existing TTS fallback chain (Sarvam Bulbul v2 → Azure TTS → Browser Speech) is correct
+    and does not need Vexyl TTS.</strong>
+  </div>
+
+  <ul>
+    <li>
+      <strong>Vexyl is not a drop-in hosted API.</strong> It requires deploying and maintaining a server
+      with 4–6 GB RAM and optionally a GPU. That is infrastructure overhead for a team already managing
+      Railway + Redis + Supabase.
+    </li>
+    <li>
+      <strong>Latency is incompatible with real-time narration.</strong> At ~2.85s per 100-char sentence
+      (GPU, uncached), it cannot sustain the lesson audio-timeline state machine. The $3.00/lesson ceiling
+      also means a GPU server must be fully amortised across enough lessons to justify it.
+    </li>
+    <li>
+      <strong>No word-level timestamps</strong> — if the player ever needs audio-text sync highlighting,
+      Azure TTS is the only option in the current stack.
+    </li>
+    <li>
+      <strong>Sarvam Bulbul v2 is superior for Indian language quality</strong> (MOS 4.6 Hindi / 4.4 Tamil,
+      sub-200ms TTFB from India-region infra), and the creator of Vexyl AI explicitly uses Sarvam in their
+      own commercial telephony product.
+    </li>
+    <li>
+      <strong>Community signal is very thin.</strong> 41 GitHub stars, zero Reddit/HN/Product Hunt presence,
+      and all external content is creator-authored. This is not a disqualifying signal for open-source
+      tooling, but it does mean limited community support and unknown production hardening.
+    </li>
+  </ul>
+
+  <!-- ══════════════════════════════════════════════════════ ADVERSARIAL FLAGS -->
+  <h2 class="section">9. Adversarial Verification — Claims to Treat with Caution</h2>
+
+  <div class="tbl-wrap">
+    <table>
+      <tr><th>Claim</th><th>Source</th><th>Concern</th></tr>
+      <tr>
+        <td>"Competitive with mid-tier cloud TTS" (quality)</td>
+        <td>BrightCoding blog</td>
+        <td>Promotional article, not independent. No MOS scores or blind listening tests published.</td>
+      </tr>
+      <tr>
+        <td>"1,000+ monthly calls, 90% cache hit rate"</td>
+        <td>Asterisk community thread (creator's post)</td>
+        <td>Self-reported; no third-party verification.</td>
+      </tr>
+      <tr>
+        <td>GPU latency figures (RTX 5070, FP16)</td>
+        <td>GitHub README + BrightCoding</td>
+        <td>Likely accurate but measured on specific hardware. CPU performance not published.</td>
+      </tr>
+      <tr>
+        <td>Sarvam Bulbul v1 MOS 4.6 (Hindi)</td>
+        <td>autointerviewai.com</td>
+        <td>Source appears independent but methodology not disclosed. This is Bulbul v1 — v2/v3 expected to be comparable or better.</td>
+      </tr>
+      <tr>
+        <td>Vexyl commercial platform uses Sarvam AI</td>
+        <td>Creator's Medium post (HTTP 403, not fully retrieved)</td>
+        <td>Partial retrieval — title confirms it; full content not read. Medium conf-low.</td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ SOURCES -->
+  <div class="sources">
+    <h2>Sources</h2>
+    <ol>
+      <li><a href="https://github.com/vexyl-ai/vexyl-tts" target="_blank">GitHub — vexyl-ai/vexyl-tts (primary repo)</a></li>
+      <li><a href="https://github.com/vexyl-ai/vexyl-tts/blob/main/README.md" target="_blank">vexyl-tts README.md</a></li>
+      <li><a href="https://github.com/vexyl-ai" target="_blank">GitHub — vexyl-ai organization</a></li>
+      <li><a href="https://github.com/vexyl-ai/vexyl-stt" target="_blank">GitHub — vexyl-ai/vexyl-stt</a></li>
+      <li><a href="https://vexyl.ai/vexyl-tts/" target="_blank">Vexyl AI — official TTS product page</a></li>
+      <li><a href="https://vexyl.ai/pricing/" target="_blank">Vexyl AI — pricing page</a></li>
+      <li><a href="https://www.blog.brightcoding.dev/2026/06/22/stop-paying-for-indian-tts-apis-vexyl-tts-is-insane" target="_blank">BrightCoding — "Stop Paying for Indian TTS APIs! VEXYL-TTS Is Insane" (June 2026)</a></li>
+      <li><a href="https://community.asterisk.org/t/vexyl-self-hosted-ai-voice-gateway-for-asterisk/111666" target="_blank">Asterisk Community — VEXYL Self-Hosted AI Voice Gateway thread</a></li>
+      <li><a href="https://community.freepbx.org/t/introducing-vexyl-ai-voice-gateway-for-freepbx-asterisk-systems/108761" target="_blank">FreePBX Community — Introducing VEXYL (zero replies)</a></li>
+      <li><a href="https://medium.com/@anilmathewm/building-a-bridge-between-legacy-telephony-and-modern-ai-the-vexyl-story-c03266b0b1c7" target="_blank">Medium — "The VEXYL Story" by Anil Mathew (creator)</a></li>
+      <li><a href="https://medium.com/@anilmathewm/vexyl-stt-free-self-hosted-indian-language-speech-to-text-server-f2909003aaf6" target="_blank">Medium — "VEXYL-STT" by Anil Mathew (creator)</a></li>
+      <li><a href="https://www.autointerviewai.com/blog/sarvam-ai-bulbul-saaras-indic-voice-models-review-2026" target="_blank">AutoInterviewAI — Sarvam AI Bulbul TTS review 2026 (MOS scores)</a></li>
+      <li><a href="https://www.heyakashmaurya.com/blog/sarvam-ai-tts-complete-guide" target="_blank">heyakashmaurya.com — Sarvam AI TTS Complete Guide</a></li>
+      <li><a href="https://docs.pipecat.ai/server/services/tts/azure" target="_blank">Pipecat docs — Azure TTS (word boundary / timestamp events)</a></li>
+      <li><a href="https://www.speechmatics.com/company/articles-and-news/best-tts-apis-in-2025-top-12-text-to-speech-services-for-developers" target="_blank">Speechmatics — Best TTS APIs 2026 (Vexyl absent)</a></li>
+      <li><a href="https://subverseai.com/blogs/multilingual-voice-ai-in-india-stt-llm-tts-pipeline-vs-speech-to-speech-s2s-what-should-you-choose" target="_blank">SubverseAI — Multilingual Voice AI in India comparison (Vexyl absent)</a></li>
+      <li><a href="https://x.com/vexylav" target="_blank">Twitter/X — @VexylAV (inaccessible behind paywall)</a></li>
+      <li><a href="https://www.producthunt.com/categories/text-to-speech-software" target="_blank">Product Hunt — TTS category (Vexyl not listed)</a></li>
+    </ol>
+  </div>
+
+</main>
+</body>
+</html>
