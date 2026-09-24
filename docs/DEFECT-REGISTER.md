@@ -740,6 +740,20 @@ The Sprint Task Branch Rule (CLAUDE.md) states: "Every task gets its own branch 
 
 ---
 
+## D180 — ARQ's job-level retry (`max_tries=3`) never actually fires for any exception this codebase raises
+
+**Status:** OPEN · **Owner:** TBD (job orchestration, not exception classification) · **Detected:** 2026-09-23 (issue #245, confirmed live against 15 real production book-ingestion attempts on `real_world_red_team_engineering.pdf`, 2026-09-22)
+
+`WorkerSettings` sets `retry_jobs=True` and `max_tries=3`, and both `book_ingest_job`'s and `content_pipeline_job`'s own docstrings claim "any unhandled error causes ARQ to retry up to `max_tries` times." **This is not true against the installed `arq` version.** Read directly from the installed package (`arq/worker.py`, `Worker.run_job()`, ~line 613-633): a job is only requeued when the raised exception is `isinstance(e, Retry)`, or (with `retry_jobs=True`) `isinstance(e, (asyncio.CancelledError, RetryJob))`. Every other exception falls to the `else` branch, which sets `result = e; finish = True` — the job is marked **finished** (a permanent failure), never requeued, regardless of `max_tries`. `grep -rn "arq.worker.Retry" app/` → **zero hits anywhere in this codebase** — confirmed live, not assumed. Every exception this codebase actually raises (plain `RuntimeError`, `BookIngestError`, etc.) is therefore a permanent failure after exactly one attempt. The checkpoint-resume design CLAUDE.md documents ("On ARQ retry: read `last_node`, skip completed nodes") never actually engages for a transient failure today — it is inert until something raises `arq.worker.Retry`. `tests/unit/test_book_ingest_job.py::test_failure_is_reraised_so_arq_can_retry` only asserts the exception propagates (mock-only, binding rule 2 violation in spirit) — it never exercises real ARQ semantics, so this passed CI while being false in production.
+
+This is the **higher-priority** of the two gaps issue #245 reports: the postgrest/httpx exception-classification fix issue #245 also ships (Story 245, `core/retry.py`'s new `postgrest.exceptions.APIError` branch) only helps a call that is itself retried by `with_retry` — it does nothing for the outer job-level retry ARQ is configured to provide but structurally cannot, since nothing here raises the one exception type ARQ actually checks for. Today, **nothing retries a failed ingestion job automatically at any layer** once a `with_retry`-wrapped call exhausts its own attempts.
+
+**Resolution path:** A real fix is job-orchestration work, not exception classification — e.g. wrapping each job's top-level dispatch so a transient failure (once `with_retry` has already exhausted its own attempts) is re-raised as `arq.worker.Retry(defer=...)` instead of the current bare exception, with a job-level attempt counter to avoid retrying a genuinely permanent failure (a malformed PDF, a 4xx) forever. This is a distinct root cause from issue #245's exception-classification fix and belongs to its own story — not fixed here, per the issue's own explicit scoping.
+
+**Enforcement:** DISCIPLINE — no guard test exists yet. A real regression test would need to either run against a real (or faked) `arq` worker loop, or assert directly on `arq.worker.Retry` being raised from the job's own exception handler once one exists — neither exists today. `grep -rn "arq.worker.Retry" app/` returning zero hits is itself the observable symptom; that grep should be re-run and expected to return non-zero once this is actually fixed.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent

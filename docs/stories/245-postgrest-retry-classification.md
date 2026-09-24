@@ -4,7 +4,42 @@
 pipeline, and ARQ's job-level retry never actually fires either"
 **Reporter:** Dev 1 (developer1-cybersmith), confirmed live against 15 real production ingestion attempts
 on `real_world_red_team_engineering.pdf` (2026-09-22).
-**Status:** In progress
+**Status:** Implemented, pending review
+
+## Completion Notes
+
+- **AC1**: `with_retry()` gained a `postgrest.exceptions.APIError` branch (`core/retry.py`), guarded-imported
+  like `openai`/`redis`. Classifies on `exc.code`: `int` in `_POSTGREST_RETRYABLE_STATUS_CODES`
+  (`_RETRYABLE_STATUS_CODES | {520,521,522,523,524,525,526,527,530}`) → retry; any other `int` → raise
+  immediately; `str` → raise immediately (never retried); no code at all → raise immediately (conservative).
+- **AC2**: `embed_node`'s chunk-embedding upsert and `chunk_node`'s new-chunk upsert are each now routed
+  through a dedicated `@with_retry(max_attempts=3)`-decorated module-level helper
+  (`_upsert_embedded_chunk_batch`, `_upsert_new_chunk_rows`) instead of a bare call — same exception shape
+  (`RuntimeError(...) from exc`) preserved at both original call sites so existing callers/tests are
+  unaffected by the wrapping itself.
+- **AC3**: `test_postgrest_api_error_code_is_int_for_non_json_response` added next to the existing
+  string-code premise test, proving `APIError(generate_default_error_message(fake_response)).code` is an
+  `int` — built directly from the installed package's own fallback constructor, not assumed.
+- **AC4**: `test_retry.py` gained 7 new tests mirroring the OpenAI classification suite's structure:
+  retryable int codes retry, non-retryable int codes don't, string Postgres codes never retry (parametrized
+  over FK/NOT-NULL/`PGRST116`-shaped codes), a bare-APIError-with-no-code conservative case, the
+  not-httpx-derived premise, and a subprocess-isolated guarded-import test (postgrest absent → httpx
+  classification still works).
+- **AC5**: Registered **D180** in `docs/DEFECT-REGISTER.md` for the ARQ-retry-never-fires gap — confirmed
+  live by reading the installed `arq` package's `Worker.run_job()` directly (only `arq.worker.Retry`/
+  `CancelledError`/`RetryJob` requeue a job; every other exception is a permanent failure after one
+  attempt regardless of `max_tries`). Registered, not fixed, per this story's explicit scoping — the real
+  fix is job-orchestration work, a separate story.
+- **Verification**: `ruff check .`/`ruff format --check .` clean repo-wide; `mypy app` clean except the
+  pre-existing, documented, environment-only `tinytag` import gap (unrelated — `tts_node`'s own local
+  import, not touched by this story). Full gating suite (`pytest tests/unit tests/integration -m "not
+  postgres"`) re-run: 1458 passed, 25 failed — all 25 confirmed pre-existing and unrelated (verified by
+  stashing this diff and reproducing the same 25 failures identically: 5 are a separate pre-existing
+  `fpdf`/vacuous-fixture gap, 20 all trace to `tts_node`'s own `tinytag` import, none touch `retry.py`,
+  `chunk_node`, or `embed_node`). Targeted re-runs of `test_retry.py`, `test_chapter_context_exceptions_
+  premise.py`, `test_embed_node.py`, `test_chunk_node.py`, `test_node_return_shape.py`,
+  `test_unbounded_queries.py`, `test_book_ingest_job.py`, `test_phase1_economy_nodes.py`,
+  `test_pipeline_writes_no_books.py`, `test_pipeline_tier1.py` all green.
 
 ## Verified before implementation (not trusted from the issue's prose alone)
 
