@@ -197,7 +197,10 @@ class OnboardingAnswer(BaseModel):
     selected_index: int | None = Field(default=None, ge=0)
     response_text: str | None = Field(default=None, max_length=1000)
     response_bool: bool | None = None
-    response_time_ms: int | None = Field(default=None, ge=0)
+    # le=3_600_000 (1 hour): generous but principled ceiling — a client-reported
+    # timing value with no upper bound corrupts any future per-question timing
+    # analytics (e.g. a stray 27+ hour value). Flagged in PR #239 review.
+    response_time_ms: int | None = Field(default=None, ge=0, le=3_600_000)
 
     @model_validator(mode="after")
     def _validate_shape_matches_format(self) -> OnboardingAnswer:

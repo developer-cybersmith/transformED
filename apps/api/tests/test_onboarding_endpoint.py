@@ -323,6 +323,32 @@ def test_onboarding_answer_one_liner_rejects_over_1000_chars() -> None:
 
 
 @pytest.mark.unit
+def test_onboarding_answer_response_time_ms_rejects_over_one_hour() -> None:
+    """PR #239 review: response_time_ms had no upper bound -- a client-reported
+    timing value with no ceiling would corrupt any future per-question timing
+    analytics. le=3_600_000 (1 hour) is a generous but principled cap."""
+    from pydantic import ValidationError
+
+    from app.modules.assessment.schemas import OnboardingAnswer
+
+    OnboardingAnswer(
+        question_id="q1",
+        format="mcq",
+        selected_index=0,
+        response_text="x",
+        response_time_ms=3_600_000,
+    )  # exactly at the boundary — must be accepted
+    with pytest.raises(ValidationError):
+        OnboardingAnswer(
+            question_id="q1",
+            format="mcq",
+            selected_index=0,
+            response_text="x",
+            response_time_ms=3_600_001,
+        )
+
+
+@pytest.mark.unit
 def test_onboarding_answer_true_false_requires_response_bool() -> None:
     from pydantic import ValidationError
 

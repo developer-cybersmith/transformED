@@ -633,6 +633,28 @@ changes and the `learner_dna` Penta-Intelligence columns).
   flakiness, and a rate-limiter test-isolation issue in another PR's `chapter_context` tests); zero
   onboarding/assessment/Learner DNA files appear in the failure list. Full frontend suite: 95 files /
   1279 tests, zero regressions (baseline was 95/1254; net +25 new tests).
+- **PR #239 Senior Developer Review response** (Dev 3, 2026-09-23): three follow-up items addressed:
+  - `response_time_ms` gained an upper bound (`le=3_600_000`, 1 hour) — it previously had no ceiling,
+    which would have let a corrupted/malicious client value pollute future per-question timing
+    analytics with no error anywhere.
+  - **Clean-slate assumption, stated explicitly**: this migration does not backfill
+    `onboarding_answers_v2` from the old `onboarding_responses` table. Any user who completed the
+    previous 20-question form has no rows in the new table, and the tutor's learner-context path
+    (`_read_onboarding_headline_answers`) will treat them as not-yet-onboarded until they complete the
+    new 30-question form. Acceptable pre-launch (zero real students have completed even one session
+    as of this writing, per D173's own register entry) — revisit if any internal/preview user
+    completes the old form before this PR merges.
+  - **Rollback-on-failure logic removed** from both the Step 6 (LLM failure) and Step 7 (`learner_dna`
+    upsert failure) exception handlers. That rollback (delete the just-written `onboarding_answers_v2`
+    rows so a retry could re-insert) was only ever needed because Step 5 used to be a plain `.insert()`
+    — a retry would otherwise hit the `UNIQUE(user_id, question_id)` constraint. Step 5 is now
+    `.upsert()` (D173), which is idempotent: a retry re-upserts the same 30 rows cleanly with no
+    rollback required. Worse, the stale rollback was actively harmful on a reassessment specifically —
+    Step 5's upsert had already overwritten the student's *prior* answers by the time a Step 6/7
+    failure fired, so the rollback-delete left `onboarding_answers_v2` empty instead of merely
+    reverting to the pre-resubmission state. `test_onboarding_llm_failure_does_not_delete_rows`
+    (replacing the old `test_onboarding_llm_failure_deletes_orphaned_rows`) now guards the corrected
+    behavior.
 
 ### Deviations from the design's illustrative pseudo-code (reasoned, not oversights)
 

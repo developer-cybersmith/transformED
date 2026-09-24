@@ -105,11 +105,12 @@ async def test_onboarding_llm_failure_raises_503_for_router_cleanup():
         ) as mock_gen,
         patch("app.modules.assessment.service.OpenAILLMProvider"),
     ):
-        # to_thread call order: dna_select (_fetch_existing_dna), insert, rollback delete
+        # to_thread call order: dna_select (_fetch_existing_dna), then Step 5 upsert.
+        # No rollback-delete call anymore (PR #239 review) -- Step 5's upsert (D173)
+        # is idempotent, so a failure after it needs no cleanup before a retry.
         mock_thread.side_effect = [
             MagicMock(error=None, data=None),  # dna_select: no prior row
-            MagicMock(error=None, data=[{}]),  # Step 2 insert succeeds
-            MagicMock(error=None),  # Step 5 rollback delete
+            MagicMock(error=None, data=[{}]),  # Step 5 upsert succeeds
         ]
         mock_gen.side_effect = Exception("openai: rate limit exceeded")
 
@@ -149,8 +150,7 @@ async def test_onboarding_llm_failure_returns_503():
     ):
         mock_thread.side_effect = [
             MagicMock(error=None, data=None),  # dna_select: no prior row
-            MagicMock(error=None, data=[{}]),  # insert succeeds
-            MagicMock(error=None),  # rollback delete
+            MagicMock(error=None, data=[{}]),  # Step 5 upsert succeeds
         ]
         mock_gen.side_effect = RuntimeError("timeout")
 
@@ -168,22 +168,21 @@ async def test_onboarding_llm_failure_returns_503():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_onboarding_llm_failure_deletes_orphaned_rows():
-    """AC2 — D71: When the LLM call fails, the rollback delete must be called
-    with the exact question_ids from the Step 3 insert."""
+async def test_onboarding_llm_failure_does_not_delete_rows():
+    """PR #239 review (Dev 3): after Step 5 became an upsert (D173), the old
+    rollback-delete-on-LLM-failure behavior is no longer needed -- a retry
+    re-upserts the same 30 rows cleanly with no conflict -- and is actively
+    harmful on a reassessment, since Step 5 has already overwritten the
+    student's prior answers by the time this exception fires; deleting them
+    would leave onboarding_answers_v2 empty instead of merely reverting.
+    This test asserts the rollback delete no longer happens."""
     from fastapi import HTTPException
 
     supabase = _supabase_insert_ok()
     answers = _make_onboarding_answers()
-    expected_qids = [a.question_id for a in answers]
-
-    delete_mock = MagicMock()
-    delete_mock.eq.return_value.in_.return_value.execute.return_value = MagicMock(error=None)
 
     async def fake_to_thread(fn, *args, **kwargs):
-        result = fn()
-        # Capture delete calls to assert on them
-        return result
+        return fn()
 
     with (
         patch("app.modules.assessment.service.asyncio.to_thread", side_effect=fake_to_thread),
@@ -195,10 +194,6 @@ async def test_onboarding_llm_failure_deletes_orphaned_rows():
     ):
         mock_gen.side_effect = Exception("llm failed")
 
-        # Wire supabase so the delete call is trackable
-        delete_chain = supabase.table.return_value.delete.return_value
-        delete_chain.eq.return_value.in_.return_value.execute.return_value = MagicMock(error=None)
-
         with pytest.raises(HTTPException):
             from app.modules.assessment.service import process_onboarding
 
@@ -208,15 +203,7 @@ async def test_onboarding_llm_failure_deletes_orphaned_rows():
                 supabase=supabase,
             )
 
-    # Assert delete was called (the rollback path executed)
-    supabase.table.return_value.delete.assert_called()
-    in_call_args = supabase.table.return_value.delete.return_value.eq.return_value.in_.call_args
-    actual_qids = in_call_args[0][1] if in_call_args else []
-    assert set(actual_qids) == set(expected_qids), (
-        f"Rollback must delete exactly the inserted question_ids.\n"
-        f"Expected: {sorted(expected_qids)}\n"
-        f"Got: {sorted(actual_qids)}"
-    )
+    supabase.table.return_value.delete.assert_not_called()
 
 
 @pytest.mark.unit
@@ -225,7 +212,9 @@ async def test_onboarding_retry_after_llm_failure_succeeds():
     """AC3 — D71: After a LLM failure + lock release, a second call to
     process_onboarding() must succeed (not hit unique-constraint 409).
 
-    Simulates: first call fails at LLM → rows deleted → second call succeeds.
+    Simulates: first call fails at LLM (Step 5's onboarding_answers_v2 rows are
+    NOT rolled back, per PR #239 review) → second call re-upserts the same 30
+    rows cleanly (D173: Step 5 is .upsert(), idempotent) → succeeds.
 
     # MOCK-CONTRACT: This test verifies at service layer that process_onboarding()
     # returns a valid result on the second call. The full AC3 requirements —

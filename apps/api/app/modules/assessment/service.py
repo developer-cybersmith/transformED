@@ -1816,7 +1816,14 @@ async def process_onboarding(
     # D71: provider.complete() already has @with_retry(max_attempts=3) for transient 429/5xx.
     # If all retries fail the raw exception must be caught here: convert to HTTPException(503)
     # so the router's `except HTTPException` cleanup fires and releases the Redis lock.
-    # Before raising we also delete the Step 5 rows so a retry can re-insert cleanly.
+    # No rollback of the Step 5 rows here (PR #239 review, Dev 3): that rollback was only
+    # ever needed because Step 5 used to be a plain .insert() — a retry would otherwise hit
+    # the UNIQUE(user_id, question_id) constraint. Step 5 is now .upsert() (D173), which is
+    # idempotent: a retry re-upserts the same 30 rows cleanly with no rollback required.
+    # Deleting here would additionally be actively harmful on a reassessment: Step 5 has
+    # already overwritten the student's PRIOR answers by the time this exception fires, so
+    # a rollback-delete would leave onboarding_answers_v2 empty instead of merely reverting
+    # to the pre-resubmission state — a worse outcome than doing nothing.
     provider = OpenAILLMProvider(lesson_id="onboarding")
     try:
         profile_text = await generate_onboarding_profile(
@@ -1825,33 +1832,6 @@ async def process_onboarding(
         )
     except Exception:  # noqa: BLE001
         logger.exception("onboarding: generate_onboarding_profile failed for user=%s", user_id)
-        _question_ids = [r["question_id"] for r in rows]
-        if _question_ids:  # supabase-py drops IN([]) filter for empty list in some versions
-            try:
-                del_resp = await asyncio.to_thread(
-                    lambda: (
-                        supabase.table("onboarding_answers_v2")
-                        .delete()
-                        .eq("user_id", user_id)
-                        .in_("question_id", _question_ids)
-                        .execute()
-                    )
-                )
-                # supabase signals errors via resp.error, not exceptions
-                _del_resp_error = getattr(del_resp, "error", None)
-                if _del_resp_error:
-                    logger.warning(
-                        "onboarding: rollback of onboarding_answers_v2 failed user=%s error=%s — "
-                        "user may need manual cleanup to retry",
-                        user_id,
-                        str(_del_resp_error).replace("\n", " "),
-                    )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "onboarding: rollback of onboarding_answers_v2 failed user=%s "
-                    "(network/client error) — user may need manual cleanup to retry",
-                    user_id,
-                )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Profile generation temporarily unavailable — please retry.",
@@ -1880,33 +1860,10 @@ async def process_onboarding(
             user_id,
             safe_upsert_err,
         )
-        # D71 variant: Step 7 failure also orphans Step 5 rows — roll back so retry can re-insert.
-        _question_ids = [r["question_id"] for r in rows]
-        if _question_ids:
-            try:
-                del_resp5 = await asyncio.to_thread(
-                    lambda: (
-                        supabase.table("onboarding_answers_v2")
-                        .delete()
-                        .eq("user_id", user_id)
-                        .in_("question_id", _question_ids)
-                        .execute()
-                    )
-                )
-                _del_resp5_error = getattr(del_resp5, "error", None)
-                if _del_resp5_error:
-                    logger.warning(
-                        "onboarding: step7 rollback of onboarding_answers_v2 failed "
-                        "user=%s error=%s",
-                        user_id,
-                        str(_del_resp5_error).replace("\n", " "),
-                    )
-            except Exception:  # noqa: BLE001
-                logger.warning(
-                    "onboarding: step7 rollback of onboarding_answers_v2 failed "
-                    "user=%s (network error)",
-                    user_id,
-                )
+        # No rollback of the Step 5 rows here — see the identical note above Step 6's
+        # exception handler: Step 5's upsert (D173) is idempotent, so a retry re-upserts
+        # cleanly without needing the rows deleted first, and deleting them on a
+        # reassessment would destroy the student's just-overwritten answers outright.
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist learner profile.",
