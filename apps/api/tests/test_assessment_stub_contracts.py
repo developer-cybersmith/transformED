@@ -70,9 +70,9 @@ _ONBOARDING_PAYLOAD = {
     "responses": [
         {
             "question_id": "q1",
-            "dimension": "processing_style",
+            "format": "mcq",
             "selected_index": 2,
-            "selected_text": "I prefer visual explanations",
+            "response_text": "I prefer visual explanations",
         }
     ]
 }

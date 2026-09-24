@@ -28,14 +28,14 @@ vi.mock('@/services/onboarding.service', () => ({
 }));
 
 const RESULT: OnboardingResult = {
-  badge_labels: ['Pattern Thinker'],
+  badge_labels: ['Sharp Reasoner'],
   profile_text: 'Descriptive text. — Pursuant to DPDP Act 2023.',
   session_count: 0,
 };
 
 const EXISTING_DNA: LearnerDNA = {
   user_id: 'user_1',
-  badge_labels: ['Goal-Oriented'],
+  badge_labels: ['Deep Researcher'],
   profile_text: 'Existing profile. — Pursuant to DPDP Act 2023.',
   session_count: 2,
   reassessment_due: false,
@@ -60,10 +60,19 @@ async function acknowledgeDisclaimer(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByText('I Understand, Begin Assessment'));
 }
 
+// Story 235: handles all 3 formats -- mcq clicks the first option, true_false
+// clicks "True", one_liner types a sample answer -- so answerAllQuestions can
+// walk the full 30-question form regardless of format mix.
 async function answerQuestion(user: ReturnType<typeof userEvent.setup>, index: number, isLast: boolean) {
   const q = QUESTIONS[index];
   await waitFor(() => expect(screen.getByText(q.text)).not.toBeNull());
-  await user.click(screen.getByText(q.options[0]));
+  if (q.format === 'mcq') {
+    await user.click(screen.getByText((q.options ?? [])[0]));
+  } else if (q.format === 'true_false') {
+    await user.click(screen.getByText('True'));
+  } else {
+    await user.type(screen.getByPlaceholderText(q.placeholder ?? ''), 'A sample honest answer.');
+  }
   await user.click(screen.getByText(isLast ? 'Complete Assessment' : 'Next'));
 }
 
@@ -106,8 +115,13 @@ describe('OnboardingFlow', () => {
 
   it('does NOT resume stale persisted progress from a different reassessment session_count', async () => {
     window.sessionStorage.setItem(
-      'onboarding_progress_v1',
-      JSON.stringify({ current: 3, answers: { [QUESTIONS[0].id]: 0 }, disclaimerAcknowledged: true, dueSessionCount: 10 })
+      'onboarding_progress_v2',
+      JSON.stringify({
+        current: 3,
+        answers: { [QUESTIONS[0].id]: { format: 'mcq', index: 0 } },
+        disclaimerAcknowledged: true,
+        dueSessionCount: 10,
+      })
     );
     getLearnerDnaMock.mockResolvedValueOnce({ ...REASSESSMENT_DUE_DNA, session_count: 20 });
 
@@ -118,14 +132,34 @@ describe('OnboardingFlow', () => {
 
   it('resumes persisted progress when it matches the current reassessment session_count', async () => {
     window.sessionStorage.setItem(
-      'onboarding_progress_v1',
-      JSON.stringify({ current: 3, answers: { [QUESTIONS[0].id]: 0 }, disclaimerAcknowledged: true, dueSessionCount: 10 })
+      'onboarding_progress_v2',
+      JSON.stringify({
+        current: 3,
+        answers: { [QUESTIONS[0].id]: { format: 'mcq', index: 0 } },
+        disclaimerAcknowledged: true,
+        dueSessionCount: 10,
+      })
     );
     getLearnerDnaMock.mockResolvedValueOnce(REASSESSMENT_DUE_DNA);
 
     render(<OnboardingFlow />);
 
     await waitFor(() => expect(screen.getByText(QUESTIONS[3].text)).not.toBeNull());
+  });
+
+  it('does not resume a stale v1-shaped (pre-Story-235) persisted blob', async () => {
+    // Story 235 AC9: the old key used bare number indices, incompatible with
+    // the new AnswerValue shape -- bumping to v2 means a leftover v1 blob is
+    // simply never read, not migrated.
+    window.sessionStorage.setItem(
+      'onboarding_progress_v1',
+      JSON.stringify({ current: 5, answers: { c1: 0 }, disclaimerAcknowledged: true })
+    );
+    getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(/not a clinical assessment/i)).not.toBeNull());
   });
 
   it('redirects to /signin if the mount-time check returns 401 (expired session)', async () => {
@@ -158,7 +192,7 @@ describe('OnboardingFlow', () => {
     await waitFor(() => expect(screen.getByText(/not a clinical assessment/i)).not.toBeNull());
   });
 
-  it('submits all 20 responses in the correct batched shape and shows the DNA result', async () => {
+  it('submits all 30 responses in the correct per-format shape and shows the DNA result', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
     submitOnboardingMock.mockResolvedValueOnce(RESULT);
     const user = userEvent.setup();
@@ -169,21 +203,35 @@ describe('OnboardingFlow', () => {
 
     await waitFor(() => expect(submitOnboardingMock).toHaveBeenCalledTimes(1));
     const responses = submitOnboardingMock.mock.calls[0][0];
-    expect(responses).toHaveLength(20);
+    expect(responses).toHaveLength(30);
     expect(responses[0]).toEqual({
       question_id: QUESTIONS[0].id,
-      dimension: QUESTIONS[0].dimension,
+      format: 'mcq',
       selected_index: 0,
-      selected_text: QUESTIONS[0].options[0],
+      response_text: (QUESTIONS[0].options ?? [])[0],
+    });
+    // q21 is the first one_liner question
+    const oneLinerResponse = responses.find((r: { question_id: string }) => r.question_id === 'q21');
+    expect(oneLinerResponse).toEqual({
+      question_id: 'q21',
+      format: 'one_liner',
+      response_text: 'A sample honest answer.',
+    });
+    // q26 is the first true_false question
+    const trueFalseResponse = responses.find((r: { question_id: string }) => r.question_id === 'q26');
+    expect(trueFalseResponse).toEqual({
+      question_id: 'q26',
+      format: 'true_false',
+      response_bool: true,
     });
 
-    await waitFor(() => expect(screen.getByText('Pattern Thinker')).not.toBeNull());
+    await waitFor(() => expect(screen.getByText('Sharp Reasoner')).not.toBeNull());
     expect(screen.getByText(RESULT.profile_text)).not.toBeNull();
     // Story 2-54
     expect(captureMock).toHaveBeenCalledWith('onboarding_completed', {
       badge_labels: RESULT.badge_labels,
     });
-  }, 15000);
+  }, 20000);
 
   it('on 409 (already submitted), fetches existing DNA and shows the result instead of an error', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED); // mount check
@@ -195,12 +243,12 @@ describe('OnboardingFlow', () => {
     await acknowledgeDisclaimer(user);
     await answerAllQuestions(user);
 
-    await waitFor(() => expect(screen.getByText('Goal-Oriented')).not.toBeNull());
+    await waitFor(() => expect(screen.getByText('Deep Researcher')).not.toBeNull());
     expect(screen.getByText(EXISTING_DNA.profile_text as string)).not.toBeNull();
     // Story 2-54: the 409-recovery path re-fetches an already-completed
     // profile -- it is NOT a new completion and must not fire the event.
     expect(captureMock).not.toHaveBeenCalledWith('onboarding_completed', expect.anything());
-  }, 15000);
+  }, 20000);
 
   it('on 409 where the follow-up DNA fetch also fails, offers "Continue to Dashboard" instead of an infinite Retry loop', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED); // mount check
@@ -217,7 +265,7 @@ describe('OnboardingFlow', () => {
 
     await user.click(screen.getByText('Continue to Dashboard'));
     expect(pushMock).toHaveBeenCalledWith('/dashboard');
-  }, 15000);
+  }, 20000);
 
   it('redirects to /signin if the session expires (401) at final submit', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
@@ -229,7 +277,7 @@ describe('OnboardingFlow', () => {
     await answerAllQuestions(user);
 
     await waitFor(() => expect(pushMock).toHaveBeenCalledWith('/signin'));
-  }, 15000);
+  }, 20000);
 
   it('on 422, shows a retry option without losing collected answers', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
@@ -246,9 +294,9 @@ describe('OnboardingFlow', () => {
 
     await waitFor(() => expect(submitOnboardingMock).toHaveBeenCalledTimes(2));
     const secondAttemptResponses = submitOnboardingMock.mock.calls[1][0];
-    expect(secondAttemptResponses).toHaveLength(20);
+    expect(secondAttemptResponses).toHaveLength(30);
     expect(secondAttemptResponses[0].selected_index).toBe(0);
-  }, 15000);
+  }, 20000);
 
   it('Back returns to the previous question with its prior answer still selected, and is disabled on question 1', async () => {
     getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
@@ -265,7 +313,64 @@ describe('OnboardingFlow', () => {
     await user.click(screen.getByText('Back'));
 
     await waitFor(() => expect(screen.getByText(QUESTIONS[0].text)).not.toBeNull());
-    expect(screen.getByText(QUESTIONS[0].options[0]).closest('button')?.getAttribute('aria-checked')).toBe('true');
+    expect(
+      screen.getByText((QUESTIONS[0].options ?? [])[0]).closest('button')?.getAttribute('aria-checked')
+    ).toBe('true');
+  });
+
+  it('a true_false question: Next stays disabled until answered, then enables on an explicit False click (not just True)', async () => {
+    // AC9's core claim is that "answered false" must be treated the same as
+    // "answered true" for proceed-gating, not silently left disabled the way an
+    // `isAnswered` regression using Boolean(value.value) instead of
+    // presence-of-value would. The rest of this file's answerQuestion() helper
+    // always clicks True, so this is the only test that drives a real False
+    // click through the actual OnboardingFlow component tree.
+    getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
+    const user = userEvent.setup();
+    const trueFalseIndex = QUESTIONS.findIndex((q) => q.format === 'true_false');
+    expect(trueFalseIndex).toBeGreaterThanOrEqual(0);
+
+    render(<OnboardingFlow />);
+    await acknowledgeDisclaimer(user);
+    for (let i = 0; i < trueFalseIndex; i++) {
+      await answerQuestion(user, i, false);
+    }
+
+    const q = QUESTIONS[trueFalseIndex];
+    await waitFor(() => expect(screen.getByText(q.text)).not.toBeNull());
+
+    const nextButton = () => screen.getByText('Next').closest('button');
+    expect(nextButton()).toHaveProperty('disabled', true);
+
+    await user.click(screen.getByText('False'));
+
+    expect(nextButton()).toHaveProperty('disabled', false);
+  }, 20000);
+
+  it('does not treat a persisted answer as "answered" when its format no longer matches the current question (stale mid-flight blob)', async () => {
+    // Simulates a future deploy changing QUESTIONS[0]'s format after a student's
+    // sessionStorage blob was written against the old format -- the persisted
+    // AnswerValue's format field would then disagree with the live question's
+    // format at that id. Before the isAnswered() format-match fix, this stale
+    // value would silently count as "answered" and Next would already be
+    // enabled; handleSubmit's own per-question mapping would then silently
+    // fabricate a fresh value (index 0 / false / "") rather than the student's
+    // real intent. After the fix, the mismatch is treated as unanswered.
+    expect(QUESTIONS[0].format).toBe('mcq');
+    window.sessionStorage.setItem(
+      'onboarding_progress_v2',
+      JSON.stringify({
+        current: 0,
+        answers: { [QUESTIONS[0].id]: { format: 'one_liner', text: 'stale mismatched answer' } },
+        disclaimerAcknowledged: true,
+      })
+    );
+    getLearnerDnaMock.mockRejectedValueOnce(NOT_ONBOARDED);
+
+    render(<OnboardingFlow />);
+
+    await waitFor(() => expect(screen.getByText(QUESTIONS[0].text)).not.toBeNull());
+    expect(screen.getByText('Next').closest('button')).toHaveProperty('disabled', true);
   });
 
   it('persists progress to sessionStorage and resumes on remount instead of restarting from question 1', async () => {
@@ -296,6 +401,6 @@ describe('OnboardingFlow', () => {
     await acknowledgeDisclaimer(user);
     await answerAllQuestions(user);
 
-    await waitFor(() => expect(window.sessionStorage.getItem('onboarding_progress_v1')).toBeNull());
-  }, 15000);
+    await waitFor(() => expect(window.sessionStorage.getItem('onboarding_progress_v2')).toBeNull());
+  }, 20000);
 });

@@ -66,38 +66,43 @@ _SESSION_ROW: dict = {
     "lesson_id": LESSON_ID,
 }
 
-_VALID_ONBOARDING_RESPONSES: list[OnboardingAnswer] = (
-    [
-        OnboardingAnswer(
-            question_id=f"c{i}",
-            dimension="cognitive",
-            selected_index=2,
-            selected_text="Sometimes",
-            response_time_ms=1500,
-        )
-        for i in range(1, 9)
-    ]
-    + [
-        OnboardingAnswer(
-            question_id=f"e{i}",
-            dimension="emotional",
-            selected_index=3,
-            selected_text="Often",
-            response_time_ms=1200,
-        )
-        for i in range(1, 6)
-    ]
-    + [
-        OnboardingAnswer(
-            question_id=f"s{i}",
-            dimension="self_direction",
-            selected_index=1,
-            selected_text="Rarely",
-            response_time_ms=2000,
-        )
-        for i in range(1, 8)
-    ]
-)
+
+def _build_valid_onboarding_responses() -> list[OnboardingAnswer]:
+    """30 valid OnboardingAnswer objects (Story 235 shape: q1-q30, 3 formats)."""
+    from app.modules.assessment.onboarding_questions import MCQ_OPTION_COUNTS, Q_SPEC
+
+    answers: list[OnboardingAnswer] = []
+    for qid, fmt in Q_SPEC.items():
+        if fmt == "mcq":
+            index = min(2, MCQ_OPTION_COUNTS[qid] - 1)
+            answers.append(
+                OnboardingAnswer(
+                    question_id=qid,
+                    format="mcq",
+                    selected_index=index,
+                    response_text="Sometimes",
+                    response_time_ms=1500,
+                )
+            )
+        elif fmt == "one_liner":
+            answers.append(
+                OnboardingAnswer(
+                    question_id=qid,
+                    format="one_liner",
+                    response_text="An honest answer.",
+                    response_time_ms=1200,
+                )
+            )
+        else:
+            answers.append(
+                OnboardingAnswer(
+                    question_id=qid, format="true_false", response_bool=True, response_time_ms=2000
+                )
+            )
+    return answers
+
+
+_VALID_ONBOARDING_RESPONSES: list[OnboardingAnswer] = _build_valid_onboarding_responses()
 
 # ── Router TestClient (for route-level PostHog assertions) ────────────────────
 
@@ -236,8 +241,9 @@ def _build_teachback_supabase() -> MagicMock:
 
 
 def _build_onboarding_supabase() -> MagicMock:
-    """3-call mock: learner_dna SELECT → onboarding_responses INSERT → learner_dna UPSERT.
-    D137 added _fetch_existing_dna() as first call in process_onboarding().
+    """3-call mock: learner_dna SELECT → onboarding_answers_v2 UPSERT (D173: was
+    INSERT) → learner_dna UPSERT. D137 added _fetch_existing_dna() as first call
+    in process_onboarding().
     """
     supabase = MagicMock()
 
@@ -248,8 +254,8 @@ def _build_onboarding_supabase() -> MagicMock:
     dna_select_chain.execute.return_value = dna_select_resp
 
     insert_m = MagicMock()
-    insert_m.insert.return_value.execute.return_value.data = []
-    insert_m.insert.return_value.execute.return_value.error = None
+    insert_m.upsert.return_value.execute.return_value.data = []
+    insert_m.upsert.return_value.execute.return_value.error = None
 
     upsert_m = MagicMock()
     upsert_m.upsert.return_value.execute.return_value.data = [{"user_id": USER_ID}]

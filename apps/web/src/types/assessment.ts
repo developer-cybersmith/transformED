@@ -11,11 +11,15 @@ export interface QuizAnswer {
   response_time_ms?: number;
 }
 
+// Story 235: 3 answer formats replace the old MCQ-only dimension-tagged shape.
+// Matches apps/api/app/modules/assessment/schemas.py::OnboardingAnswer exactly.
 export interface OnboardingAnswer {
   question_id: string;
-  dimension: "cognitive" | "emotional" | "self_direction";
-  selected_index: number;
-  selected_text: string;
+  format: "mcq" | "one_liner" | "true_false";
+  selected_index?: number;
+  response_text?: string;
+  response_bool?: boolean;
+  response_time_ms?: number;
 }
 
 // â”€â”€ POST /api/assessment/quiz â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

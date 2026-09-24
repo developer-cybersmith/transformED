@@ -1,46 +1,297 @@
-// 20-question Learner DNA onboarding diagnostic.
-// Content reviewed/approved — do not edit question text, option text, or IDs.
-// See docs/stories/3-4-onboarding-diagnostic-content.md.
+// 30-question Learner DNA onboarding diagnostic (Story 235 redesign).
+// Content sourced verbatim from docs/proposals/source-specs/
+// 2026-09-hie-lecture-format-45min-and-onboarding-pack.pdf, Section 4.1.
+// Q1-Q20 MCQ, Q21-Q25 one-liner free text, Q26-Q30 true/false.
+// Q16-Q20 are the scored Penta-Intelligence questions (backend answer key:
+// apps/api/app/modules/assessment/onboarding_questions.py PENTA_SCORING) --
+// their option ORDER is the scoring contract (see
+// apps/api/tests/unit/test_onboarding_question_ordering.py). Do not reorder
+// options for q16-q20 without updating PENTA_SCORING to match.
 
-export type Dimension = 'cognitive' | 'emotional' | 'self_direction';
+export type QuestionFormat = 'mcq' | 'one_liner' | 'true_false';
 
 export interface Question {
     id: string;
-    dimension: Dimension;
+    format: QuestionFormat;
     text: string;
-    options: string[];
+    /** mcq only */
+    options?: string[];
+    /** one_liner only */
+    placeholder?: string;
 }
 
 export const QUESTIONS: Question[] = [
-    // Cognitive — 8
-    { id: 'c1', dimension: 'cognitive', text: 'When learning something new, I prefer to:', options: ['See the big picture first, then details', 'Start with specific examples, then generalise', 'Work through step-by-step instructions', 'Discover patterns on my own'] },
-    { id: 'c2', dimension: 'cognitive', text: 'I understand abstract concepts best when they are:', options: ['Explained with diagrams or visuals', 'Explained with real-world analogies', 'Broken into numbered steps', 'Linked to prior knowledge I already have'] },
-    { id: 'c3', dimension: 'cognitive', text: 'When I encounter a difficult problem, I typically:', options: ['Break it into smaller sub-problems', 'Look for a similar problem I\'ve solved before', 'Think about it holistically before diving in', 'Try different approaches until one works'] },
-    { id: 'c4', dimension: 'cognitive', text: 'When studying new material, how quickly do you typically grasp the core idea?', options: ['Only after practising with it multiple times', 'After a second pass or worked example', 'After one full reading or explanation', 'Immediately — I connect it to what I know within the first pass'] },
-    { id: 'c5', dimension: 'cognitive', text: 'How do you best retain new information?', options: ['Repetition and practice', 'Teaching it to someone else', 'Making notes in my own words', 'Connecting it to a story or narrative'] },
-    { id: 'c6', dimension: 'cognitive', text: 'When reading technical text, I prefer:', options: ['Dense, detailed explanations', 'Concise summaries with key points', 'Examples and code/math alongside theory', 'Narrative writing with minimal jargon'] },
-    { id: 'c7', dimension: 'cognitive', text: 'How comfortable are you with ambiguity while learning?', options: ['Very comfortable — I work well with open-ended problems', 'Somewhat comfortable', 'I prefer clear answers but can tolerate some uncertainty', 'I strongly prefer clear, definite answers'] },
-    { id: 'c8', dimension: 'cognitive', text: 'Which type of quiz question do you find most useful for learning?', options: ['Multiple-choice recall', 'Short written explanation', 'Problem-solving / worked example', 'Real-world application scenario'] },
-
-    // Emotional — 5
-    { id: 'e1', dimension: 'emotional', text: 'When I get a wrong answer on a quiz, I feel:', options: ['Motivated to understand why', 'Briefly discouraged, then I move on', 'Quite frustrated', 'Indifferent — I focus on the next question'] },
-    { id: 'e2', dimension: 'emotional', text: 'When you repeatedly fail at a difficult topic, you:', options: ['Move on to a different topic and return later (or not at all)', 'Lower the difficulty and build up gradually', 'Take a break and return with fresh eyes', 'Keep trying with different approaches until I succeed'] },
-    { id: 'e3', dimension: 'emotional', text: 'When a concept takes significantly longer to understand than you expected, you:', options: ['Stay with it — I know persistence will pay off', 'Feel frustrated but push through', 'Take a break before returning to it', 'Move on and hope it becomes clearer later'] },
-    { id: 'e4', dimension: 'emotional', text: 'When I\'m confused by a concept, my first reaction is:', options: ['Curiosity — I want to dig deeper', 'A bit uneasy, but I push through', 'I feel stuck and need a hint', 'Overwhelmed — I\'d rather skip ahead'] },
-    { id: 'e5', dimension: 'emotional', text: 'When you\'re stuck on something, your first instinct is to:', options: ['Search for the answer or explanation yourself', 'Re-read the material more carefully', 'Take a break and come back to it', 'Ask a classmate, tutor, or AI tool'] },
-
-    // Self-Direction — 7
-    { id: 's1', dimension: 'self_direction', text: 'How often do you set explicit learning goals before studying?', options: ['Always — I make detailed plans', 'Usually', 'Occasionally', 'Rarely or never'] },
-    { id: 's2', dimension: 'self_direction', text: 'When given free choice on a topic to study, you:', options: ['Dive in immediately with a structured plan', 'Explore broadly before focusing', 'Wait for specific guidance', 'Prefer to define a clear scope before exploring'] },
-    { id: 's3', dimension: 'self_direction', text: 'How do you prefer to pace your lessons?', options: ['I want full control over pacing', 'Guided pacing with ability to override', 'Mostly guided, with occasional choices', 'Fully guided — tell me what comes next'] },
-    { id: 's4', dimension: 'self_direction', text: 'When working through a lesson, you prefer:', options: ['To decide the order and depth of topics yourself', 'A recommended path with freedom to skip or dive deeper', 'A set sequence with clear checkpoints', 'To follow exactly what the system suggests'] },
-    { id: 's5', dimension: 'self_direction', text: 'I review my own understanding of a topic:', options: ['Regularly, through self-testing', 'Occasionally, when I feel uncertain', 'Rarely — I rely on external tests', 'Almost never'] },
-    { id: 's6', dimension: 'self_direction', text: 'When you encounter an interesting topic in a lesson, you typically:', options: ['Stay focused — extra reading is not something I usually do', 'Finish the required material first, then explore if time allows', 'Note it for later but stay on the lesson path', 'Follow tangential links and explore further on your own'] },
-    { id: 's7', dimension: 'self_direction', text: 'When you finish a lesson, you typically:', options: ['Immediately review and summarise notes', 'Reflect briefly, then move on', 'Check off a to-do and move on', 'Rarely do anything after finishing'] },
+    // ── Part 1 — MCQ (Q1-Q20) ────────────────────────────────────────────────
+    {
+        id: 'q1',
+        format: 'mcq',
+        text: 'What is your PRIMARY reason for using the HIE AI Tutor?',
+        options: [
+            'Crack a competitive exam (JEE / NEET / UPSC / CAT / GRE)',
+            'Perform in a job interview or appraisal',
+            'Build a project or job-specific skill',
+            'Improve academic performance (school / college)',
+            'Personal learning & self-transformation',
+        ],
+    },
+    {
+        id: 'q2',
+        format: 'mcq',
+        text: 'How would you rate your current level in your main subject / goal area?',
+        options: [
+            'Absolute beginner',
+            'Elementary',
+            'Intermediate',
+            'Advanced',
+            'Expert refreshing fundamentals',
+        ],
+    },
+    {
+        id: 'q3',
+        format: 'mcq',
+        text: 'Preferred language of instruction:',
+        options: [
+            'Pure English',
+            'Pure mother tongue',
+            'Hinglish / code-mixed',
+            'English with mother-tongue explanations on demand',
+            'Fully adaptive — AI decides',
+        ],
+    },
+    {
+        id: 'q4',
+        format: 'mcq',
+        text: 'Preferred tutor tone:',
+        options: [
+            'Formal professor',
+            'Friendly mentor',
+            'Witty / humorous',
+            'Drill-sergeant strict',
+            'Motivational coach',
+        ],
+    },
+    {
+        id: 'q5',
+        format: 'mcq',
+        text: 'Your current schooling / education level:',
+        options: [
+            'School (K–12)',
+            'Undergraduate',
+            'Postgraduate',
+            'Working professional',
+            'Self-taught / gap year / other',
+        ],
+    },
+    {
+        id: 'q6',
+        format: 'mcq',
+        text: 'When you think deeply about a hard problem, your inner voice speaks in:',
+        options: [
+            'My mother tongue',
+            'English',
+            'A mixture of both',
+            'Depends on the subject (maths in one, emotions in another)',
+        ],
+    },
+    {
+        id: 'q7',
+        format: 'mcq',
+        text: 'When you write answers in English, you:',
+        options: [
+            'Think directly in English',
+            'Think in mother tongue, then translate',
+            'Mix both constantly',
+            'I struggle and lose my original thought',
+        ],
+    },
+    {
+        id: 'q8',
+        format: 'mcq',
+        text: 'Before believing or sharing a viral claim, how often do you verify it?',
+        options: ['Always', 'Often', 'Sometimes', 'Rarely', 'Never'],
+    },
+    {
+        id: 'q9',
+        format: 'mcq',
+        text: 'Have you watched Phir Hera Pheri?',
+        options: [
+            'Multiple times — I can quote it line by line',
+            'Once, enjoyed it',
+            'Heard of it, never watched',
+            'Never heard of it',
+            'I don\'t watch comedy films',
+        ],
+    },
+    {
+        id: 'q10',
+        format: 'mcq',
+        text: 'If your AI Tutor roasted you after a silly mistake, you would:',
+        options: [
+            'Laugh hard and feel MORE motivated',
+            'Laugh, but feel slightly hurt',
+            'Feel offended and disengage',
+            'Quit the session',
+            'Roast it back',
+        ],
+    },
+    {
+        id: 'q11',
+        format: 'mcq',
+        text: 'Set your ROAST CEILING (the tutor will never exceed this):',
+        options: [
+            'Gentle teasing only',
+            'Moderate banter',
+            'Full roast mode — I can take it',
+            'Zero roasting — keep it respectful',
+            'Surprise me — adapt to my mood',
+        ],
+    },
+    {
+        id: 'q12',
+        format: 'mcq',
+        text: 'Honestly — how long can you study before your mind first wanders?',
+        options: [
+            'Under 10 minutes',
+            '10–25 minutes',
+            '25–50 minutes',
+            '50–90 minutes',
+            '90+ minutes (deep-work capable)',
+        ],
+    },
+    {
+        id: 'q13',
+        format: 'mcq',
+        text: 'Hours per day on short-video content (reels/shorts):',
+        options: ['None', 'Under 30 min', '30–90 min', '1.5–3 hours', '3+ hours'],
+    },
+    {
+        id: 'q14',
+        format: 'mcq',
+        text: 'Realistic daily learning time you can protect:',
+        options: ['Under 30 min', '30–60 min', '1–2 hours', '2–4 hours', '4+ hours'],
+    },
+    {
+        id: 'q15',
+        format: 'mcq',
+        text: 'Your 5-year vision:',
+        options: [
+            'Top institution / campus admission',
+            'A specific dream job',
+            'My own business / startup',
+            'Government / public service',
+            'Honestly — still figuring it out',
+        ],
+    },
+    // ── Q16-Q20: Penta-Intelligence (scored) — DO NOT REORDER OPTIONS ────────
+    {
+        id: 'q16',
+        format: 'mcq',
+        text: 'A bat and ball cost ₹110 total. The bat costs ₹100 more than the ball. The ball costs:',
+        options: ['₹10', '₹5', '₹15', '₹1', '₹2.50'],
+    },
+    {
+        id: 'q17',
+        format: 'mcq',
+        text: 'A close friend snaps at you rudely for no clear reason. Your most likely response:',
+        options: [
+            'Snap back immediately',
+            'Assume they\'re having a bad day and check on them later',
+            'Ignore them for days',
+            'Confront them aggressively in front of others',
+            'Feel hurt but say nothing and overthink',
+        ],
+    },
+    {
+        id: 'q18',
+        format: 'mcq',
+        text: 'You find a wallet with ₹5,000 and an ID card inside. You:',
+        options: [
+            'Keep the cash — finder\'s luck',
+            'Return it and hope for a reward',
+            'Return it anonymously',
+            'Hand it to the police / authority',
+            'Post about it to look good',
+        ],
+    },
+    {
+        id: 'q19',
+        format: 'mcq',
+        text: 'Which of these is a FACT, not an opinion?',
+        options: [
+            '\'This policy is a disaster\'',
+            '\'Everyone knows this is true\'',
+            '\'Unemployment rose from 4.1% to 5.3% in the report\'',
+            '\'Any fool can see the truth\'',
+            '\'Experts agree without question\'',
+        ],
+    },
+    {
+        id: 'q20',
+        format: 'mcq',
+        text: 'When researching an unfamiliar topic, your default method is:',
+        options: [
+            'First Google result',
+            'Wikipedia summary',
+            'Compare 3+ independent sources',
+            'Go to primary sources / papers',
+            'Ask AI and accept the answer',
+        ],
+    },
+    // ── Part 2 — One-Liners (Q21-Q25) ────────────────────────────────────────
+    {
+        id: 'q21',
+        format: 'one_liner',
+        text: 'In ONE sentence, describe what you want to achieve in the next 6 months.',
+        placeholder: 'In the next 6 months, I want to...',
+    },
+    {
+        id: 'q22',
+        format: 'one_liner',
+        text: 'Describe one moment when you KNEW the answer in your mother tongue but couldn\'t say it in English.',
+        placeholder: 'It happened when...',
+    },
+    {
+        id: 'q23',
+        format: 'one_liner',
+        text: 'Describe your last true deep-focus session: how long did it last and exactly what broke it?',
+        placeholder: 'It lasted about... and it broke when...',
+    },
+    {
+        id: 'q24',
+        format: 'one_liner',
+        text: 'On your worst, most exhausted day — what would still get you to open the app?',
+        placeholder: 'Even on a bad day, I would open it for...',
+    },
+    {
+        id: 'q25',
+        format: 'one_liner',
+        text: 'Where do you honestly see yourself in 2030?',
+        placeholder: 'By 2030, I see myself...',
+    },
+    // ── Part 3 — True / False (Q26-Q30) ──────────────────────────────────────
+    {
+        id: 'q26',
+        format: 'true_false',
+        text: 'I have abandoned at least one online course in the past 12 months.',
+    },
+    {
+        id: 'q27',
+        format: 'true_false',
+        text: 'I have passed exams mainly by memorising without truly understanding.',
+    },
+    {
+        id: 'q28',
+        format: 'true_false',
+        text: 'I can watch reels for hours but struggle to read for 10 minutes.',
+    },
+    {
+        id: 'q29',
+        format: 'true_false',
+        text: 'Being roasted motivates me more than being praised.',
+    },
+    {
+        id: 'q30',
+        format: 'true_false',
+        text: 'I have shared content online without verifying it first.',
+    },
 ];
-
-export const DIMENSION_LABEL: Record<Dimension, string> = {
-    cognitive: 'Cognitive Style',
-    emotional: 'Emotional Profile',
-    self_direction: 'Self-Direction',
-};
