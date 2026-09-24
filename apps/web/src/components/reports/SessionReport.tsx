@@ -253,13 +253,26 @@ export function SessionReport({ sessionId }: SessionReportProps) {
       data-testid="session-report-root"
       className="flex flex-col gap-6 w-full max-w-6xl mx-auto pt-8 pb-16 px-4 sm:px-8 lg:px-12"
     >
-      <Link
-        href="/reports"
-        className="inline-flex items-center gap-1.5 self-start text-sm text-neutral-500 hover:text-neutral-900 transition-colors"
-      >
-        <ArrowLeft className="w-4 h-4" />
-        Back to Reports
-      </Link>
+      {/* D183: this page previously offered only "Back to Reports" -- a
+          real dead end for anyone who opened it from a notification/email
+          link rather than by clicking through from /reports. The page also
+          now renders under the (dashboard) Sidebar/mobile-nav shell, but
+          that alone is `hidden lg:flex` on desktop-vs-mobile depending on
+          viewport, so this inline breadcrumb stays as the always-visible,
+          in-content path back. */}
+      <nav aria-label="Breadcrumb" className="flex items-center gap-2 self-start text-sm">
+        <Link
+          href="/dashboard"
+          className="inline-flex items-center gap-1.5 text-neutral-500 hover:text-neutral-900 transition-colors"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Dashboard
+        </Link>
+        <span className="text-neutral-300" aria-hidden="true">/</span>
+        <Link href="/reports" className="text-neutral-500 hover:text-neutral-900 transition-colors">
+          Reports
+        </Link>
+      </nav>
 
       {/* Header block */}
       <div className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 p-6 ${BLOCK_CLASS}`}>

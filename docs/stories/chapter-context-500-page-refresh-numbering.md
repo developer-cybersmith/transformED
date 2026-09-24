@@ -1,8 +1,9 @@
-# Story: Chapter-context 500, chapter list not auto-updating, and raw 0-based page numbers in the UI
+# Story: Chapter-context 500, chapter list not auto-updating, raw 0-based page numbers, and missing dashboard/reports navigation
 
 **Discovered:** 2026-09-24, live verification of chapter/lesson generation on `hieiq.ai`
-(triggering "Generate" on a chapter surfaced all three issues in one session). Registered
-as **D183** in `docs/DEFECT-REGISTER.md`.
+(triggering "Generate" on a chapter surfaced the first three issues in one session; a
+follow-up pass over `/reports` surfaced the next two). Registered as **D183** in
+`docs/DEFECT-REGISTER.md`.
 
 ## Problems
 
@@ -44,6 +45,24 @@ index)" for a chapter that starts on the PDF's 12th page. No PDF reader numbers 
 starting from 0; showing the bare 0-based index, with that parenthetical jargon inline,
 reads as a bug to a student, not a deliberate design choice.
 
+### 4. `/reports` and `/reports/[sessionId]` render with no Sidebar at all
+
+Both pages lived at `app/reports/page.tsx` / `app/reports/[sessionId]/page.tsx`, physically
+OUTSIDE the `(dashboard)` route group every other authenticated page lives under
+(`books/`, `upload/`, `dashboard/`, `settings/` each have their own `layout.tsx` rendering
+`<Sidebar />` + `<TopUtilityBar />` — there is no shared `(dashboard)/layout.tsx`, so a page
+outside the group inherits neither). `ReportsIndex.tsx`'s own top-of-file comment documented
+this as a deliberate "standalone page, no dashboard shell" choice — it was a real, if
+undocumented-as-a-defect, navigational dead end: no sidebar, and no mobile nav fallback
+either (`TopUtilityBar`'s hamburger menu lives in the SAME missing layout).
+
+### 5. The lesson report page (`/reports/[sessionId]`) offers no way back to the dashboard
+
+Independent of #4: even with the sidebar now present, `SessionReport.tsx`'s only in-content
+navigation was a single "Back to Reports" link — no path back to `/dashboard` from the page
+itself. `ErrorState` (shown when the report fails to load) already has its own "Back to
+Dashboard" link, so the gap was specific to the successful-render path.
+
 ## Fixes
 
 1. Added `response: Response` to both `put_chapter_context` and `get_chapter_context`.
@@ -59,6 +78,40 @@ reads as a bug to a student, not a deliberate design choice.
    how every PDF reader numbers pages by file position. The honest caveat that this may not
    match the book's own PRINTED page numbers (front matter, roman numerals, etc.) moves from
    cluttered inline text into the existing tooltip (`title` attribute).
+4. Moved `app/reports/page.tsx` and `app/reports/[sessionId]/page.tsx` into
+   `app/(dashboard)/reports/` and added `reports/layout.tsx`, matching the exact
+   Sidebar + TopUtilityBar shell every sibling route (`books/`, `upload/`, `settings/`,
+   `dashboard/`) already duplicates for itself (no shared `(dashboard)/layout.tsx` exists —
+   `books/layout.tsx`'s own comment documents why). `[sessionId]` inherits the new layout the
+   same way `books/[id]` already inherits `books/layout.tsx`. `ReportsIndex.tsx`'s stale
+   "standalone page, no dashboard shell" comment updated to match.
+5. `SessionReport.tsx`'s single "Back to Reports" link is now a breadcrumb
+   (`← Dashboard / Reports`), kept in-content and always visible regardless of viewport —
+   the Sidebar itself is `hidden lg:flex`, so an inline path back is not redundant with it on
+   narrower screens (`TopUtilityBar`'s own mobile menu covers those, but the explicit
+   in-content link matches `ErrorState`'s existing "Back to Dashboard" precedent and is what
+   was directly asked for).
+
+## Feature added in the same PR: sidebar collapse/expand toggle
+
+Requested directly, not a defect fix. `Sidebar.tsx` gained a collapse toggle (arrow icon,
+`ChevronLeft`/`ChevronRight` from `lucide-react` — the convention already used elsewhere for
+directional disclosure, e.g. `ChapterRow.tsx`'s expand/collapse chevrons):
+
+- Defaults to expanded (full labels visible).
+- Collapsing shrinks the sidebar to an icon rail (`w-20`); each nav item and the Account
+  button keep their FULL accessible name via `aria-label` even when collapsed (a Radix
+  `Tooltip` alone is visual-only and does not label the underlying control for assistive
+  tech — caught by `Sidebar.test.tsx`'s own new coverage before it shipped).
+- Hovering an icon in the collapsed state shows its label in a tooltip (reuses the existing
+  `components/ui/tooltip.tsx` Radix wrapper, same local-`TooltipProvider`-per-usage pattern
+  `JargonHover.tsx` already established — no new dependency).
+- The choice persists to `localStorage` (`hie:sidebar-collapsed`), because the sidebar is
+  duplicated per top-level route (see #4's fix note) — every navigation between
+  Dashboard/Books/Upload/Reports/Settings mounts a FRESH `<Sidebar />`, so plain `useState`
+  would silently re-expand on every click-through. Read/write follows
+  `useAttentionConsent.ts`'s guarded try/catch pattern (storage unavailable → fails to the
+  safe, fully-visible default, never stuck hidden).
 
 ## Incidental fixes (found while adding test coverage for #1, in the same file)
 
@@ -93,6 +146,17 @@ the same pattern recurring here in miniature).
    lives in the tooltip, not inline text.
 5. **AC5**: `tests/test_s5_3_endpoints.py` passes deterministically, run alone or combined
    with other test files, with no rate-limit-state leakage between test cases.
+6. **AC6**: `/reports` and `/reports/[sessionId]` render the same Sidebar + TopUtilityBar
+   shell as every other authenticated route — verified by a real `next build`'s route list
+   (both routes present, no collision, `[sessionId]` still dynamic) plus the existing
+   route-level tests (updated import paths, still passing).
+7. **AC7**: `SessionReport.tsx` offers an in-content link to `/dashboard`, not only
+   `/reports` — covered in `SessionReport.test.tsx`.
+8. **AC8**: The sidebar collapse toggle: (a) defaults expanded, (b) hides labels and shows a
+   tooltip on hover when collapsed, (c) every collapsed nav control keeps a real accessible
+   name via `aria-label` (not tooltip-only), (d) persists across a full unmount/remount
+   (simulating the real per-route Sidebar remount) via `localStorage` — all four covered in
+   `Sidebar.test.tsx`.
 
 ## Scale & Load
 

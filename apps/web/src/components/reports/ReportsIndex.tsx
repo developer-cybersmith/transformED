@@ -16,8 +16,11 @@ import type { SessionSummary } from '@/types/assessment';
 // once "looks too exhausted" for anyone with more than a handful -- added
 // filter tabs, recency grouping, and a "Load more" reveal so the page reads
 // as organized, not overwhelming.
-// Standalone page, no dashboard shell -- matches the existing convention for
-// /reports/[sessionId] (SessionReport.tsx), which is also sidebar-less.
+// D183: this and /reports/[sessionId] (SessionReport.tsx) were "standalone,
+// no dashboard shell" by deliberate past convention -- that left both pages
+// with no Sidebar/mobile nav at all, a real dead end for anyone who didn't
+// arrive via browser back. Both now render under
+// app/(dashboard)/reports/layout.tsx like every other dashboard route.
 
 const BLOCK_CLASS = 'rounded-2xl bg-white border border-neutral-100 shadow-sm';
 const INITIAL_VISIBLE = 9;
