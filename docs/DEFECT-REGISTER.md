@@ -862,6 +862,51 @@ code change.
 
 ---
 
+## D183 — Chapter-context 500, chapter list not auto-updating, and raw 0-based page numbers in the UI
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 2 (frontend) + Dev 1 (rate-limiter endpoints) ·
+**Detected:** 2026-09-24, live verification of chapter/lesson generation on `hieiq.ai` ·
+**Fixed:** 2026-09-24, same day, `docs/stories/chapter-context-500-page-refresh-numbering.md`
+
+Three compounding UX/correctness defects surfaced together while triggering "Generate" on a
+chapter live: (1) `PUT`/`GET .../chapters/{chapter_id}/context` returned a real `500` —
+`slowapi`'s header-injection falls back to `kwargs.get("response")` when the endpoint's own
+return value isn't a `starlette.responses.Response`, and neither endpoint declared a `response`
+parameter (every OTHER `@limiter.limit(...)` endpoint in the file already did). (2) The chapter
+list never updated on its own after "Generate" — `useChapters`'s SWR poll was keyed only on the
+BOOK's `processing` status, which stops being true the moment ingestion finishes, long before
+any individual chapter's lesson generation is done; the card froze on "Generating…" until a
+manual reload. (3) `ChapterRow` displayed the raw backend 0-based page index inline
+("PDF pages 11–17 (0-based index)"), reading as a bug to a student.
+
+**Resolution:** (1) added `response: Response` to both endpoints, plus a new source-level
+AST-scan guard (`test_limiter_response_param.py`) that flags ANY `@limiter.limit(...)`
+endpoint missing it, repo-wide. (2) `useChapters`'s poll now also continues while any loaded
+chapter has `latest_lesson.status` in `queued`/`running` (reusing the existing
+`isLessonProcessing` helper). (3) `ChapterRow` now displays `page_start + 1`–`page_end + 1`,
+matching how every PDF reader numbers pages; the not-necessarily-matching-printed-page-numbers
+caveat moved from cluttered inline text to the existing tooltip.
+
+**Incidental, found only because fixing (1) let the existing tests' real assertions finally
+run:** `tests/test_s5_3_endpoints.py` had no rate-limiter reset between test cases (module-level
+`memory://` storage leaking state across methods in one pytest process — confirmed pre-existing
+via `git stash` + rerun, not introduced by this fix) and one test used
+`MagicMock(spec=APIError)` as a mock `side_effect`, which isn't a real exception instance and
+fails with `TypeError` when raised. Both fixed in the same PR since they sat in the same file
+this story was already touching.
+
+**Enforcement:** `test_limiter_response_param.py` (2 tests — the repo-wide scan, and a premise
+check that the scan actually flags a synthetic broken function). `useChapters.test.ts` — new
+tests for both polling directions (continues while a lesson is generating, stops once settled).
+`ChapterRow.test.tsx`/`BookDetail.test.tsx`/`books-msw.integration.test.tsx` updated for the new
+1-based display. `test_s5_3_endpoints.py`'s autouse `_reset_rate_limiter` fixture.
+
+**Out of scope, not folded into this fix:** `test_rate_limit_redis_storage.py`'s 2 failures
+(`fakeredis`'s `evalsha` unimplemented) — confirmed pre-existing and unrelated via the same
+`git stash` check, not touched here.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent

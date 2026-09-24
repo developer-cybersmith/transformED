@@ -1566,6 +1566,7 @@ async def _resolve_chapter_for_context(
 @limiter.limit("3/minute;20/hour", key_func=_get_user_key)
 async def put_chapter_context(
     request: Request,  # load-bearing for slowapi — do not remove
+    response: Response,  # load-bearing for slowapi — do not remove (D183)
     book_id: str,
     chapter_id: str,
     body: ChapterContextRequest,
@@ -1695,6 +1696,7 @@ async def upsert_book_context(
 @limiter.limit("30/minute;200/hour", key_func=_get_user_key)
 async def get_chapter_context(
     request: Request,  # load-bearing for slowapi — do not remove
+    response: Response,  # load-bearing for slowapi — do not remove (D183)
     book_id: str,
     chapter_id: str,
     user: CurrentUser,

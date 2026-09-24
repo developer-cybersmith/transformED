@@ -48,7 +48,8 @@ describe('Books, end to end over MSW', () => {
         renderIsolated(<BookDetail bookId={BOOK_READY.book_id} />);
 
         await waitFor(() => expect(screen.getByText('Preliminaries')).not.toBeNull());
-        expect(screen.getByText(/PDF pages 69–120/)).not.toBeNull();
+        // D183: displayed page numbers are 0-based page_start/page_end + 1.
+        expect(screen.getByText(/Pages 70–121/)).not.toBeNull();
         expect(screen.getByText('2 lessons')).not.toBeNull();
         expect(screen.getByText('3 lessons')).not.toBeNull();
     });

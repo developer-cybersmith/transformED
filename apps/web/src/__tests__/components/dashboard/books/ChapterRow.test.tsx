@@ -100,13 +100,16 @@ describe('ChapterRow — lesson_count and page ranges', () => {
         expect(screen.queryByText(/lessons?$/)).toBeNull();
     });
 
-    it('labels the page range as 0-based PDF indices, never as a bare printed page number', () => {
+    it('shows human-friendly 1-based page numbers, with the file-position caveat in a tooltip not inline', () => {
+        // D183: page_start=69/page_end=120 (0-based) displays as 70-121 --
+        // showing the raw 0-based index read as a bug to a student, and no
+        // PDF reader numbers pages starting from 0.
         renderRow(CHAPTER_LESSON_COUNT_2);
 
-        const range = screen.getByText(/69/);
-        expect(range.textContent).toContain('120');
-        expect(range.textContent).toMatch(/0-based/i);
-        expect(range.getAttribute('title')).toMatch(/not the page numbers printed/i);
+        const range = screen.getByText(/70/);
+        expect(range.textContent).toContain('121');
+        expect(range.textContent).not.toMatch(/0-based/i);
+        expect(range.getAttribute('title')).toMatch(/not.*match.*numbers printed/i);
     });
 });
 

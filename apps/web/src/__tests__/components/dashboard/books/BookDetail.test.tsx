@@ -46,8 +46,11 @@ describe('BookDetail', () => {
         render(<BookDetail bookId={BOOK_READY.book_id} />);
 
         expect(screen.getAllByRole('listitem')).toHaveLength(21);
-        expect(screen.getByText(/PDF pages 69–120/)).not.toBeNull();
-        expect(screen.getByText(/PDF pages 40–68/)).not.toBeNull();
+        // D183: displayed page numbers are the 0-based page_start/page_end + 1
+        // (chapter 1's real page_start=69/page_end=120, chapter 0's
+        // page_start=40/page_end=68 -- see docs/contracts/book-api.v1.json).
+        expect(screen.getByText(/Pages 70–121/)).not.toBeNull();
+        expect(screen.getByText(/Pages 41–69/)).not.toBeNull();
         expect(screen.getByText('Preliminaries')).not.toBeNull();
     });
 

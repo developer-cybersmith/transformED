@@ -4,7 +4,7 @@ import { useRef } from 'react';
 import useSWR from 'swr';
 import { booksService, type BookStatus, type ChapterResponse } from '@/services/books.service';
 import { useAuth } from '@/contexts/AuthContext';
-import { nextPollInterval } from '@/lib/lessonStatusPoll';
+import { isLessonProcessing, nextPollInterval } from '@/lib/lessonStatusPoll';
 
 interface UseChaptersResult {
     data: ChapterResponse[] | null;
@@ -25,9 +25,17 @@ interface UseChaptersResult {
  * browser-only). Keyed by user id AND book id so a cache entry cannot leak
  * across accounts.
  *
- * `bookStatus` drives polling: a book still `processing` has no chapters yet
- * (the endpoint returns `[]`, which is the NORMAL state, not an error), so we
- * re-poll until ingestion finishes and the rows appear.
+ * `bookStatus` drives polling for the ingestion phase: a book still
+ * `processing` has no chapters yet (the endpoint returns `[]`, which is the
+ * NORMAL state, not an error), so we re-poll until ingestion finishes and the
+ * rows appear. Once the book is `ready`, polling used to stop dead -- even
+ * while a chapter's own lesson generation (triggered by "Generate", tracked
+ * per-chapter in `latest_lesson.status`) was still `queued`/`running`. That
+ * left a "Generating..." card frozen until a manual page refresh, because
+ * nothing was left polling to notice the transition to `ready`/`failed`.
+ * Polling now also continues while ANY loaded chapter has a lesson actively
+ * generating, using the same `isLessonProcessing` vocabulary other pages
+ * already poll lessons with.
  */
 export function useChapters(bookId: string, bookStatus?: BookStatus): UseChaptersResult {
     const { user } = useAuth();
@@ -38,9 +46,19 @@ export function useChapters(bookId: string, bookStatus?: BookStatus): UseChapter
         () => booksService.listChapters(bookId),
         {
             shouldRetryOnError: true,
-            // Book vocabulary ('processing'), not the lesson vocabulary --
-            // isLessonProcessing would be permanently false here.
-            refreshInterval: () => nextPollInterval(bookStatus === 'processing', pollingStartedAtRef),
+            // SWR calls this with the latest fetched data, not a closure over
+            // the hook's own `data` -- using the parameter (not the outer
+            // `data`) is what lets a poll tick started BEFORE this render's
+            // data landed still see it.
+            refreshInterval: (latestData) => {
+                const aLessonIsGenerating = (latestData ?? []).some((chapter) =>
+                    isLessonProcessing(chapter.latest_lesson),
+                );
+                return nextPollInterval(
+                    bookStatus === 'processing' || aLessonIsGenerating,
+                    pollingStartedAtRef,
+                );
+            },
         },
     );
 
