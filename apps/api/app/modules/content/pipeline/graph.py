@@ -1855,7 +1855,7 @@ def _effective_narration_wpm(settings: Any) -> float:  # noqa: ANN401 — Settin
     Story 2-19 to ESTIMATE a finished script's duration for the slide timeline.
     Using it unmodified as a GENERATION target overshoots the clock whenever the
     TTS tier slows the delivery: at Sarvam's 0.85 pace, 150 words occupy ~1.18
-    minutes, not 1.0 — a ~5-minute miss on T1's 29.25-minute budget.
+    minutes, not 1.0 — an ~8-minute miss on T1's 45-minute minimum.
 
     The pace therefore comes from whichever tier is actually configured as
     PRIMARY, not from a hardcoded vendor. Story 232 put 60db.ai ahead of Sarvam
