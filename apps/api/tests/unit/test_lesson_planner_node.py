@@ -144,14 +144,14 @@ async def test_happy_path_produces_lesson_plan_matching_input_count() -> None:
     # budget (T2 default: 19.5 min) before assembly, so the plan's total is the
     # duration CONTRACT, not the model's free-running estimate. Still summed
     # from the segments, never LLM-supplied directly.
-    assert plan["total_duration_min"] == pytest.approx(19.5), (
+    assert plan["total_duration_min"] == pytest.approx(30.0), (
         "must be summed from the rescaled segments, not LLM-supplied directly"
     )
     assert len(plan["segments"]) == 3
     assert plan["segments"][0]["segment_id"] == "sec_0"
     assert plan["segments"][0]["title"] == "Getting Started"
-    assert plan["segments"][0]["duration_min"] == pytest.approx(4.0 * 1.3), (
-        "segment durations carry the S5-4 rescale factor (19.5 / 15.0 = 1.3)"
+    assert plan["segments"][0]["duration_min"] == pytest.approx(4.0 * 2.0), (
+        "segment durations carry the S5-4 rescale factor (30.0 / 15.0 = 2.0)"
     )
     # Original summary text is preserved verbatim, not re-derived from the LLM.
     assert plan["segments"][0]["summary"] == "Introduction to the topic."
@@ -866,9 +866,9 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
 
     segments = result["lesson_plan"]["segments"]
     assert [seg["slide_budget"] for seg in segments] == [
-        {"min": 3, "max": 4},
-        {"min": 4, "max": 6},
-        {"min": 4, "max": 5},
+        {"min": 4, "max": 7},
+        {"min": 7, "max": 8},
+        {"min": 6, "max": 8},
     ]
 
     # S5-4 (D-G): the depth wording is gone from every tier's prompt — duration
@@ -876,7 +876,7 @@ async def test_default_tier_produces_t2_slide_budget_and_no_framing() -> None:
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
-    assert "19.5 minutes" in sent_prompt, "T2's narration budget must reach the planner"
+    assert "30 minutes" in sent_prompt, "T2's narration budget must reach the planner"
 
 
 @pytest.mark.unit
@@ -905,20 +905,20 @@ async def test_tier_t1_produces_full_depth_framing_and_wider_budget() -> None:
 
     segments = result["lesson_plan"]["segments"]
     assert [seg["slide_budget"] for seg in segments] == [
-        {"min": 6, "max": 8},
+        {"min": 8, "max": 8},
         {"min": 8, "max": 8},
         {"min": 8, "max": 8},
     ]
     # Every T1 segment still has a wider (or equal, at the structural
     # ceiling) budget than the equivalent T2 default segment above.
-    t2_defaults = [{"min": 3, "max": 4}, {"min": 4, "max": 6}, {"min": 4, "max": 5}]
+    t2_defaults = [{"min": 4, "max": 7}, {"min": 7, "max": 8}, {"min": 6, "max": 8}]
     for t1_seg, t2_seg in zip(segments, t2_defaults, strict=True):
         assert t1_seg["slide_budget"]["max"] >= t2_seg["max"]
 
     # S5-4: T1 is distinguished by a LONGER narration budget, not by depth
     # wording. The old "FULL-DEPTH" framing is deleted repo-wide.
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
-    assert "29.25 minutes" in sent_prompt
+    assert "45 minutes" in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
 
@@ -946,20 +946,20 @@ async def test_tier_t3_produces_refresher_framing_and_narrower_budget() -> None:
 
     segments = result["lesson_plan"]["segments"]
     assert [seg["slide_budget"] for seg in segments] == [
-        {"min": 1, "max": 1},
         {"min": 1, "max": 2},
-        {"min": 1, "max": 2},
+        {"min": 2, "max": 3},
+        {"min": 2, "max": 2},
     ]
     # Every T3 segment still has a narrower (or equal) budget than the
     # equivalent T2 default segment above.
-    t2_defaults = [{"min": 3, "max": 4}, {"min": 4, "max": 6}, {"min": 4, "max": 5}]
+    t2_defaults = [{"min": 4, "max": 7}, {"min": 7, "max": 8}, {"min": 6, "max": 8}]
     for t3_seg, t2_seg in zip(segments, t2_defaults, strict=True):
         assert t3_seg["slide_budget"]["max"] <= t2_seg["max"]
 
     # S5-4: T3 is distinguished by a SHORTER narration budget, not by
     # refresher/depth wording.
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
-    assert "9.75 minutes" in sent_prompt
+    assert "15 minutes" in sent_prompt
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
 
@@ -1016,14 +1016,14 @@ async def test_unknown_tier_value_falls_back_to_t2_budget_and_framing() -> None:
     segments = result["lesson_plan"]["segments"]
     # Same per-segment values as test_default_tier_produces_t2_slide_budget_and_no_framing.
     assert [seg["slide_budget"] for seg in segments] == [
-        {"min": 3, "max": 4},
-        {"min": 4, "max": 6},
-        {"min": 4, "max": 5},
+        {"min": 4, "max": 7},
+        {"min": 7, "max": 8},
+        {"min": 6, "max": 8},
     ]
     sent_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     # S5-4: the fallback covers the narration budget too — an invalid tier must
     # not silently produce an unbudgeted lesson.
-    assert "19.5 minutes" in sent_prompt
+    assert "30 minutes" in sent_prompt
     assert "CRITICAL-TOPICS-ONLY" not in sent_prompt
     assert "FULL-DEPTH" not in sent_prompt
 

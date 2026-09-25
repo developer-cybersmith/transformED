@@ -609,10 +609,10 @@ class Settings(BaseSettings):
 
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
     # Story S5-4: derived from qa_budget_seconds(tier) — the tier's seat time
-    # x SEAT_TIME_SHARES["qa"] (10%). Under S5-4 the Q&A window is SUBTRACTED
-    # from the advertised duration; the pre-S5-4 values (600/300/150) were
-    # additive, so a "45-minute" T1 lesson really ran 55 minutes. Still fully
-    # env-tunable — only the defaults moved.
+    # (TIER_QA_SECONDS). The tier's minutes are the MINIMUM NARRATION time,
+    # so this Q&A window sits ON TOP of it rather than being carved out of
+    # it. Lowered from the pre-S5-4 600/300/150, which bore no relationship
+    # to lesson length at all. Still fully env-tunable.
     learner_tier_t1_qa_seconds: int = Field(
         default=qa_budget_seconds("T1"),
         description="Q&A phase duration in seconds for T1 (Full-Depth, 45-min) tier",
@@ -628,6 +628,29 @@ class Settings(BaseSettings):
     learner_tier_default_qa_seconds: int = Field(
         default=qa_budget_seconds(DEFAULT_TIER),
         description="Q&A phase duration in seconds when tier is unknown or absent (T2 equivalent)",
+    )
+
+    # ── Narration segment expansion (Story S5-5) ──────────────────────────────
+    narration_words_per_segment: int = Field(
+        default=900,
+        gt=0,
+        description=(
+            "Target narration words per delivery unit. Chosen so one unit's "
+            "SOURCE slice (900 x ~6 chars/word = ~5,400 chars) fits inside "
+            "section_body_max_chars (6,000) — which is why S5-5 needs no "
+            "increase to that window. Raising this past ~1,000 pushes slices "
+            "over the window and re-introduces truncation."
+        ),
+    )
+    max_narration_segments: int = Field(
+        default=24,
+        gt=0,
+        description=(
+            "Hard cap on delivery units per lesson. T1's 45-min minimum needs "
+            "~8 at the default word target, so this binds only on an "
+            "unusually long request; it is a fan-out/cost backstop, not a "
+            "content limit. Well below _MAX_PHASE1_SECTIONS (60)."
+        ),
     )
 
     # ── Learner Mode — quiz pacing (Story S5-4) ───────────────────────────────

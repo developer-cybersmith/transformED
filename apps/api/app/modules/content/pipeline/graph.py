@@ -1528,6 +1528,152 @@ async def topic_selection_node(state: PipelineState) -> PipelineState:
     return {"sections": new_sections, "progress_pct": 32.0}
 
 
+async def segment_expansion_node(state: PipelineState) -> PipelineState:
+    """Story S5-5: expand `topic_selection`'s 1-2 topics into enough delivery
+    units to meet the lesson's MINIMUM narration duration.
+
+    `topic_selection_node` collapses a chapter to 1 topic (T3) or 2 (T1/T2).
+    Every Phase-1 call then reads at most `section_body_max_chars` (6,000) of
+    one, so the text the generator could ever see was `n_topics x 6,000` —
+    13.3 min of narration at T1/T2, 6.7 at T3, regardless of chapter size.
+    Every tier was structurally short of the minimum S5-4 promises.
+
+    The window is not too small: 900 narration words is ~5,400 chars, inside
+    it. The bug was reading it once per TOPIC instead of once per delivery
+    unit. `merge_section_range` is text-preserving, so the whole chapter is
+    still in state after topic_selection — this node tiles those bodies into
+    window-sized slices and overwrites `state["sections"]`, exactly as
+    topic_selection already does, so every downstream node needs zero changes.
+
+    Topic identity is preserved on each slice (`topic_index`/`topic_title`),
+    so Story 233's grouping is refined, not undone: topic_selection still
+    decides WHAT is taught, this decides how many units teach it.
+
+    Same plain idempotency-checkpoint pattern as topic_selection/structure —
+    a single sequential node, not Send()-dispatched, so no atomic RPC.
+    """
+    from app.config import get_settings
+    from app.core.db import get_supabase
+    from app.modules.content.pipeline.nodes.segment_expansion import (
+        plan_segments,
+        split_body,
+    )
+    from app.schemas.lesson import DEFAULT_TIER, narration_budget_minutes
+
+    lesson_id: str = state["lesson_id"]
+    sections: list[dict[str, Any]] = state.get("sections", [])
+    tier = state.get("tier") or DEFAULT_TIER
+    settings = get_settings()
+    supabase = get_supabase()
+
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
+
+    if "segment_expansion" in node_outputs:
+        cached = node_outputs["segment_expansion"]
+        logger.info("[%s] segment_expansion_node: cache hit", lesson_id)
+        return {"sections": cached["sections"], "progress_pct": 34.0}
+
+    def _write_checkpoint(checkpoint: dict[str, Any]) -> None:
+        try:
+            supabase.table("lesson_jobs").update(
+                {
+                    "last_node": "segment_expansion",
+                    "node_outputs": {**node_outputs, "segment_expansion": checkpoint},
+                }
+            ).eq("lesson_id", lesson_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.warning("[%s] segment_expansion_node: checkpoint write failed", lesson_id)
+
+    if not sections:
+        _write_checkpoint({"sections": sections, "expanded": False})
+        await _update_job_progress(lesson_id, 34.0, "segment_expansion")
+        return {"sections": sections, "progress_pct": 34.0}
+
+    effective_wpm = _effective_narration_wpm(settings)
+    words_per_segment = settings.narration_words_per_segment
+    plan = plan_segments(
+        topic_bodies=[s.get("body") or "" for s in sections],
+        min_narration_minutes=narration_budget_minutes(tier),
+        effective_wpm=effective_wpm,
+        words_per_segment=words_per_segment,
+        max_segments=settings.max_narration_segments,
+    )
+
+    # Slice each topic into its allocated number of units. `target_chars` is
+    # the per-unit word budget expressed in characters; `max_chars` is the
+    # unchanged Phase-1 window, so no slice can ever exceed what the LLM will
+    # be shown (which is what made the old truncation lossy).
+    target_chars = int(words_per_segment * 6.0)
+    expanded: list[dict[str, Any]] = []
+    for topic_index, section in enumerate(sections):
+        body = section.get("body") or ""
+        want = (
+            plan.per_topic_segments[topic_index]
+            if topic_index < len(plan.per_topic_segments)
+            else 1
+        )
+        pieces = split_body(
+            body, target_chars=target_chars, max_chars=settings.section_body_max_chars
+        ) or [body]
+        # Only as many units as the plan allocated: a topic far larger than the
+        # duration needs is taught from its prefix rather than fanned out past
+        # the budget. Recorded as a known limitation in the story.
+        pieces = pieces[: max(1, want)]
+        for piece_index, piece in enumerate(pieces):
+            slice_section = dict(section)
+            slice_section["body"] = piece
+            slice_section["id"] = f"s{len(expanded)}"
+            slice_section["topic_index"] = topic_index
+            slice_section["topic_title"] = section.get("title", "")
+            if len(pieces) > 1:
+                # _derive_section_id builds a Storage path from the title — two
+                # slices of one topic share a title, so without this suffix the
+                # second slice's audio would overwrite the first's.
+                slice_section["title"] = f"{section.get('title', '')} (part {piece_index + 1})"
+            expanded.append(slice_section)
+
+    logger.info(
+        "[%s] segment_expansion_node: %d topic(s) -> %d unit(s); tier %s wants >= %.0f min "
+        "of narration, source supports ~%.1f min%s",
+        lesson_id,
+        len(sections),
+        len(expanded),
+        tier,
+        plan.requested_min_minutes,
+        plan.achievable_minutes,
+        " (CONTENT-LIMITED)" if plan.content_limited else "",
+    )
+
+    # Reuse topic_selection's purge: a retry crossing this deploy holds Phase-1
+    # checkpoints under ids these new slices are about to reuse.
+    node_outputs = _purge_stale_phase1_checkpoints(node_outputs, expanded)
+
+    _write_checkpoint(
+        {
+            "sections": expanded,
+            "expanded": True,
+            "topic_count": len(sections),
+            "segment_count": len(expanded),
+            "per_topic_segments": plan.per_topic_segments,
+            "requested_min_minutes": plan.requested_min_minutes,
+            "achievable_minutes": round(plan.achievable_minutes, 2),
+            "content_limited": plan.content_limited,
+            "capped_by_max_segments": plan.capped_by_max_segments,
+            "effective_wpm": effective_wpm,
+        }
+    )
+    await _update_job_progress(lesson_id, 34.0, "segment_expansion")
+    return {"sections": expanded, "progress_pct": 34.0}
+
+
 class _LessonPlanSegmentLLM(BaseModel):
     """Internal structured-output shape for one outline entry in
     lesson_planner_node's response — deliberately has no `summary` field: the
@@ -7677,6 +7823,7 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     graph.add_node("chunk", chunk_node)
     graph.add_node("embed", embed_node)
     graph.add_node("topic_selection", topic_selection_node)
+    graph.add_node("segment_expansion", segment_expansion_node)
     graph.add_node("lesson_planner", lesson_planner_node)
     graph.add_node("slide_generator", slide_generator_node)
     graph.add_node("summarise_segment", summarise_segment_node)
@@ -7716,7 +7863,12 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     # NOT constrain what _fan_out_phase1_economy_nodes can actually dispatch at
     # runtime. The router always returns Send() objects, never one of these
     # literal strings, so this is not an enforced allow-list.
-    graph.add_conditional_edges("topic_selection", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
+    # Story S5-5: topic_selection decides WHAT is taught (1-2 topics);
+    # segment_expansion decides HOW MANY delivery units are needed to teach
+    # it for the requested minimum, slicing each topic body into
+    # window-sized pieces. Phase 1 then fans out over the slices.
+    graph.add_edge("topic_selection", "segment_expansion")
+    graph.add_conditional_edges("segment_expansion", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
 
     # Join: lesson_planner only runs once ALL fanned-out economy-node dispatches
     # (5 nodes x N sections) have completed for this superstep.
