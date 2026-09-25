@@ -13,6 +13,7 @@ realistic paragraph text rather than "y" * n.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -124,6 +125,27 @@ async def test_checkpoint_records_the_slice_size_and_it_is_not_the_window():
     assert record["unit_slice_chars"] != s.section_body_max_chars
 
 
+@pytest.mark.asyncio
+async def test_node_derives_the_slice_from_the_configured_word_target():
+    """AC1. At the default (900) a hardcoded 5,400 in the node would pass every
+    other test; a non-default word target is what tells the two apart."""
+    s = get_settings().model_copy(update={"narration_words_per_segment": 600})
+    result, record, bodies = await _run_node([200_000], "T1", wpm=PRODUCTION_WPM, settings=s)
+
+    assert record["unit_slice_chars"] == int(600 * CHARS_PER_WORD)
+    plan = plan_segments(
+        topic_bodies=bodies,
+        min_narration_minutes=45.0,
+        effective_wpm=PRODUCTION_WPM,
+        words_per_segment=600,
+        max_segments=s.max_narration_segments,
+    )
+    assert record["per_topic_segments"] == plan.per_topic_segments
+    assert len(result["sections"]) == plan.segment_count
+    taught = sum(len(u["body"]) for u in result["sections"])
+    assert taught >= plan.segment_count * int(600 * CHARS_PER_WORD)
+
+
 # ── AC5: THE regression ──────────────────────────────────────────────────────
 
 
@@ -230,14 +252,41 @@ async def test_real_config_sweep_dispatches_exactly_the_plan(sizes, tier):
 # ── AC8: content-limited lessons teach everything ────────────────────────────
 
 
-@pytest.mark.parametrize("wpm", [150.0, 127.5])
-@pytest.mark.parametrize("sizes", [[5_677, 28_870], [5_000, 30_000], [2_000, 9_000], [15_000]])
+@pytest.mark.parametrize(
+    ("sizes", "wpm"),
+    [
+        ([5_677, 28_870], 150.0),
+        ([5_000, 30_000], 150.0),
+        ([2_000, 9_000], 150.0),
+        ([2_000, 9_000], 127.5),
+        ([15_000], 150.0),
+        ([15_000], 127.5),
+    ],
+)
 @pytest.mark.asyncio
-async def test_no_source_is_left_untaught_when_the_plan_needs_all_of_it(sizes, wpm):
-    _, record, _ = await _run_node(sizes, "T1", wpm=wpm)
-    needs_all = record["achievable_minutes"] * wpm * CHARS_PER_WORD >= sum(sizes) - 1
-    if record["content_limited"] or needs_all:
-        assert record["untaught_chars_per_topic"] == [0] * len(sizes)
+async def test_content_limited_lessons_teach_every_character(sizes, wpm):
+    """AC8. Each case is asserted content-limited first, so a change to the
+    planner cannot turn this into a test that checks nothing."""
+    result, record, bodies = await _run_node(sizes, "T1", wpm=wpm)
+
+    assert record["content_limited"] is True, "precondition: this chapter is content-limited"
+    assert record["untaught_chars_per_topic"] == [0] * len(sizes)
+    for topic_index, body in enumerate(bodies):
+        units = [u["body"] for u in result["sections"] if u["topic_index"] == topic_index]
+        assert "".join(units) == body
+
+
+@pytest.mark.parametrize("sizes", [[5_677, 28_870], [5_000, 30_000]])
+@pytest.mark.asyncio
+async def test_a_plan_that_needs_the_whole_chapter_gets_it(sizes):
+    """AC8's boundary: at 127.5 WPM these are NOT content-limited, but the plan
+    claims every character. Per-topic prefixes without the coverage hand-off
+    strand the small topic's spare allocation and fail here."""
+    result, record, _ = await _run_node(sizes, "T1", wpm=127.5)
+
+    assert record["content_limited"] is False, "precondition: the plan claims the full minimum"
+    assert record["untaught_chars_per_topic"] == [0] * len(sizes)
+    assert sum(len(u["body"]) for u in result["sections"]) == sum(sizes)
 
 
 # ── AC11: the D194 prefix case is recorded, not silent ───────────────────────
@@ -253,16 +302,47 @@ async def test_a_topic_larger_than_the_duration_needs_records_its_untaught_tail(
 # ── AC7: cap-overrun behaviour and telemetry unchanged ───────────────────────
 
 
+def _plan_for(bodies: list[str], tier_minutes: float, settings: Any) -> Any:
+    return plan_segments(
+        topic_bodies=bodies,
+        min_narration_minutes=tier_minutes,
+        effective_wpm=PRODUCTION_WPM,
+        words_per_segment=settings.narration_words_per_segment,
+        max_segments=settings.max_narration_segments,
+    )
+
+
 @pytest.mark.asyncio
 async def test_cap_overrun_is_unchanged():
+    """Option A: the cap is exceeded only to give every topic one unit."""
     capped = get_settings().model_copy(update={"max_narration_segments": 2})
-    result, record, _ = await _run_node([20_000] * 4, "T1", settings=capped)
+    result, record, bodies = await _run_node(
+        [20_000] * 4, "T1", wpm=PRODUCTION_WPM, settings=capped
+    )
+    plan = _plan_for(bodies, 45.0, capped)
 
-    assert record["cap_overrun"] == 2
-    assert record["max_segments_configured"] == 2
+    assert record["cap_overrun"] == plan.cap_overrun == 2
+    assert record["max_segments_configured"] == plan.max_segments_configured == 2
+    assert record["capped_by_max_segments"] is plan.capped_by_max_segments is True
     assert record["segment_count"] == 4
     assert len(result["sections"]) == 4
     assert {u["topic_index"] for u in result["sections"]} == {0, 1, 2, 3}
+
+
+@pytest.mark.asyncio
+async def test_a_cap_that_shortens_the_lesson_is_recorded_without_an_overrun():
+    """AC7's other half, and review finding 7: a low word target multiplies
+    units until max_narration_segments binds. The WINDOW does not bind; the
+    cap does, and the record must say so rather than read as a thin chapter."""
+    low = get_settings().model_copy(update={"narration_words_per_segment": 100})
+    result, record, bodies = await _run_node([60_000], "T1", wpm=PRODUCTION_WPM, settings=low)
+    plan = _plan_for(bodies, 45.0, low)
+
+    assert record["capped_by_max_segments"] is plan.capped_by_max_segments is True
+    assert record["cap_overrun"] == plan.cap_overrun == 0
+    assert len(result["sections"]) == low.max_narration_segments
+    assert record["unit_slice_chars"] == 600 < low.section_body_max_chars
+    assert record["untaught_chars_per_topic"][0] > 0
 
 
 # ── AC10: split_into ─────────────────────────────────────────────────────────
@@ -297,6 +377,168 @@ def test_split_into_cannot_make_more_pieces_than_characters():
 
 def test_split_into_empty_body_is_empty():
     assert split_into("", 3, max_chars=45_000) == []
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "a " + "x" * (2 * 45_000 - 2),  # the only space sits at the very start
+        _prose(2 * 45_000, para=4_000),  # ordinary prose, exactly at the bound
+        _prose(3 * 45_000 - 7, para=4_000),
+    ],
+    ids=["sparse-whitespace", "prose-2x-window", "prose-3x-window"],
+)
+def test_split_into_never_exceeds_the_window_at_the_bound(body):
+    """PR #257 review, finding 1. A cut that snapped short used to push its
+    shortfall onto the last slice: 89,998 and 45,978 chars against a 45,000
+    window. Holds whenever len(body) <= units x max_chars."""
+    units = math.ceil(len(body) / 45_000)
+    pieces = split_into(body, units, max_chars=45_000)
+    assert "".join(pieces) == body
+    assert len(pieces) == units
+    assert max(len(p) for p in pieces) <= 45_000
+
+
+# ── PR #257 review, finding 2: whitespace-only topics ───────────────────────
+
+
+def test_a_whitespace_only_topic_is_allocated_nothing():
+    plan = plan_segments(
+        topic_bodies=["  \n\n \t ", _prose(20_000)],
+        min_narration_minutes=45.0,
+        effective_wpm=PRODUCTION_WPM,
+        words_per_segment=900,
+        max_segments=24,
+    )
+    assert plan.per_topic_segments[0] == 0
+    assert plan.per_topic_segments[1] == plan.segment_count > 0
+
+
+@pytest.mark.asyncio
+async def test_a_whitespace_only_topic_never_becomes_a_blank_unit(monkeypatch):
+    import tests.unit.test_s5_5b_slice_size as this
+
+    real_prose = this._prose
+    monkeypatch.setattr(
+        this, "_prose", lambda n, para=420: " \n\n " * 10 if n == 40 else real_prose(n)
+    )
+    result, record, _ = await _run_node([40, 20_000], "T1", wpm=PRODUCTION_WPM)
+
+    assert all(u["body"].strip() for u in result["sections"])
+    assert {u["topic_index"] for u in result["sections"]} == {1}
+    assert record["per_topic_segments"][0] == 0
+    assert record["untaught_chars_per_topic"][0] == 0, "whitespace is not untaught text"
+    assert len(result["sections"]) == sum(record["per_topic_segments"])
+
+
+# ── PR #257 review, finding 4: coverage never snaps below the plan ──────────
+
+
+@pytest.mark.parametrize("para", [420, 4_000])
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+@pytest.mark.parametrize("wpm", [150.0, 127.5])
+@pytest.mark.asyncio
+async def test_a_large_topic_is_never_reported_content_limited_by_lesson_planner(
+    para, tier, wpm, monkeypatch
+):
+    """Snapping the covered prefix BACK to a paragraph break left T2 at 150 WPM
+    with 26,898 chars against a planned 27,000, and lesson_planner — which
+    measures capacity from the dispatched units — flagged a 200,000-char topic
+    content_limited at 29.89 min. The capacity maths below is
+    lesson_planner_node's own (graph.py, `total_source_chars`)."""
+    import tests.unit.test_s5_5b_slice_size as this
+    from app.modules.content.pipeline.graph import _narration_capacity_minutes
+    from app.schemas.lesson import narration_budget_minutes
+
+    real_prose = this._prose
+    monkeypatch.setattr(this, "_prose", lambda n, para_=420: real_prose(n, para=para))
+    result, record, _ = await _run_node([200_000], tier, wpm=wpm)
+
+    window = get_settings().section_body_max_chars
+    visible = sum(min(len(u["body"]), window) for u in result["sections"])
+    capacity = _narration_capacity_minutes(visible, wpm)
+    assert record["content_limited"] is False, "precondition: the chapter can fill the tier"
+    assert capacity >= narration_budget_minutes(tier), (
+        f"{tier} @ {wpm}: dispatched {visible} chars = {capacity:.2f} min, "
+        f"below the {narration_budget_minutes(tier)}-min minimum the plan met"
+    )
+    assert visible >= sum(record["per_topic_segments"]) * record["unit_slice_chars"]
+
+
+# ── PR #257 review, finding 5: withheld source reaches duration_report ──────
+
+
+@pytest.mark.parametrize(("untaught", "expected"), [([173_102], True), ([0, 0], False)])
+@pytest.mark.asyncio
+async def test_duration_report_says_when_segment_expansion_withheld_source(untaught, expected):
+    """A max_narration_segments clamp reads as content_limited, because
+    capacity_min is measured from the dispatched units. Without this flag the
+    admin sees a 'thin chapter' while the checkpoint records 173k untaught."""
+    from app.modules.content.pipeline.graph import package_builder_node
+    from tests.unit.test_package_builder_node import _base_state, _mock_supabase
+
+    sb, jobs_table, _ = _mock_supabase(
+        node_outputs={"segment_expansion": {"untaught_chars_per_topic": untaught}}
+    )
+    state = {**_base_state(), "section_truncations": []}
+    with patch("app.core.db.get_supabase", return_value=sb):
+        await package_builder_node(state)
+
+    report = jobs_table.update.call_args.args[0]["node_outputs"]["duration_report"]
+    assert report["source_was_truncated"] is expected
+
+
+# ── The hard invariants, swept ───────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("words_per_segment", [600, 900, 2_000])
+@pytest.mark.parametrize("para", [420, 4_000])
+@pytest.mark.parametrize("wpm", [150.0, 127.5])
+@pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
+@pytest.mark.parametrize("sizes", [[5_677, 28_870], [300, 40_000], [60_000, 90_000], [200_000]])
+@pytest.mark.asyncio
+async def test_expansion_invariants_hold_across_the_sweep(
+    sizes, tier, wpm, para, words_per_segment, monkeypatch
+):
+    """What the design guarantees. A unit may exceed `unit_slice_chars`, and so
+    may one topic's coverage: the diagnosed chapter teaches 28,870 chars in the
+    5 units planned for it, and AC3/AC8 require that. The window is the per-unit
+    ceiling, and the LESSON's coverage is what the plan counted on."""
+    import tests.unit.test_s5_5b_slice_size as this
+    from app.modules.content.pipeline.graph import _narration_capacity_minutes
+    from app.schemas.lesson import narration_budget_minutes
+
+    real_prose = this._prose
+    monkeypatch.setattr(this, "_prose", lambda n, para_=420: real_prose(n, para=para))
+    s = get_settings().model_copy(update={"narration_words_per_segment": words_per_segment})
+    result, record, bodies = await _run_node(sizes, tier, wpm=wpm, settings=s)
+
+    window = s.section_body_max_chars
+    unit_chars = record["unit_slice_chars"]
+    units = record["per_topic_segments"]
+    planned = min(sum(sizes), sum(units) * unit_chars)
+    taught_by_topic = [
+        sum(len(u["body"]) for u in result["sections"] if u["topic_index"] == i)
+        for i in range(len(sizes))
+    ]
+    coverage = coverage_per_topic(sizes, units, unit_chars=unit_chars, window_chars=window)
+
+    assert len(result["sections"]) == sum(units)
+    assert all(0 < len(u["body"]) <= window for u in result["sections"])
+    for i, taught in enumerate(taught_by_topic):
+        assert taught <= units[i] * window
+        # Forward snapping only ever ADDS, by at most one slack-fraction.
+        assert coverage[i] <= taught <= coverage[i] + max(1, int(coverage[i] * 0.25))
+    assert sum(taught_by_topic) >= planned, "coverage fell below what the plan counted on"
+    visible = sum(min(len(u["body"]), window) for u in result["sections"])
+    planner_capacity = _narration_capacity_minutes(visible, wpm)
+    if not record["content_limited"]:
+        assert planner_capacity >= narration_budget_minutes(tier)
+    else:
+        assert (
+            record["untaught_chars_per_topic"] == [0] * len(sizes)
+            or record["capped_by_max_segments"]
+        )
 
 
 # ── coverage_per_topic ───────────────────────────────────────────────────────

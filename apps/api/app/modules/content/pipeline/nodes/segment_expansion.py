@@ -191,21 +191,38 @@ def split_into(body: str, units: int, *, max_chars: int) -> list[str]:
         ideal = pos + math.ceil((n - pos) / remaining)
         # Leave at least one character for every slice still to cut.
         hi = min(pos + max(1, max_chars), n - (remaining - 1))
-        cut = _nearest_boundary(body, pos + 1, hi, ideal)
+        # And no more than the remaining slices can hold: a cut that snaps short
+        # otherwise pushes the shortfall onto the LAST slice, up to ~2x the window.
+        lo = max(pos + 1, n - (remaining - 1) * max(1, max_chars))
+        cut = _nearest_boundary(body, lo, hi, ideal)
         slices.append(body[pos:cut])
         pos = cut
     slices.append(body[pos:])
     return slices
 
 
-def boundary_at_or_before(body: str, limit: int) -> int:
-    """Where to end a covered prefix of at most *limit* chars, preferring a
-    paragraph break, then a space, within the last slack-fraction of it."""
-    if limit >= len(body):
-        return len(body)
+def boundary_at_or_after(body: str, limit: int, *, ceiling: int) -> int:
+    """Where to end a covered prefix of AT LEAST *limit* chars and at most
+    *ceiling*: the first paragraph break, else the first space, within one
+    slack-fraction after *limit*; else *limit* itself.
+
+    Never before *limit*: lesson_planner's `capacity_min` is measured from the
+    covered text, so a prefix that snapped short of the plan's coverage flipped
+    a lesson whose chapter had plenty left to `content_limited`.
+    """
+    n = len(body)
+    if limit >= n:
+        return n
     if limit <= 0:
         return 0
-    return _nearest_boundary(body, max(1, limit - int(limit * _BOUNDARY_SLACK)), limit, limit)
+    hi = min(n, ceiling, limit + max(1, int(limit * _BOUNDARY_SLACK)))
+    if hi <= limit:
+        return limit
+    for m in _PARAGRAPH_BREAK.finditer(body, max(0, limit - 3), hi):
+        if m.end() >= limit:
+            return m.end()
+    space = body.find(" ", limit - 1, hi)
+    return space + 1 if space != -1 else limit
 
 
 def split_body(body: str, *, target_chars: int, max_chars: int) -> list[str]:
@@ -304,8 +321,9 @@ def plan_segments(
     # out first, which shifted every later topic's entry and dropped the real
     # content's allocation to the caller's `else 1` fallback — the narration
     # minimum silently defeated, with no error and no log line (PR #255
-    # review, finding 1).
-    usable = [i for i, b in enumerate(topic_bodies) if b]
+    # review, finding 1). A whitespace-only body is empty too: allocating it a
+    # unit ships a blank segment to every Phase-1 node.
+    usable = [i for i, b in enumerate(topic_bodies) if b.strip()]
     if not usable or words_per_segment <= 0 or effective_wpm <= 0:
         return SegmentPlan(
             segment_count=0,

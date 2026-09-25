@@ -1580,7 +1580,7 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
     from app.config import get_settings
     from app.core.db import get_supabase
     from app.modules.content.pipeline.nodes.segment_expansion import (
-        boundary_at_or_before,
+        boundary_at_or_after,
         coverage_per_topic,
         plan_segments,
         split_into,
@@ -1656,12 +1656,15 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
     for topic_index, section in enumerate(sections):
         body = bodies[topic_index]
         want = wants[topic_index]
-        # An empty topic, or one the plan allocated nothing to, is skipped and
-        # never forced into a blank unit (PR #255 review, finding 3).
-        if want <= 0 or not body:
-            untaught_chars_per_topic[topic_index] = len(body)
+        # An empty or whitespace-only topic, or one the plan allocated nothing
+        # to, is skipped and never forced into a blank unit (PR #255 review,
+        # finding 3). Whitespace is not untaught text.
+        if want <= 0 or not body.strip():
+            untaught_chars_per_topic[topic_index] = len(body) if body.strip() else 0
             continue
-        covered = body[: boundary_at_or_before(body, coverage[topic_index])]
+        covered = body[
+            : boundary_at_or_after(body, coverage[topic_index], ceiling=want * window_chars)
+        ]
         # D194: a topic larger than the duration needs is taught from its
         # PREFIX. Now recorded per lesson rather than implied.
         untaught_chars_per_topic[topic_index] = len(body) - len(covered)
@@ -1687,7 +1690,7 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
             lesson_id,
             plan.max_segments_configured,
             plan.cap_overrun,
-            sum(1 for sec in sections if (sec.get("body") or "")),
+            sum(1 for sec in sections if (sec.get("body") or "").strip()),
             plan.cap_overrun,
         )
 
@@ -7458,7 +7461,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # Without it, "thin chapter" and "we truncated the chapter" are the
         # same signal, and the admin cannot tell a real short chapter from a
         # structure-detection failure on a 1,151-page book.
-        "source_was_truncated": bool(state.get("section_truncations")),
+        # D194/D195: segment_expansion withholding a topic's tail is the same
+        # signal from a different mechanism — capacity_min is measured from the
+        # units it dispatched, so e.g. a max_narration_segments clamp reads as
+        # content_limited unless this says the source was not all shown.
+        "source_was_truncated": bool(state.get("section_truncations"))
+        or any((node_outputs.get("segment_expansion") or {}).get("untaught_chars_per_topic") or []),
         "planner_sum_before_rescale": round(
             float(_budget.get("planner_sum_before_rescale") or 0.0), 2
         ),
@@ -7632,8 +7640,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # surface, no migration. Always written. `outcome` separates a
                 # thin chapter that honestly ran short (`content_limited`) from
                 # a generator that missed on adequate material
-                # (`target_missed`); read it alongside `section_truncations`,
-                # since a chapter capped at section_body_max_chars can present
+                # (`target_missed`); read it alongside `section_truncations`
+                # and `segment_expansion.untaught_chars_per_topic` (both fold
+                # into `duration_report.source_was_truncated`), since a chapter
+                # capped at section_body_max_chars, or cut short by
+                # segment_expansion, can present
                 # as content-limited when the cap, not the chapter, was the
                 # real limit.
                 "duration_report": duration_report,

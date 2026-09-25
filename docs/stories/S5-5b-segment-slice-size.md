@@ -151,6 +151,28 @@ chapter. Topic 0 → 2 × ~2,839; topic 1 → 5 × ~5,774. **7 units, 0 untaught
 45,000 chars, which is nearly all of them. After it, a unit-count mismatch
 fails AC4's test, and untaught text shows up in the checkpoint.
 
+## Review round (PR #257)
+
+Six findings confirmed and fixed. One was registered as D196, and one was a false positive (a low
+word target makes `max_narration_segments` bind, not the window).
+
+- **Hard invariants, as built.** Every unit is at most the Phase-1 window, and each topic's
+  coverage is at most `units_i × window`. The lesson's coverage is at least
+  `min(total, sum(units) × unit_slice_chars)`, which is what the plan counted on. A unit **may**
+  exceed `unit_slice_chars`, and so may one topic's coverage: the diagnosed chapter teaches 28,870
+  chars in its 5 planned units, and AC3/AC8 require exactly that. `split_into` now bounds each
+  cut from below so a short snap can no longer overflow the last slice.
+- **Coverage snaps forward, never back.** `lesson_planner_node` measures `capacity_min` from the
+  dispatched units, so a backward snap flipped T2 at 150 WPM to `content_limited` (29.89 of 30
+  min) with 173k chars untaught. A forward snap overshoots by at most a quarter of the coverage.
+  The worst case measured is +6,222 chars over a 37,800 plan, with 4,000-char paragraphs.
+- **Whitespace-only topics** are treated as empty by both the planner and the node.
+- **`duration_report.source_was_truncated`** now also covers `segment_expansion` leaving source
+  untaught, not only Phase-1 truncation. This is deliberate and recorded on D185. A lesson that
+  is on target but taught from part of a large topic reports True.
+- **D196:** a pre-D195 expansion checkpoint survives a deploy-time retry. See the register for
+  reachability and remediation.
+
 ## Out of scope
 
 Issue #256 (quiz allocator basis), D193 (cost ceiling), playback, and the
