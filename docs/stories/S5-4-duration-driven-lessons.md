@@ -64,13 +64,28 @@ form, a migration, or a `packages/shared` contract change.
 
 | # | Decision | Rationale |
 |---|---|---|
-| D-A | 15/30/45 = **total seat time**, not narration time | What a student means by "45 minutes". Forces Q&A to be subtracted, not added. |
-| D-B | Seat-time split **65% narration / 15% quiz / 10% teach-back allowance / 10% tutor Q&A** | Teach-back is student-triggered and cannot be bounded at generation time — it is an **allowance**, not a budget. The seat-time contract is therefore *nominal path* (see Scale & Load Q1). |
+| D-A | ~~15/30/45 = total seat time~~ **SUPERSEDED 2026-09-25 by D-A2** | See below. |
+| **D-A2** | 15/30/45 = **MINIMUM minutes of spoken narration** (T1 ≥ 45, T2 ≥ 30, T3 ≥ 15) | Product/CEO decision, 2026-09-25. A floor, not a target and not a ceiling. Quiz and Q&A time is **additive** to it, not carved out of it. |
+| D-B | ~~Seat-time split 65/15/10/10~~ **SUPERSEDED by D-A2.** Narration is the whole tier figure; `TIER_QUIZ_SECONDS` (405/270/135) and `TIER_QA_SECONDS` (270/180/90) are stated directly and sit on top. | The share table made the headline number differ from the enforced number: a lesson sold as 45 minutes targeted 29.25. Amended **before merge**, so the codebase never carried both readings. |
 | D-C | Keep the `T1`/`T2`/`T3` enum and DB column; reinterpret its meaning | No migration, no frozen-contract PR. Per #230 and the scope doc's recommendation. |
 | D-D | Acceptable variance **+/-15%**, flagged — never silently truncated | #230. Binding CLAUDE.md rule on silent truncation. |
 | D-E | Short chapters **run shorter** rather than being padded or hidden | #230. Padding conflicts with the pipeline's anti-fabrication guardrails. |
 | D-F | Quiz count and `qa_phase_seconds` recalibrated **in this story**, not deferred | #230. Under D-A they are load-bearing, not cosmetic. |
 | D-G | Drop the "FULL-DEPTH" / "CRITICAL-TOPICS-ONLY" depth wording | #230. Duration/word budget is the only instruction going forward. |
+
+### Amendment, 2026-09-25 — minimum narration, not seat time
+
+The first draft of this story read 15/30/45 as total seat time and gave
+narration a 65% share, so a T1 lesson advertised as 45 minutes was generated
+against a 29.25-minute target. Product confirmed the intent is the opposite:
+**the number a student selects is the minimum narration they should receive.**
+Amended here rather than merged-then-reversed, because this story had not yet
+landed — see **D184**, which records the same reasoning against D78.
+
+Every number below is restated on the new basis. The quiz and Q&A values are
+unchanged in absolute terms: the recalibration they came from fixed a real
+defect (a per-segment quiz count that multiplied by segment count) that is
+independent of this semantics change.
 
 ### Derived budget table (the numbers every AC below keys off)
 

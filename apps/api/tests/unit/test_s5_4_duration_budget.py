@@ -20,7 +20,9 @@ import math
 import pytest
 
 from app.schemas.lesson import (
-    SEAT_TIME_SHARES,
+    TIER_MIN_NARRATION_MINUTES,
+    TIER_QA_SECONDS,
+    TIER_QUIZ_SECONDS,
     TIER_SEAT_MINUTES,
     narration_budget_minutes,
     qa_budget_seconds,
@@ -39,30 +41,39 @@ class TestSeatTimeConstants:
         # which is now an alias of this map (AC3).
         assert all(isinstance(v, int) for v in TIER_SEAT_MINUTES.values())
 
-    def test_shares_sum_to_exactly_one(self):
-        # AC2: a share table that does not sum to 1 silently under- or
-        # over-books the session — the whole seat-time contract rests on this.
-        assert math.isclose(sum(SEAT_TIME_SHARES.values()), 1.0, rel_tol=0, abs_tol=1e-9)
+    def test_tier_minutes_are_the_narration_minimum(self):
+        # Product decision 2026-09-25: 15/30/45 are the minimum minutes of
+        # spoken NARRATION, not total seat time and not a 65% share of it.
+        # The first draft of this story read them as seat time and targeted
+        # 29.25 min for a lesson sold as 45 — the headline number was never
+        # the number being enforced.
+        assert TIER_MIN_NARRATION_MINUTES == {"T1": 45, "T2": 30, "T3": 15}
+        assert TIER_SEAT_MINUTES is TIER_MIN_NARRATION_MINUTES
 
-    def test_shares_cover_every_seat_time_component(self):
-        assert set(SEAT_TIME_SHARES) == {"narration", "quiz", "teachback", "qa"}
+    def test_quiz_and_qa_are_additive_not_carved_out(self):
+        # Under the old share table these were fractions of the tier minutes.
+        # They are now stated directly and sit ON TOP of the narration
+        # minimum, so a T1 session is ~45 min narration + ~7 min quiz + 4.5
+        # min Q&A. Values deliberately unchanged from the seat-time draft:
+        # the quiz recalibration they came from fixed a real defect and is
+        # independent of this semantics change.
+        assert TIER_QUIZ_SECONDS == {"T1": 405, "T2": 270, "T3": 135}
+        assert TIER_QA_SECONDS == {"T1": 270, "T2": 180, "T3": 90}
 
-    def test_shares_are_the_locked_split(self):
-        # D-B: 65 / 15 / 10 / 10.
-        assert SEAT_TIME_SHARES == {
-            "narration": 0.65,
-            "quiz": 0.15,
-            "teachback": 0.10,
-            "qa": 0.10,
-        }
+    def test_no_share_table_survives(self):
+        # A leftover SEAT_TIME_SHARES would mean two live readings of the same
+        # enum — exactly the drift this story exists to remove.
+        import app.schemas.lesson as lesson_mod
+
+        assert not hasattr(lesson_mod, "SEAT_TIME_SHARES")
 
 
 class TestDerivedBudgets:
     @pytest.mark.parametrize(
         ("tier", "expected"),
-        [("T1", 29.25), ("T2", 19.5), ("T3", 9.75)],
+        [("T1", 45.0), ("T2", 30.0), ("T3", 15.0)],
     )
-    def test_narration_budget_minutes(self, tier, expected):
+    def test_narration_budget_minutes_is_the_tier_minimum(self, tier, expected):
         assert math.isclose(narration_budget_minutes(tier), expected, abs_tol=1e-9)
 
     @pytest.mark.parametrize(
@@ -91,17 +102,12 @@ class TestDerivedBudgets:
         assert quiz_budget_seconds(None) == quiz_budget_seconds("T2")
         assert qa_budget_seconds("") == qa_budget_seconds("T2")
 
-    def test_every_component_budget_sums_back_to_seat_time(self):
-        # The arithmetic is only honest if it closes: narration + quiz +
-        # teachback + qa == the advertised seat time, per tier.
-        for tier, seat in TIER_SEAT_MINUTES.items():
-            total = (
-                narration_budget_minutes(tier)
-                + quiz_budget_seconds(tier) / 60.0
-                + qa_budget_seconds(tier) / 60.0
-                + seat * SEAT_TIME_SHARES["teachback"]
-            )
-            assert math.isclose(total, seat, abs_tol=1e-6), tier
+    def test_narration_minimum_is_the_whole_tier_figure(self):
+        # The arithmetic is only honest if the number a student is shown IS the
+        # number the pipeline enforces. Under the old share table a "45 minute"
+        # lesson targeted 29.25; now it targets 45.
+        for tier, minutes in TIER_MIN_NARRATION_MINUTES.items():
+            assert narration_budget_minutes(tier) == float(minutes), tier
 
 
 # ── AC3 / AC4 / AC5 — consumers point at the shared map ──────────────────────

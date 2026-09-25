@@ -609,10 +609,10 @@ class Settings(BaseSettings):
 
     # ── Learner Mode — Q&A phase lengths per tier ─────────────────────────────
     # Story S5-4: derived from qa_budget_seconds(tier) — the tier's seat time
-    # x SEAT_TIME_SHARES["qa"] (10%). Under S5-4 the Q&A window is SUBTRACTED
-    # from the advertised duration; the pre-S5-4 values (600/300/150) were
-    # additive, so a "45-minute" T1 lesson really ran 55 minutes. Still fully
-    # env-tunable — only the defaults moved.
+    # (TIER_QA_SECONDS). The tier's minutes are the MINIMUM NARRATION time,
+    # so this Q&A window sits ON TOP of it rather than being carved out.
+    # Lowered from the pre-S5-4 600/300/150 because those were sized with no
+    # relationship to the lesson's length at all. Still fully env-tunable.
     learner_tier_t1_qa_seconds: int = Field(
         default=qa_budget_seconds("T1"),
         description="Q&A phase duration in seconds for T1 (Full-Depth, 45-min) tier",

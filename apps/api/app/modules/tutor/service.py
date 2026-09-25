@@ -147,9 +147,8 @@ def qa_phase_seconds(tier: str | None) -> int:
     """Map a learner tier string to Q&A phase duration in seconds.
 
     The tier enum means DURATION and nothing else (Story S5-4): T1/T2/T3 are
-    45/30/15 minutes of total seat time, and the Q&A phase is the 10% share of
-    that budget (``SEAT_TIME_SHARES["qa"]``), not an extra window bolted on
-    after the lesson ends.
+    the MINIMUM minutes of spoken narration (45/30/15), and this Q&A phase is
+    an additional window on top of that, sized per tier in ``TIER_QA_SECONDS``.
 
     T1 (45-min lesson) → longest Q&A window (default 270 s / 4.5 min)
     T2 (30-min lesson) → standard window (default 180 s / 3 min)

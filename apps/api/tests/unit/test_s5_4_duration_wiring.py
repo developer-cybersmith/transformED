@@ -69,11 +69,11 @@ def _plan_llm(graph: Any, n: int, duration_min: float) -> Any:  # noqa: ANN401
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_thin_chapter_plans_to_its_capacity_not_the_tier_budget() -> None:
-    """AC8/AC18: a chapter that cannot fill T1's 29.25 min must be planned at
+    """AC8/AC18: a chapter that cannot fill T1's 45-min narration MINIMUM must be planned at
     the capacity its own text supports — D-E says run short, never pad.
 
     Deleting the `narration_budget_min = capacity_min` line makes this fail:
-    the prompt would demand 29.25 minutes of a chapter holding ~1,200 chars.
+    the prompt would demand 45 minutes of a chapter holding ~1,200 chars.
     """
     from app.modules.content.pipeline import graph as g
 
@@ -90,12 +90,12 @@ async def test_thin_chapter_plans_to_its_capacity_not_the_tier_budget() -> None:
 
     budget = result["lesson_plan"]["duration_budget"]
     assert budget["content_limited"] is True
-    assert budget["tier_budget_min"] == pytest.approx(29.25)
-    assert budget["narration_target_min"] < 29.25, (
+    assert budget["tier_budget_min"] == pytest.approx(45.0)
+    assert budget["narration_target_min"] < 45.0, (
         "a capacity-limited chapter must not be planned against the full tier budget"
     )
     prompt = provider.complete_structured.call_args.args[0][0]["content"]
-    assert "29.25 minutes" not in prompt
+    assert "45 minutes" not in prompt
 
 
 @pytest.mark.unit
@@ -104,9 +104,14 @@ async def test_rich_chapter_keeps_the_full_tier_budget() -> None:
     """The other side of AC8 — capacity must not quietly shrink a real chapter."""
     from app.modules.content.pipeline import graph as g
 
-    sections = [{"title": f"S{i}", "body": "word " * 6000} for i in range(3)]
+    # 30 min at 150 wpm needs ~27,000 source chars. Capacity is still bounded
+    # by the per-section window ON THIS BRANCH (min(body, 6,000) per section),
+    # so "rich" means enough SECTIONS, not just enough text: 5 x 6,000 visible
+    # = 30,000 chars = 33 min. Story S5-5's segment expansion removes that
+    # per-section ceiling, at which point this fixture can shrink again.
+    sections = [{"title": f"S{i}", "body": "word " * 2000} for i in range(5)]
     provider = AsyncMock()
-    provider.complete_structured.return_value = _plan_llm(g, 3, 8.0)
+    provider.complete_structured.return_value = _plan_llm(g, 5, 8.0)
 
     with (
         patch("app.core.db.get_supabase", return_value=_mock_supabase()),
@@ -116,7 +121,7 @@ async def test_rich_chapter_keeps_the_full_tier_budget() -> None:
 
     budget = result["lesson_plan"]["duration_budget"]
     assert budget["content_limited"] is False
-    assert budget["narration_target_min"] == pytest.approx(19.5)
+    assert budget["narration_target_min"] == pytest.approx(30.0)
 
 
 @pytest.mark.unit
@@ -145,7 +150,7 @@ async def test_a_chapter_with_no_extractable_text_is_content_limited_not_full_bu
     assert budget["content_limited"] is True
     assert budget["capacity_min"] == 0.0
     # Floored for the prompt's sake, never inflated to the tier budget.
-    assert 0 < budget["narration_target_min"] < 19.5
+    assert 0 < budget["narration_target_min"] < 30.0
 
 
 @pytest.mark.unit
@@ -195,7 +200,7 @@ async def test_each_planner_batch_is_given_its_own_share_of_the_budget() -> None
     assert len(prompts) >= 2, "test is vacuous unless the batched path engaged"
     # T2's 19.5 min split across batches — no single batch may be told the
     # whole-lesson figure, and the shares must add up to it.
-    assert not any("19.5 minutes" in p for p in prompts), (
+    assert not any("30 minutes" in p for p in prompts), (
         "a batch was given the whole-lesson budget; the reassembled plan would "
         "sum to budget x batch_count"
     )
@@ -205,7 +210,7 @@ async def test_each_planner_batch_is_given_its_own_share_of_the_budget() -> None
         if "budget of about " in p
     ]
     assert len(shares) == len(prompts)
-    assert sum(shares) == pytest.approx(19.5, abs=0.01)
+    assert sum(shares) == pytest.approx(30.0, abs=0.01)
 
 
 # ── AC10 / AC11 — the word budget reaches narration, variance is flagged ─────
