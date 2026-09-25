@@ -1,41 +1,49 @@
 """
 Content pipeline LangGraph graph.
 
-Node order (16 nodes) — corrected 2026-09-21, issue #236 (Round 2 review
-finding: this diagram still described the pre-#236 15-node/6-economy-node
-shape after _build_pipeline_graph had already moved to 16 nodes)
+Node order (17 nodes) — corrected 2026-09-25, Story 233 piece 1 (issue #233):
+this diagram still described the pre-233 16-node shape after
+_build_pipeline_graph had already gained topic_selection (see the module
+docstring's own history at issue #236 for why this comment is kept accurate
+rather than left to rot).
 --------------------------------------------------------------
  1. extract               PDF → raw text + images
  2. structure             Raw text → sections/chapters
  3. chunk                 Sections → token-sized chunks
  4. embed                 Chunks → vector embeddings (stored in Supabase pgvector)
 
- Phase 1 (economy, `settings.llm_mini`) — Send()-dispatched once per section,
- ALL must complete before Phase 2 starts (violating this silently 5xs cost):
- 5. summarise_segment     Each section → short summary — consumed by lesson_planner
+ Phase B start (Story 233, piece 1 of 4) — sequential, tier-aware, runs AFTER
+ chunk/embed so chunk_node's chapter-scoped, tier-agnostic cache is never
+ corrupted by a tier-driven change to `sections`:
+ 5. topic_selection       Sections → exactly 1 topic (T3) or 2 topics (T1/T2)
+
+ Phase 1 (economy, `settings.llm_mini`) — Send()-dispatched once per topic
+ (post-collapse), ALL must complete before Phase 2 starts (violating this
+ silently 5xs cost):
+ 6. summarise_segment     Each topic → short summary — consumed by lesson_planner
                           INSTEAD of raw chapter text
- 6. quiz_generator        Each section → multiple-choice questions
- 7. segment_complexity    Each section → complexity / readability score
- 8. jargon_extractor      Each section → glossary of technical terms
- 9. intervention_messages Complexity + jargon → proactive intervention prompts
+ 7. quiz_generator        Each topic → multiple-choice questions
+ 8. segment_complexity    Each topic → complexity / readability score
+ 9. jargon_extractor      Each topic → glossary of technical terms
+10. intervention_messages Complexity + jargon → proactive intervention prompts
 
  Phase 2 (premium, sequential — starts only after ALL Phase 1 completes):
-10. lesson_planner        Segment summaries (NOT raw text) → lesson plan
-11. slide_generator       Lesson plan → slide deck JSON
+11. lesson_planner        Segment summaries (NOT raw text) → lesson plan
+12. slide_generator       Lesson plan → slide deck JSON
 
  Phase 2b (issue #236) — narration moved OUT of Phase 1: Send()-dispatched
  once per lesson_plan segment, from an edge AFTER slide_generator (not
  embed), so it can see the finished outline — architecturally impossible
  during Phase 1, when no outline exists yet:
-12. narration_generator   One lesson_plan segment → narration script
-13. narration_stitch      ALL sections' scripts, joined → cross-section
+13. narration_generator   One lesson_plan segment → narration script
+14. narration_stitch      ALL sections' scripts, joined → cross-section
                           transition/dedup polish + the lesson-wide char cap
                           (moved here from tts_node, issue #236)
 
  Phase 3 (media, sequential):
-14. tts_node              Narration scripts → audio + word timestamps
-15. image_generator       Slide content → AI-generated illustration URLs
-16. package_builder       All outputs → final lesson JSON package
+15. tts_node              Narration scripts → audio + word timestamps
+16. image_generator       Slide content → AI-generated illustration URLs
+17. package_builder       All outputs → final lesson JSON package
 
 Architecture constraints
 ------------------------
@@ -1243,6 +1251,281 @@ async def embed_node(state: PipelineState) -> PipelineState:
 
     await _update_job_progress(lesson_id, 28.0, "embed")
     return {"embeddings_stored": True}
+
+
+class _StructureTopicSplitLLM(BaseModel):
+    """topic_selection_node's 2-topic-case LLM call output — deliberately the
+    smallest possible shape: a single index marking where Topic II begins.
+    Sections are linear/sequential in a book, so a single split point is the
+    only pedagogically sound shape, never a free-form partition."""
+
+    split_index: int
+
+
+def _topic_selection_midpoint_split(sections: list[dict[str, Any]]) -> int:
+    """Deterministic fallback split index for topic_selection_node's 2-topic
+    case: the earliest index whose cumulative body length reaches half the
+    chapter's total body length, clamped to a valid [1, len(sections)-1]
+    range. Degrade-not-fabricate guard — used whenever the LLM's split_index
+    is missing, out of range, or the call itself raises. Never raises."""
+    n = len(sections)
+    body_lens = [len(s.get("body") or "") for s in sections]
+    total = sum(body_lens)
+    if total <= 0:
+        return max(1, min(n - 1, n // 2))
+    half = total / 2
+    running = 0
+    for i, length in enumerate(body_lens):
+        running += length
+        if running >= half:
+            return max(1, min(i + 1, n - 1))
+    return max(1, min(n - 1, n // 2))
+
+
+async def _topic_selection_llm_split(
+    sections: list[dict[str, Any]],
+    settings: Any,  # noqa: ANN401 — Settings type imported locally elsewhere in this file
+    lesson_id: str,
+) -> int:
+    """AC 6: ask `settings.llm_mini` for a single split index marking where
+    Topic II begins. Input is index + title + a short body preview only —
+    never full section bodies, never the whole chapter. Degrade-not-fabricate:
+    any invalid/missing response or exception falls back to a deterministic
+    midpoint-by-cumulative-body-length split — never raises.
+
+    Review finding (Story 233 round, Blind Hunter): every other paid call site
+    in this file (`lesson_planner_node`, `slide_generator_node`,
+    `narration_generator_node`, etc.) gates its spend on `check_ceiling()`
+    first — this one didn't. A lesson already over budget now falls straight
+    to the free deterministic split instead of paying for a call whose result
+    would be discarded on the next node's own ceiling check anyway.
+    """
+    from app.core.cost_tracker import check_ceiling
+    from app.providers.llm.factory import get_llm_provider
+
+    try:
+        over_ceiling = await check_ceiling(lesson_id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] topic_selection_node: check_ceiling() failed — failing open "
+            "(assuming not over ceiling)",
+            lesson_id,
+            exc_info=True,
+        )
+        over_ceiling = False
+
+    if over_ceiling:
+        logger.warning(
+            "[%s] topic_selection_node: cost ceiling reached — skipping the "
+            "split LLM call, falling back to deterministic midpoint split",
+            lesson_id,
+        )
+        return _topic_selection_midpoint_split(sections)
+
+    preview_lines = "\n".join(
+        f"{i}: {_single_line(s.get('title') or '')} — {_single_line((s.get('body') or '')[:200])}"
+        for i, s in enumerate(sections)
+    )
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "This chapter has been split into two topics for a lesson. "
+                "Given the numbered sections below (index, title, short "
+                "preview), return split_index: the index of the first "
+                "section that belongs to Topic II. Sections before "
+                "split_index form Topic I; sections from split_index onward "
+                "form Topic II. split_index must be a single integer greater "
+                "than 0 and less than or equal to the last index (so Topic I "
+                "is never empty), chosen so the two groups are contiguous, "
+                "roughly balanced, and pedagogically coherent — sections are "
+                "already in their original book order and must stay in that "
+                "order." + _UNTRUSTED_CONTENT_GUARD
+            ),
+        },
+        {"role": "user", "content": preview_lines},
+    ]
+    try:
+        provider = get_llm_provider(settings.llm_mini, lesson_id)
+        response = await provider.complete_structured(
+            messages, settings.llm_mini, _StructureTopicSplitLLM
+        )
+        split_index = response.split_index
+        if isinstance(split_index, int) and not isinstance(split_index, bool):
+            if 1 <= split_index <= len(sections) - 1:
+                return split_index
+        logger.warning(
+            "[%s] topic_selection_node: LLM split_index=%r out of range for %d "
+            "sections — falling back to deterministic midpoint split",
+            lesson_id,
+            split_index,
+            len(sections),
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "[%s] topic_selection_node: split LLM call failed — falling back to "
+            "deterministic midpoint split",
+            lesson_id,
+            exc_info=True,
+        )
+    return _topic_selection_midpoint_split(sections)
+
+
+def _purge_stale_phase1_checkpoints(
+    node_outputs: dict[str, Any], new_sections: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Review finding (Developer-2-max, PR #252, verified): a merged topic's
+    derived section_id can collide with a PRE-EXISTING Phase-1/narration
+    checkpoint written under the OLD (pre-topic_selection) per-original-
+    section keying — guaranteed for the first merged topic, since
+    `merge_section_range` keeps `sections[0]`'s title verbatim and
+    `_derive_section_id`'s uniqueness comes from index+title-slug only. An
+    in-flight job retried across this feature's deploy would otherwise
+    silently serve a stale, narrow (pre-collapse) checkpoint as if it were
+    the summary/quiz/complexity/jargon/interventions/narration for the new,
+    much larger merged topic — with no error, no log a human would notice.
+
+    Purges any checkpoint (and its `section_truncation:` sibling) keyed to
+    an id the new merged topics are about to reuse, so Phase 1 regenerates
+    fresh output for them instead of cache-hitting on stale, pre-collapse
+    data. Only called when topic_selection actually collapses sections
+    (never the AC-4 no-op path, where ids are unchanged and nothing stale
+    could be mismatched)."""
+    checkpoint_prefixes = (*_ECONOMY_NODES, *_POST_PLANNER_FAN_OUT_NODES)
+    purged = dict(node_outputs)
+    for i, sec in enumerate(new_sections):
+        stale_id = _derive_section_id(sec, i)
+        for prefix in checkpoint_prefixes:
+            purged.pop(f"{prefix}:{stale_id}", None)
+            purged.pop(f"section_truncation:{prefix}:{stale_id}", None)
+    return purged
+
+
+async def topic_selection_node(state: PipelineState) -> PipelineState:
+    """Inserted `embed -> topic_selection -> <Phase 1 fan-out>` (Story 233,
+    piece 1 of 4 — issue #233): collapse `state["sections"]` down to exactly
+    1 topic (15-min lessons, tier T3) or 2 topics (30/45-min lessons, tiers
+    T1/T2) — never however many sections the chapter happened to produce.
+    Overwrites `state["sections"]` under the same key, so every downstream
+    node (Phase 1 fan-out, `_derive_section_id`, `lesson_planner_node`,
+    narration) needs zero changes — they just see a shorter list.
+
+    Runs strictly AFTER `chunk`/`embed` (Phase A, chapter-scoped, tier-
+    agnostic), not before: `chunk_node`'s chunk/embedding output is cached
+    per `chapter_id` and reused verbatim across different lessons/tiers of
+    the same chapter (CLAUDE.md rule — "Process once, reuse everywhere"). If
+    this node ran before chunk/embed and changed `sections` based on tier, a
+    lesson requested later at a DIFFERENT tier would find chunks already
+    exist (built for a different tier's topic boundaries) and silently reuse
+    them — a real correctness bug, not a style choice. This node is
+    therefore the first Phase B (lesson-level, tier-aware) step, not a
+    Phase A one.
+
+    Phase-A-style plain idempotency checkpoint (matches structure_node/
+    chunk_node's own pattern) — single sequential node, not Send()-fanned-
+    out, so no atomic RPC is needed.
+    """
+    from app.config import get_settings
+    from app.core.db import get_supabase
+    from app.modules.content.pipeline.nodes.structure_detection import merge_section_range
+    from app.schemas.lesson import DEFAULT_TIER, TIER_TOPIC_COUNT
+
+    lesson_id: str = state["lesson_id"]
+    sections: list[dict[str, Any]] = state.get("sections", [])
+    tier = state.get("tier") or DEFAULT_TIER
+    target_topic_count = TIER_TOPIC_COUNT.get(tier, TIER_TOPIC_COUNT[DEFAULT_TIER])
+    logger.info(
+        "[%s] topic_selection_node: %d sections, tier=%s, target=%d topic(s)",
+        lesson_id,
+        len(sections),
+        tier,
+        target_topic_count,
+    )
+
+    supabase = get_supabase()
+
+    # ── Idempotency: return cached output if this node already ran ────────────
+    jobs_resp = (
+        supabase.table("lesson_jobs")
+        .select("node_outputs")
+        .eq("lesson_id", lesson_id)
+        .single()
+        .execute()
+    )
+    jobs_row = single_row(jobs_resp)
+    node_outputs: dict[str, Any] = (jobs_row or {}).get("node_outputs") or {}
+
+    if "topic_selection" in node_outputs:
+        cached = node_outputs["topic_selection"]
+        logger.info("[%s] topic_selection_node: cache hit", lesson_id)
+        return {"sections": cached["sections"], "progress_pct": 32.0}
+
+    def _write_checkpoint(checkpoint: dict[str, Any]) -> None:
+        try:
+            supabase.table("lesson_jobs").update(
+                {
+                    "last_node": "topic_selection",
+                    "node_outputs": {**node_outputs, "topic_selection": checkpoint},
+                }
+            ).eq("lesson_id", lesson_id).execute()
+        except Exception:  # noqa: BLE001
+            logger.warning("[%s] topic_selection_node: failed to write checkpoint", lesson_id)
+
+    # ── AC 4: no-op when the chapter already has too few sections to collapse ──
+    # Can't fabricate a 2nd topic from a 1-section chapter — degrade, never invent.
+    if len(sections) <= target_topic_count:
+        _write_checkpoint(
+            {
+                "sections": sections,
+                "collapsed": False,
+                "original_section_count": len(sections),
+                "target_topic_count": target_topic_count,
+                "topics": [],
+            }
+        )
+        await _update_job_progress(lesson_id, 32.0, "topic_selection")
+        return {"sections": sections, "progress_pct": 32.0}
+
+    if target_topic_count <= 1:
+        # ── AC 5: 1-topic case — merge everything, zero LLM calls ─────────────
+        topic = merge_section_range(sections)
+        topic["id"] = "s0"
+        new_sections = [topic]
+        topics_record = [{"title": topic["title"], "folded_indices": list(range(len(sections)))}]
+    else:
+        # ── AC 6: 2-topic case — one cheap LLM call for a single split index ──
+        settings = get_settings()
+        split_index = await _topic_selection_llm_split(sections, settings, lesson_id)
+        topic_i = merge_section_range(sections[:split_index])
+        topic_ii = merge_section_range(sections[split_index:])
+        topic_i["id"] = "s0"
+        topic_ii["id"] = "s1"
+        new_sections = [topic_i, topic_ii]
+        topics_record = [
+            {"title": topic_i["title"], "folded_indices": list(range(split_index))},
+            {
+                "title": topic_ii["title"],
+                "folded_indices": list(range(split_index, len(sections))),
+            },
+        ]
+
+    # Review finding (Developer-2-max, PR #252): purge any Phase-1/narration
+    # checkpoint an in-flight, pre-deploy retry left behind under an id the
+    # new merged topics are about to reuse — see
+    # _purge_stale_phase1_checkpoints' own docstring for the exact scenario.
+    node_outputs = _purge_stale_phase1_checkpoints(node_outputs, new_sections)
+
+    _write_checkpoint(
+        {
+            "sections": new_sections,
+            "collapsed": True,
+            "original_section_count": len(sections),
+            "target_topic_count": target_topic_count,
+            "topics": topics_record,
+        }
+    )
+    await _update_job_progress(lesson_id, 32.0, "topic_selection")
+    return {"sections": new_sections, "progress_pct": 32.0}
 
 
 class _LessonPlanSegmentLLM(BaseModel):
@@ -6913,9 +7196,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # A fixed budget (16/10/5) meeting a variable segment count means some
         # segments legitimately get zero questions — but "legitimate" is not the
         # same as "invisible". CLAUDE.md requires a surfaced, PERSISTED
-        # degradation, not a logger.info nobody reads: at T3 over 15 segments
-        # this is 10 of 15 segments with no assessment at all, which an admin
-        # must be able to see without reconstructing the allocation by hand.
+        # degradation, not a logger.info nobody reads: e.g. a T2 lesson whose
+        # quiz weight concentrates on one of its (now at most 2, post-Story-233
+        # topic_selection_node) topics can leave the other with no assessment
+        # at all, which an admin must be able to see without reconstructing the
+        # allocation by hand. (Pre-233 this could be up to 10 of 15 sections —
+        # unreachable via the real pipeline now that topic_selection_node
+        # collapses sections to 1-2 topics before this dispatch ever runs.)
         "segments_without_quiz": sum(1 for s in segments_out if not (s.get("quiz") or [])),
         "quiz_budget_questions": int(
             quiz_budget_seconds(state.get("tier")) // max(1, settings.quiz_seconds_per_question)
@@ -7383,11 +7670,13 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
 
     graph: StateGraph[Any] = StateGraph(PipelineState)
 
-    # Register all 15 nodes (issue #236 adds narration_stitch)
+    # Register all 17 nodes (issue #236 adds narration_stitch; Story 233
+    # piece 1 adds topic_selection)
     graph.add_node("extract", extract_node)
     graph.add_node("structure", structure_node)
     graph.add_node("chunk", chunk_node)
     graph.add_node("embed", embed_node)
+    graph.add_node("topic_selection", topic_selection_node)
     graph.add_node("lesson_planner", lesson_planner_node)
     graph.add_node("slide_generator", slide_generator_node)
     graph.add_node("summarise_segment", summarise_segment_node)
@@ -7407,19 +7696,27 @@ def _build_pipeline_graph() -> Any:  # noqa: ANN401
     graph.add_edge("structure", "chunk")
     graph.add_edge("chunk", "embed")
 
-    # Story 2-1 AC-0: embed fans out to the 5 Phase 1 economy nodes, once per
-    # section, via Send() — replacing the old direct embed -> lesson_planner
-    # edge that let lesson_planner run with zero segment summaries available
-    # (the exact 5x-cost-overrun bug this AC fixes). narration_generator used
-    # to be the 6th member of this fan-out; issue #236 moved it to a separate
-    # post-planner fan-out below, since a Phase-1 dispatch has no lesson
-    # outline to give it.
+    # Story 233 (piece 1 of 4, issue #233): topic_selection collapses
+    # `sections` down to 1 topic (T3) or 2 topics (T1/T2) before Phase 1 ever
+    # sees them — runs strictly AFTER chunk/embed (see topic_selection_node's
+    # own docstring for why: chunk_node's chapter-scoped, tier-agnostic
+    # chunk/embedding cache would otherwise silently reuse chunks built for a
+    # different tier's topic boundaries).
+    graph.add_edge("embed", "topic_selection")
+
+    # Story 2-1 AC-0: topic_selection fans out to the 5 Phase 1 economy nodes,
+    # once per section (post-collapse), via Send() — replacing the old direct
+    # embed -> lesson_planner edge that let lesson_planner run with zero
+    # segment summaries available (the exact 5x-cost-overrun bug this AC
+    # fixes). narration_generator used to be the 6th member of this fan-out;
+    # issue #236 moved it to a separate post-planner fan-out below, since a
+    # Phase-1 dispatch has no lesson outline to give it.
     # NOTE: the _ECONOMY_NODES list passed here is for graph introspection /
     # visualization only (e.g. compiled.get_graph().edges in tests) — it does
     # NOT constrain what _fan_out_phase1_economy_nodes can actually dispatch at
     # runtime. The router always returns Send() objects, never one of these
     # literal strings, so this is not an enforced allow-list.
-    graph.add_conditional_edges("embed", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
+    graph.add_conditional_edges("topic_selection", _fan_out_phase1_economy_nodes, _ECONOMY_NODES)
 
     # Join: lesson_planner only runs once ALL fanned-out economy-node dispatches
     # (5 nodes x N sections) have completed for this superstep.

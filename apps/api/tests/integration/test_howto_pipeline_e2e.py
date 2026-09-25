@@ -74,6 +74,17 @@ FAKE_BOOK_ID = "bbbbbbbb-1111-2222-3333-444444444444"
 # used to manufacture, so every pipeline run now needs a real chapter.
 FAKE_CHAPTER_ID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
+# Story 233 (piece 1 of 4): topic_selection_node now collapses this how-to's
+# ~15 coalesced sections down to 1-2 topics before quiz_generator_node ever
+# dispatches, so each dispatched unit's allocated quiz share (a fraction of
+# the lesson's TOTAL budget, up to 16 for T1 — see quiz_budget_seconds) can be
+# far larger than a single old per-section share ever was. The fake's batch
+# response must supply at least the largest possible single-topic allocation
+# (the whole lesson budget concentrated on one topic in a worst-case content
+# split) or quiz_generator_node's own `questions[:n_max]` truncation makes the
+# FAKE the binding constraint instead of the tier budget being tested.
+_QUIZ_FAKE_BATCH_SIZE = 20
+
 
 # ── Stateful Supabase fake ────────────────────────────────────────────────────
 class _Query:
@@ -190,7 +201,9 @@ def _segment_ids_from_messages(messages: list[dict[str, str]]) -> list[str]:
     ]
 
 
-def _make_dispatch(slides_per_segment: int = 1, quiz_batch_size: int = 3) -> Any:
+def _make_dispatch(
+    slides_per_segment: int = 1, quiz_batch_size: int = _QUIZ_FAKE_BATCH_SIZE
+) -> Any:
     from app.modules.content.pipeline.graph import (
         _JargonEntryLLM,
         _JargonListLLM,
@@ -207,6 +220,7 @@ def _make_dispatch(slides_per_segment: int = 1, quiz_batch_size: int = 3) -> Any
         _SlideLLM,
         _StitchedNarrationLLM,
         _StitchedNarrationSegmentLLM,
+        _StructureTopicSplitLLM,
     )
     from app.schemas import DocumentStructure, SectionBoundary
 
@@ -214,6 +228,14 @@ def _make_dispatch(slides_per_segment: int = 1, quiz_batch_size: int = 3) -> Any
         messages: list[dict[str, str]], model: str, response_format: type, **k: Any
     ) -> Any:
         name = response_format.__name__
+        if name == "_StructureTopicSplitLLM":
+            # Story 233 (piece 1 of 4): T1/T2 collapse to 2 topics via one
+            # split-index call. The how-to text coalesces to structure_max_sections
+            # (15) sections before topic_selection ever runs — split near the
+            # middle so both topics get real content.
+            user = messages[1]["content"] if len(messages) > 1 else ""
+            n_sections = user.count("\n") + 1 if user else 15
+            return _StructureTopicSplitLLM(split_index=max(1, n_sections // 2))
         if name == "DocumentStructure":
             # tiny body -> < 90% coverage -> rejected -> REAL rule-based path runs
             return DocumentStructure(
@@ -229,17 +251,18 @@ def _make_dispatch(slides_per_segment: int = 1, quiz_batch_size: int = 3) -> Any
             )
         if name == "_QuizBatchLLM":
             # Story 3-28 made quiz generation batch-shaped; the node now asks for
-            # _QuizBatchLLM, never _QuizQuestionLLM directly. The default of 3 keeps
-            # us inside the T2 default band (2-3) that this pipeline run uses, so
-            # quiz_generator_node accepts every question and the per-segment count
-            # is deterministic (Story 2-28 AC-7 asserts on it).
+            # _QuizBatchLLM, never _QuizQuestionLLM directly. quiz_generator_node
+            # truncates whatever this returns down to its own allocated n_max
+            # (a share of the S5-4 lesson-total budget) — the default
+            # (_QUIZ_FAKE_BATCH_SIZE, see its own comment) is sized to never be
+            # the binding constraint post-Story-233 topic-collapse, so the
+            # delivered count is always a readout of the real allocator, not
+            # of this fixture.
             #
-            # quiz_batch_size is parameterised for the Learner-Mode comparison
-            # (test_tier_differentiation_and_cost.py): with a fixed 3, T1 (band
-            # 3-5, n_max=5) and T2 (band 2-3, n_max=3) BOTH keep all 3 and look
-            # identical, so the comparison could not tell them apart. Returning 5
-            # makes each tier truncate to its own n_max — 5 / 3 / 2 — which is
-            # what proves each node received its own tier value.
+            # quiz_batch_size is still parameterised for the Learner-Mode
+            # comparison (test_tier_differentiation_and_cost.py), which needs
+            # every tier's full allocation actually delivered (not truncated
+            # by the fake) to compare tier totals meaningfully.
             # Option text and question text are made distinct per index so the
             # node's own duplicate-option guard cannot reject them, and so a
             # duplicated question is visible as a repeated question_id rather
@@ -402,7 +425,7 @@ async def _run_howto_tier(
     *,
     tier: str,
     slides_per_segment: int = 1,
-    quiz_batch_size: int = 5,
+    quiz_batch_size: int = _QUIZ_FAKE_BATCH_SIZE,
     want_spies: bool = False,
 ) -> Any:
     """`_run_howto` with an explicit tier, for the Learner-Mode comparison.
@@ -582,7 +605,8 @@ async def test_multi_slide_segment_gets_contiguous_timestamps_e2e() -> None:
     per segment and this test's premise stops holding. Padding the ASSERTION
     would hide that; padding the SOURCE restores the condition the test was
     written to exercise. ~3,800 chars/section is a realistic textbook section
-    and stays under section_body_max_chars (6,000), so no truncation interferes.
+    and stays under section_body_max_chars (45,000 as of Story 233's
+    re-derivation for topic-selection — was 6,000), so no truncation interferes.
     """
     long_body = _BODY * 16
     short = "\n\n".join(

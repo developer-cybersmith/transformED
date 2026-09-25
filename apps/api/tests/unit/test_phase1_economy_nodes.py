@@ -271,6 +271,13 @@ class TestAC0GraphOrdering:
                     "structure_node",
                     "chunk_node",
                     "embed_node",
+                    # Story 233 piece 1: topic_selection sits between embed and
+                    # the Phase 1 fan-out. This test verifies the FAN-OUT
+                    # mechanism (once per state["sections"] entry at dispatch
+                    # time), not topic_selection's own collapsing behavior
+                    # (covered by test_topic_selection_node.py) — stubbed as a
+                    # pass-through here, same as every other sequential node.
+                    "topic_selection_node",
                     "slide_generator_node",
                     "narration_stitch_node",
                     "tts_node",
