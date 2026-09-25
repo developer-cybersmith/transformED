@@ -38,3 +38,26 @@ in-flow, inside the sidebar's own clipped bounds, in both the expanded and colla
 
 N/A — pure client-side CSS/layout fix, no new data, no new I/O, no new budget or limit of
 any kind. The six questions do not apply to a positioning bug in already-rendered markup.
+
+## Bundled in the same PR (unrelated file, explicit scope note)
+
+Two follow-ups from independent review of PR #254 (`feature/249-context-wiring`, merged same
+day), bundled here at the user's direction rather than as separate PRs:
+
+1. **D189 renumbered to D192.** This story originally registered D189; PR #254 independently
+   claimed D189 (and D190/D191) for unrelated context-wiring defects and merged first. Both
+   branches auto-merged cleanly with no textual conflict (different sections of
+   `docs/DEFECT-REGISTER.md`), which would have left two silently different "D189" entries on
+   `main` — exactly the D166/168/169/170/173 collision class already on record. Renumbered
+   ours to D192 (next free number after PR #254's merge) rather than let the collision reach
+   `main`.
+2. **Fixed a dead-code bug found in the same review**: `narration_generator_node`'s
+   `chapter_context_truncated`/`book_context_truncated` log-dedup suppression
+   (`if ... and not state.get(...)`) could never actually suppress anything —
+   `_FAN_OUT_STATE_KEYS` (the tuple controlling what the Send()-dispatched node's own `state`
+   payload carries) didn't include either flag, so `state.get(...)` inside the dispatched node
+   was always falsy regardless of what `lesson_planner_node` had already set. Every dispatched
+   section logged the "context truncated" warning instead of zero (the parent node already
+   logged the one that matters). Added both keys to `_FAN_OUT_STATE_KEYS`, with two new tests
+   in `test_249_context_wiring.py` proving the suppression fires when the flag is present
+   (fixed shape) and does not when absent (the exact pre-fix regression case).

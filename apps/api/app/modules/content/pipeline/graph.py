@@ -7503,6 +7503,17 @@ _FAN_OUT_STATE_KEYS: tuple[str, ...] = (
     "tier",
     "book_context",
     "chapter_context",
+    # D192 (2026-09-25): narration_generator_node's own truncation-warning
+    # suppression (`if ... and not state.get("book_context_truncated")`)
+    # was dead code without these two keys -- the Send() payload built from
+    # this tuple never carried them, so `state.get(...)` inside the
+    # dispatched node was always falsy and every one of N dispatched
+    # sections logged the warning instead of just the one lesson_planner_node
+    # already logged. Absent (via the `if k in state` guard below) on the
+    # Phase-1 fan-out, which runs before lesson_planner_node ever sets them
+    # -- harmless there, since Phase-1 nodes don't read either flag.
+    "book_context_truncated",
+    "chapter_context_truncated",
 )
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
