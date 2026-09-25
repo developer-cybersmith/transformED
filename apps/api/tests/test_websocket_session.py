@@ -572,8 +572,8 @@ def test_g9_settings_have_learner_tier_fields():
     assert "learner_tier_default_qa_seconds" in fields
 
     # Story S5-4 rebased these from 600/300/150 to 270/180/90. Under S5-4 the
-    # tier's minutes are TOTAL SEAT TIME and the Q&A phase is the 10% share of
-    # it (SEAT_TIME_SHARES["qa"]) — SUBTRACTED from the advertised duration.
+    # tier's minutes are the MINIMUM NARRATION time and this Q&A window is
+    # ADDITIVE to it rather than carved out of it.
     # The old values were added ON TOP: a nominally 45-minute T1 lesson really
     # ran 55. Derived from the shared table rather than retyped, so this test
     # cannot drift from the budget it is asserting.

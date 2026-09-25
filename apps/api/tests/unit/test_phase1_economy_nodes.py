@@ -316,9 +316,23 @@ class TestAC0GraphOrdering:
                 f"{economy_node} was invoked at index {occurrences} but lesson_planner "
                 f"ran at index {planner_index} — Phase 1 must fully complete before Phase 2 starts"
             )
-            assert len(occurrences) == len(THREE_SECTIONS), (
-                f"{economy_node} was invoked {len(occurrences)} time(s) for "
-                f"{len(THREE_SECTIONS)} sections — expected one call per section (Send() fan-out), "
+            # Story S5-5: the fan-out unit is no longer the chapter's section.
+            # topic_selection (Story 233) collapses sections to 1-2 topics, then
+            # segment_expansion slices those into as many DELIVERY UNITS as the
+            # tier's narration minimum needs and the source can support. This
+            # fixture's three short sections hold far less than a 30-minute
+            # lesson requires, so they legitimately collapse to a single unit.
+            # The invariant this test exists for is unchanged and still asserted
+            # above: every economy node runs once PER DISPATCHED UNIT, and all of
+            # them complete before lesson_planner. Pinning the count to the
+            # original section count would now assert an architecture that no
+            # longer exists.
+            unit_counts = {n: call_log.count(n) for n in ECONOMY_NODE_NAMES}
+            expected_units = max(unit_counts.values())
+            assert len(occurrences) == expected_units, (
+                f"{economy_node} was invoked {len(occurrences)} time(s) but the fan-out "
+                f"dispatched {expected_units} unit(s) ({unit_counts}) — every economy node "
+                f"must run exactly once per dispatched unit (Send() fan-out), "
                 f"not once for the whole chapter"
             )
 
@@ -329,9 +343,14 @@ class TestAC0GraphOrdering:
 
         narration_occurrences = [i for i, n in enumerate(call_log) if n == "narration_generator"]
         assert narration_occurrences, "narration_generator was never invoked"
-        assert len(narration_occurrences) == len(THREE_SECTIONS), (
+        # Story S5-5: one narration call per DELIVERY UNIT, which is what the
+        # post-planner fan-out dispatches — not per original chapter section.
+        # Pinned to the economy nodes' own count so the two fan-outs cannot
+        # silently disagree about how many units the lesson has.
+        expected_units = max(call_log.count(n) for n in ECONOMY_NODE_NAMES)
+        assert len(narration_occurrences) == expected_units, (
             f"narration_generator was invoked {len(narration_occurrences)} time(s) for "
-            f"{len(THREE_SECTIONS)} sections — expected one call per section"
+            f"{expected_units} dispatched unit(s) — expected one call per unit"
         )
         assert all(i > planner_index for i in narration_occurrences), (
             "issue #236: narration_generator must run AFTER lesson_planner, not alongside "
