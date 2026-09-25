@@ -46,35 +46,44 @@ DEFAULT_TIER = "T2"  # Story S2-LM3/LM4/LM5 (2026-07-17) — single source of tr
 
 
 # ---------------------------------------------------------------------------
-# Seat-time budget (Story S5-4 — issue #230)
+# Duration budget (Story S5-4, amended by Story S5-5 — issues #230 / #233)
 # ---------------------------------------------------------------------------
-# NOT part of the lesson_package.schema.json mirror — these are shared
-# constants living alongside VALID_TIERS/DEFAULT_TIER by the same precedent
-# (one source of truth, imported rather than retyped). No packages/shared
-# change, so no 4-developer frozen-contract PR.
+# NOT part of the lesson_package.schema.json mirror — shared constants living
+# alongside VALID_TIERS/DEFAULT_TIER by the same precedent (one source of
+# truth, imported rather than retyped). No packages/shared change.
 #
-# The tier enum's meaning is DURATION (S5-4/D-C): T1/T2/T3 are 45/30/15 minutes
-# of TOTAL SEAT TIME — the whole session in the player, not narration alone.
-# Before S5-4 these minutes existed as three independent hardcodes (frontend
-# learnerMode.ts, assessment/service.py::_TIER_MINUTES, config.py's qa-seconds
-# descriptions) and were enforced by nothing at all.
-TIER_SEAT_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}
+# The tier enum means DURATION, specifically the MINIMUM MINUTES OF SPOKEN
+# NARRATION a lesson must deliver (product/CEO decision, 2026-09-25):
+#
+#     T1 = at least 45 min of narration
+#     T2 = at least 30 min
+#     T3 = at least 15 min
+#
+# This REPLACES S5-4's shipped reading, which took the same numbers as total
+# SEAT time and gave narration a 65% share (T1 -> 29.25 min). Under that
+# reading the headline number was never the number being enforced: a student
+# selecting 45 minutes was promised 45 and the pipeline targeted 29. S5-4 had
+# already merged (6f19918) by the time the intent was clarified, so unlike an
+# amendment-before-merge this is a genuine behaviour change to shipped code —
+# recorded as D192.
+#
+# Consequence for the other two budgets: quiz and tutor Q&A time is now
+# ADDITIVE to the narration minimum rather than carved out of it, so a T1
+# session runs ~45 min of narration + ~7 min of quiz + 4.5 min of Q&A. Their
+# absolute values are unchanged — the quiz recalibration they came from fixed
+# a real defect (a per-segment count that multiplied by segment count) and is
+# independent of this semantics change.
+TIER_MIN_NARRATION_MINUTES: dict[str, int] = {"T1": 45, "T2": 30, "T3": 15}
 
-# How one lesson's seat time is divided. Sums to exactly 1.0 (asserted by
-# tests/unit/test_s5_4_duration_budget.py) — a table that does not sum to 1
-# silently under- or over-books the session.
-#
-# `teachback` is an ALLOWANCE, not an enforced budget: teach-back is triggered
-# by the student failing a quiz and is unbounded in count, so the seat-time
-# contract is a nominal-path contract. Stated here rather than implied, because
-# a budget that silently excludes a variable component is the same defect class
-# as an unbounded query (SCALE-CONTRACT Q1).
-SEAT_TIME_SHARES: dict[str, float] = {
-    "narration": 0.65,
-    "quiz": 0.15,
-    "teachback": 0.10,
-    "qa": 0.10,
-}
+# Alias kept so callers that legitimately mean "the tier's headline minutes"
+# (labels, reports) keep reading one source of truth.
+TIER_SEAT_MINUTES: dict[str, int] = TIER_MIN_NARRATION_MINUTES
+
+# Quiz and Q&A time per tier, in SECONDS. Previously expressed as shares of
+# seat time; stated directly now that narration is no longer a share of
+# anything.
+TIER_QUIZ_SECONDS: dict[str, int] = {"T1": 405, "T2": 270, "T3": 135}
+TIER_QA_SECONDS: dict[str, int] = {"T1": 270, "T2": 180, "T3": 90}
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +108,14 @@ def _seat_minutes(tier: str | None) -> int:
 
 
 def narration_budget_minutes(tier: str | None) -> float:
-    """Target minutes of spoken narration for *tier* (T1 29.25 / T2 19.5 / T3 9.75)."""
-    return _seat_minutes(tier) * SEAT_TIME_SHARES["narration"]
+    """MINIMUM minutes of spoken narration for *tier* (T1 45 / T2 30 / T3 15).
+
+    A floor, not a target and not a ceiling: a lesson running longer has
+    satisfied it. A lesson running shorter has satisfied it only if the
+    chapter's own text could not support more — in which case the shortfall is
+    reported (`duration_report.outcome == "content_limited"`), never padded.
+    """
+    return float(_seat_minutes(tier))
 
 
 def quiz_budget_seconds(tier: str | None) -> float:
@@ -111,7 +126,7 @@ def quiz_budget_seconds(tier: str | None) -> float:
     per-segment band, which multiplied by segment count and at 15 segments
     consumed 19-31 minutes of a 45-minute lesson on its own.
     """
-    return _seat_minutes(tier) * SEAT_TIME_SHARES["quiz"] * 60.0
+    return float(TIER_QUIZ_SECONDS.get(tier or "", TIER_QUIZ_SECONDS[DEFAULT_TIER]))
 
 
 def qa_budget_seconds(tier: str | None) -> int:
@@ -122,7 +137,7 @@ def qa_budget_seconds(tier: str | None) -> int:
     the advertised duration; before S5-4 it was added on top of it (600 s of Q&A
     after a nominally 45-minute lesson).
     """
-    return round(_seat_minutes(tier) * SEAT_TIME_SHARES["qa"] * 60.0)
+    return int(TIER_QA_SECONDS.get(tier or "", TIER_QA_SECONDS[DEFAULT_TIER]))
 
 
 # ---------------------------------------------------------------------------

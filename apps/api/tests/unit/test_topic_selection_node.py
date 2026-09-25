@@ -527,7 +527,8 @@ def test_slide_budget_per_segment_known_interim_gap_d188() -> None:
 
     # Realistic near-equal duration split of each tier's narration budget
     # across topic_selection_node's collapsed topic count (2 for T1/T2, 1 for
-    # T3) — see TIER_SEAT_MINUTES/SEAT_TIME_SHARES for the source numbers.
+    # T3) — see TIER_MIN_NARRATION_MINUTES for the source numbers (S5-5
+    # replaced the SEAT_TIME_SHARES table these once came from).
     t1 = _tier_slide_budget_per_segment("T1", [14.6, 14.6])
     t2 = _tier_slide_budget_per_segment("T2", [9.75, 9.75])
     t3 = _tier_slide_budget_per_segment("T3", [9.75])
