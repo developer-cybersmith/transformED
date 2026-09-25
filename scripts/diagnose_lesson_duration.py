@@ -275,7 +275,9 @@ def main() -> None:
                 f"units={exp.get('segment_count')}  per_topic={exp.get('per_topic_segments')}  "
                 f"requested_min={exp.get('requested_min_minutes')}  "
                 f"achievable={exp.get('achievable_minutes')}  "
-                f"capped={exp.get('capped_by_max_segments')}"
+                f"capped={exp.get('capped_by_max_segments')}  "
+                f"cap_overrun={exp.get('cap_overrun', 0)}"
+                f"/{exp.get('max_segments_configured', '?')}"
             )
         else:
             print("  segment_expansion: ABSENT (lesson predates Story S5-5)")
