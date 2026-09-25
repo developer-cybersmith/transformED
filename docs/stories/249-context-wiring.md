@@ -111,6 +111,11 @@ book-level form.
 - [x] **AC 10.** A new Defect Register entry documents the Phase-1-node question (deferred, not
   silently decided) — names exactly which 5 nodes are affected, why moving the fetch earlier was
   judged out of scope for this piece, and what a real fix would require.
+- [x] **AC 11.** (Added Round 2 review — CLAUDE.md binding rule: "a story that touches any pipeline
+  node file is incomplete if it does not name that module's guard tests as an AC.") Existing guard
+  tests for `graph.py` pass: `apps/api/tests/unit/test_node_return_shape.py` (this story adds
+  return-dict keys to `lesson_planner_node`/`slide_generator_node`, exactly what that guard exists
+  to catch a violation of). Verified green throughout, see Completion Notes.
 
 ## Scale & Load
 
@@ -131,6 +136,15 @@ book-level form.
    surfaced degradation — `chapter_context_truncated=True`, persisted the same way
    `book_context_truncated` already is, never a silent cut. In practice unreachable today (Q1), but
    the guard exists so it degrades loudly the day the input caps change, not silently.
+   **(Added Round 2 review — combined-budget question.)** `book_context` (2,000 cap) and
+   `chapter_context` (1,300 cap) are now both merged into the SAME prompt at two of the three call
+   sites (`slide_generator_node`, `narration_generator_node`), each enforcing its own budget
+   independently — no combined/total ceiling across the two was ever stated. Worst case both maxed
+   simultaneously: 3,300 chars ≈ ~825 tokens, against GPT-4o/GPT-4o-mini's 128k-token context
+   window (≈0.6%) — nowhere near a real ceiling today, so not worth a third combined-budget
+   constant. Named explicitly here rather than left unanswered, per the Scale Contract's own
+   "N/A is valid only with a reason" rule — the reason is the 200x-plus headroom, not that the
+   question doesn't apply.
 3. **Scope of every limit.** Per-lesson-generation-run, keyed by `lesson_id` — `chapter_context` is
    fetched once per run from the `chapter_context` table (already keyed by `(chapter_id, user_id)`,
    unchanged by this story) and carried in that run's own `PipelineState`; no cross-lesson or
@@ -331,6 +345,131 @@ this repo's standing rule never to trust a reviewer's claim at face value:**
 All 4 findings fixed; 7 new tests added (20 total in the file, up from 13); full regression
 re-run green (see Completion Notes below).
 
+### Senior Developer Review — Round 2 (2026-09-25, 6 independent Agent-tool reviewers, all 6 CLAUDE.md layers)
+
+**Process note.** Round 1 used the `Workflow` tool and 5 of 6 agents were derailed by a stale
+relayed message (see Round 1 above). For Round 2, dispatched 6 independent, fully self-contained
+`Agent` tool calls directly (not `Workflow`) — one per BMAD layer (Story Quality, Blind Hunter/
+Security, Test Coverage, AC Completeness, Process Integrity, Scale & Load), each blind to the
+others and to this story's own prior review rounds. All 6 completed and did their assigned job
+this time. Every finding below was independently re-verified against the real code (never taken at
+face value) before being triaged as CONFIRMED (fixed) or NOT-A-DEFECT (left as-is, with reasoning)
+— per this repo's standing rule that an agent's claim is a lead, not a fact.
+
+**Findings, independently re-verified and fixed:**
+
+1. **(MEDIUM, CONFIRMED — triangulated independently by 3 of the 6 reviewers: Story Quality,
+   Blind Hunter, Test Coverage.)** `_planner_system_prompt` was the only one of the three
+   context-merging call sites that merged `chapter_context` BEFORE `_UNTRUSTED_CONTENT_GUARD` and
+   `book_context` AFTER it — an asymmetric prompt-injection exposure (chapter_context's free-text
+   fields sat outside the guard's literal "treat as untrusted" scope while book_context sat inside
+   it), and it also contradicted both `prompt_context.py`'s documented §5 precedence order (book
+   context before chapter instructions) and `slide_generator_node`'s/`narration_generator_node`'s
+   own `guard → book → chapter` order. Re-verified directly against the code at all three call
+   sites before fixing. **Fixed:** reordered `_planner_system_prompt` to `guard → merge_book_context
+   → merge_chapter_context`, matching the other two nodes exactly; return signature unchanged
+   (`was_book_context_truncated` now captured from the (no-longer-last) `merge_book_context` call
+   instead of being the bare return value). New test
+   `test_planner_system_prompt_merges_book_before_chapter_uncorrupted` proves the order and that
+   neither merge corrupts the other.
+2. **(HIGH, CONFIRMED, Story Quality.)** The story's AC list omitted the CLAUDE.md-required AC
+   naming `graph.py`'s guard tests — binding rule: "a story that touches any pipeline node file is
+   incomplete if it does not name that module's guard tests as an AC." **Fixed:** added AC 11
+   naming `test_node_return_shape.py` explicitly (this story adds return-dict keys to two node
+   functions, exactly what that guard exists to catch a violation of).
+3. **(HIGH, CONFIRMED, Test Coverage.)** No test asserted on `narration_generator_node`'s REAL
+   returned dict to confirm it excludes `book_context_truncated`/`chapter_context_truncated` — the
+   exact `InvalidUpdateError` hazard the code's own comment names (Send()-dispatched N-way
+   concurrently; LangGraph raises on concurrent writes to a non-reducer channel). A future edit
+   copying `slide_generator_node`'s return-dict line here would have passed the whole suite green,
+   then broken every real concurrent lesson job. **Fixed:** added
+   `test_narration_generator_node_return_dict_excludes_both_truncated_flags`.
+4. **(MEDIUM, CONFIRMED, Test Coverage.)** The `if chapter_id_for_ctx and user_id_for_ctx:` guard
+   in `lesson_planner_node` had zero coverage of "only one set" — every existing test set both or
+   neither, unable to distinguish `and` from a weaker `or`. **Fixed:** added
+   `test_lesson_planner_node_skips_chapter_fetch_when_only_chapter_id_set` and the symmetric
+   `..._only_user_id_set`, both asserting the fetch function is never called.
+5. **(MEDIUM, CONFIRMED, Test Coverage.)** No test fed both `book_context` and `chapter_context`
+   oversized simultaneously — every truncation test oversized only one with the other empty.
+   **Fixed:** added `test_book_and_chapter_context_both_truncated_simultaneously_independent`
+   (`slide_generator_node`, both markers present exactly once, both flags `True`).
+6. **(MEDIUM, CONFIRMED, Scale & Load.)** `specific_doubt`/`goal_and_skip` (the two free-text
+   fields `_CHAPTER_CONTEXT_MAX_CHARS`'s derivation depends on) have no DB `CHECK` constraint —
+   the identical defect class already registered as **D178** for `book_context`'s sibling columns,
+   reintroduced here without a mirroring entry. Verified directly against
+   `supabase/migrations/20260921010000_chapter_context.sql` (the follow-up
+   `..._check_constraints.sql` adds `CHECK` only for the two MCQ enum columns, not these two).
+   **Fixed:** registered **D190**, referencing D178, same resolution path.
+7. **(LOW, CONFIRMED, AC Completeness.)** `test_budget_is_independently_derived_not_copied_from_book_context`
+   (AC 4) only range-checked `1_000 <= chapter_max_chars <= 1_500`, never the exact `1,300` AC 4
+   literally claims. **Fixed:** added an exact-value assertion.
+8. **(LOW, CONFIRMED, Scale & Load.)** No test asserted the REAL worst-case
+   `_format_chapter_context_block` output against the 1,300 cap — only a range check on the
+   constant. **Fixed:** added `test_real_worst_case_chapter_context_block_fits_the_derived_budget`,
+   computing the worst case dynamically from the real label dictionaries (not hardcoded strings),
+   so a future label/max_length change erodes the margin loudly, not silently.
+9. **(LOW, CONFIRMED, AC Completeness.)** `test_lesson_planner_node_returns_chapter_context_on_cache_hit_path`'s
+   own docstring claimed the cache-hit branch "must still return... `chapter_context_truncated`",
+   but the test never asserted on it — and on inspection, the REAL cache-hit return dict does not
+   include either truncated flag at all (a real, pre-existing gap inherited from `book_context`'s
+   own identical cache-hit behavior, not introduced by this story — see new finding below).
+   **Fixed:** corrected the docstring and added explicit assertions pinning the real (gap-carrying)
+   behavior, rather than the behavior the docstring had incorrectly assumed.
+10. **(NEW FINDING, discovered while fixing #9 above, not flagged by name by any of the 6 reviewers
+    — surfaced during independent re-verification, registered per binding rule 5 rather than
+    silently fixed.)** `lesson_planner_node`'s cache-hit branch returns the raw `book_context`/
+    `chapter_context` strings but never their `_truncated` flags — on an ARQ-retried job where
+    attempt 1 completed `lesson_planner_node` (with real truncation) but failed before
+    `package_builder_node` ever persisted it, attempt 2's cache-hit skips recompute and the
+    persisted admin record silently shows `False` for both flags regardless of the true state.
+    Pre-existing for `book_context` since Story S5-1 — Story 249 inherited it by design (AC 2's own
+    stated goal: "matching how it already returns `book_context` today"), did not introduce it new.
+    **Registered as D191, not fixed here** — fixing it means changing already-shipped
+    S5-1 node behavior for both contexts together (fixing only `chapter_context` while leaving
+    `book_context`'s identical gap would itself violate binding rule 6), which is outside a wiring
+    story's clean scope. `test_lesson_planner_node_returns_chapter_context_on_cache_hit_path` pins
+    today's real behavior explicitly so this doesn't regress further unnoticed.
+11. **(LOW, CONFIRMED, AC Completeness.)** The original `test_context_over_limit_truncated_at_newline_boundary`
+    used a single early newline (`"Field: value\n"` at char ~13), so the cut landed at the same
+    position regardless of the budget boundary — identical in shape to the no-newline hard-cut test,
+    unable to prove a REAL newline-boundary cut distinct from an always-hard-cut regression.
+    **Fixed:** rewrote using many short newline-separated fields so the boundary genuinely falls
+    near the budget edge, with explicit assertions that every kept field is complete (never cut
+    mid-field).
+12. **(LOW, CONFIRMED, AC Completeness.)** No oversized-input test proved `narration_generator_node`
+    uses the real `merge_chapter_context()` (vs. raw concatenation) — the return-dict trick used for
+    `slide_generator_node` isn't available here (narration deliberately never returns
+    `chapter_context_truncated`, see finding 3). **Fixed:** added
+    `test_narration_generator_node_uses_real_merge_not_raw_concat`, mirroring AC 5's own
+    marker-in-prompt technique.
+13. **(LOW, CONFIRMED, Story Quality.)** D189's citation `graph.py:7191` was stale by ~400 lines
+    (post-merge line drift, never updated) — pointed at unrelated S5-4 code. **Fixed:** corrected to
+    the verified-current `graph.py:7607`.
+14. **(LOW, CONFIRMED, Process Integrity.)** The `chapter_context_truncated`/`book_context_truncated`
+    field comments in `PipelineState` inaccurately claimed `narration_generator_node` sets them,
+    when it deliberately never does (finding 3). **Fixed:** corrected both comments to name the
+    actual setters and explain the Send()-concurrency exclusion.
+15. **(LOW, informational, Scale & Load.)** `book_context` (2,000) + `chapter_context` (1,300) can
+    now both appear in the same prompt, with no combined budget ever stated — worst case 3,300
+    chars (~825 tokens) against a 128k-token window (~0.6%), not dangerous today but an unanswered
+    letter of the Scale Contract. **Fixed (documentation only):** added an explicit answer to the
+    story's own Scale & Load Q2, naming the combined worst case and why it's safely bounded rather
+    than leaving the question unaddressed.
+
+**Findings independently re-verified and judged NOT a defect requiring a fix (left as-is, with
+reasoning):** Blind Hunter's IDOR check (traced `chapter_id`/`user_id` provenance three hops back
+through `router.py`/`content_pipeline_job`/`run_pipeline` — confirmed server-derived, never
+client-suppliable, no exploit path); the shared `_sanitize()` newline-only mitigation (identical to
+`book_context`'s own, not a regression); the bounded-query guard's documented pipeline-scope
+exclusion (pre-existing, not introduced here); AC 10's "NOT COVERED" verdict (a documentation AC —
+inherently not test-backed by nature, correctly assessed as such by AC Completeness itself); D189's
+trigger wording being "comparatively vague" (a real but genuinely subjective LOW note, judged not
+worth further engineering beyond the citation fix already made).
+
+**15 findings fixed, 1 new defect discovered and registered (D190, D191) rather than silently
+fixed, 2 code changes (`_planner_system_prompt` reorder, `PipelineState` comment accuracy), 1 story
+AC added (AC 11), 7 new tests added (27 total in `test_249_context_wiring.py`, up from 20).**
+
 ### Completion Notes
 All 10 ACs implemented and verified:
 - `PipelineState` gains `chapter_context`/`chapter_context_truncated` (AC 1).
@@ -360,31 +499,43 @@ All 10 ACs implemented and verified:
   1 proving `slide_generator_node`'s real returned dict carries `chapter_context_truncated`,
   1 proving `book_context`+`chapter_context` compose correctly together in the same prompt
   (order, no dropping, no duplication), and 1 asserting `PipelineState`'s new fields via
-  `typing.get_type_hints()` — the last 7 added in Round 1 review to close findings 1-4 above.
-- Full regression: 20/20 new tests + 48/48 mandatory guard tests (`test_ces.py`,
+  `typing.get_type_hints()` — those 7 added in Round 1 review to close findings 1-4 above. Round 2
+  added 7 more: the real `_planner_system_prompt` book-before-chapter ordering proof, the
+  `narration_generator_node` return-dict key-exclusion proof, its own oversized-input real-merge
+  proof, both `chapter_id`/`user_id`-guard "only one set" branches, the both-contexts-truncated-
+  simultaneously composition test, and the real-worst-case-vs-budget invariant test — 27 total.
+- Full regression: 27/27 new tests + 48/48 mandatory guard tests (`test_ces.py`,
   `test_node_return_shape.py`, `test_unbounded_queries.py`) + full `tests/unit` + `tests/integration
   -m "not postgres"` suite, all green (1 pre-existing, unrelated failure —
   `test_effective_wpm_is_not_the_raw_rate`, already confirmed pre-existing during Story 233's own
-  work). `ruff check .`: clean (auto-fixed 2 import-order nits introduced by the new tests).
-  `mypy` on both touched app files: clean (3 pre-existing errors elsewhere, unrelated
-  httpx/httpx2 OpenAI-client typing, confirmed present on this branch's own last commit before
-  today's edits — not a regression).
-- Round 1 review coverage gap (Story Quality / Blind Hunter / AC Completeness / Process Integrity
-  / Scale & Load layers never ran, see Senior Developer Review above) remains open — Task 6
-  follow-up, not yet re-run.
+  work). `ruff check .`: clean. `mypy` on both touched app files: clean (3 pre-existing errors
+  elsewhere, unrelated httpx/httpx2 OpenAI-client typing, confirmed present on this branch's own
+  last commit before today's edits — not a regression).
+- Round 1's coverage gap (5 of 6 layers failed to run via the `Workflow` tool) is closed — Round 2
+  used direct `Agent` tool calls instead and all 6 layers ran and reported real findings, see
+  Senior Developer Review — Round 2 above. AC 11 added for the guard-test requirement Round 2's
+  Story Quality layer flagged. D190 and D191 registered for two real, deliberately-deferred gaps
+  Round 2 found (DB CHECK constraints on `chapter_context` free-text columns; cache-hit path not
+  surfacing either truncated flag) — neither blocks this story, both are pre-existing-pattern gaps
+  this story inherited rather than introduced.
 
 ### File List
 - `apps/api/app/modules/content/pipeline/graph.py` — `PipelineState` gains `chapter_context`/
-  `chapter_context_truncated`; `_planner_system_prompt` uses `merge_chapter_context`;
-  `lesson_planner_node`'s chapter-context fetch moved earlier + returns it on both paths + computes
-  `chapter_context_truncated`; `slide_generator_node`/`narration_generator_node` merge
-  `chapter_context`; `_FAN_OUT_STATE_KEYS` extended; both fan-out payload builders get a
-  `chapter_context` `setdefault`; `package_builder_node` persists `chapter_context_truncated` into
-  `node_outputs` (Round 1 review fix).
+  `chapter_context_truncated` (comments corrected Round 2 to name the real setters);
+  `_planner_system_prompt` uses `merge_chapter_context`, reordered Round 2 to
+  `guard → book → chapter` matching the other two nodes; `lesson_planner_node`'s chapter-context
+  fetch moved earlier + returns it on both paths + computes `chapter_context_truncated`;
+  `slide_generator_node`/`narration_generator_node` merge `chapter_context`; `_FAN_OUT_STATE_KEYS`
+  extended; both fan-out payload builders get a `chapter_context` `setdefault`;
+  `package_builder_node` persists `chapter_context_truncated` into `node_outputs` (Round 1 review
+  fix).
 - `apps/api/app/modules/content/pipeline/prompt_context.py` — shared `_merge_context_block`
   extracted; new `merge_chapter_context`/`_CHAPTER_CONTEXT_MAX_CHARS`/`_CHAPTER_TRUNCATION_MARKER`.
-- `apps/api/tests/test_249_context_wiring.py` — new file, 20 tests.
-- `docs/DEFECT-REGISTER.md` — new `D189`.
+- `apps/api/tests/test_249_context_wiring.py` — new file, 27 tests.
+- `docs/DEFECT-REGISTER.md` — `D189` (new in Round 1, line citation fixed in Round 2); `D190`, `D191`
+  new in Round 2.
+- `docs/stories/249-context-wiring.md` — AC 11 added; Scale & Load Q2 extended with the combined
+  book+chapter budget answer.
 
 ### Change Log
 - 2026-09-25: Story file created (story-first commit), branch `feature/249-context-wiring`, based
@@ -393,5 +544,10 @@ All 10 ACs implemented and verified:
   mid-work `main` merge (PR #252/issue #233 landed) and its resolution. Full regression green.
 - 2026-09-25: Round 1 review (5 of 6 agent layers failed to run due to a Workflow tool subagent
   context-confusion bug, reported separately; `testCoverage` layer's 4 findings all independently
-  re-verified and fixed, 7 new tests added). Task 6 re-run (remaining 5 layers) and Task 7.2/7.3
-  (dev1-tracker entry, PR) next.
+  re-verified and fixed, 7 new tests added).
+- 2026-09-25: Round 2 review — 6 independent `Agent` tool calls (all 6 layers ran this time,
+  bypassing the Workflow tool bug). 15 findings fixed (1 real code-behavior fix — the
+  `_planner_system_prompt` ordering/guard asymmetry, triangulated by 3 reviewers — plus test/doc/
+  register fixes), 1 new defect discovered during fix verification and registered rather than
+  silently fixed (D191), D190 registered for a Scale & Load finding, AC 11 added, 7 new tests
+  (27 total). Full regression green. Task 7.2/7.3 (dev1-tracker entry, PR) next.

@@ -233,18 +233,24 @@ class PipelineState(TypedDict, total=False):
         list[dict[str, Any]], operator.add
     ]  # [{segment_id, node, original_chars, capped_chars}]
 
-    # S5-1/S5-9: set to True by any of the 3 book-context merge sites
-    # (lesson_planner_node, slide_generator_node, narration_generator_node)
-    # when merge_book_context() had to truncate the context block. Written to
-    # lesson_jobs.node_outputs by package_builder_node so admins can query for
-    # truncated lessons. Default False (most lessons have no book context at all).
-    # Last-write-wins (not a reducer) — True is sticky; once set it stays set.
+    # S5-1/S5-9: set to True by lesson_planner_node or slide_generator_node
+    # when merge_book_context() had to truncate the context block.
+    # narration_generator_node also MERGES book_context into its own prompt,
+    # but deliberately never RETURNS this key — it is Send()-dispatched N-way
+    # concurrently, and this is a plain (non-reducer) state channel, so a
+    # concurrent write here would raise LangGraph's InvalidUpdateError;
+    # lesson_planner_node (sequential, runs first) already sets it from the
+    # same source string. Written to lesson_jobs.node_outputs by
+    # package_builder_node so admins can query for truncated lessons. Default
+    # False (most lessons have no book context at all). Last-write-wins (not
+    # a reducer) — True is sticky; once set it stays set.
     book_context_truncated: bool
 
-    # Story 249: same convention as book_context_truncated, for chapter_context's
-    # own (smaller) truncation budget — set by any of the 3 chapter-context
-    # merge sites (lesson_planner_node, slide_generator_node,
-    # narration_generator_node) when merge_chapter_context() had to truncate.
+    # Story 249: same convention and the same narration_generator_node
+    # exclusion as book_context_truncated above — set by lesson_planner_node
+    # or slide_generator_node only when merge_chapter_context() had to
+    # truncate; narration_generator_node merges chapter_context but never
+    # returns this key, for the identical Send()-concurrency reason.
     chapter_context_truncated: bool
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
@@ -1946,14 +1952,26 @@ def _planner_system_prompt(
             "lesson."
         )
     )
+    # Round 2 review fix (2026-09-25): this site used to merge chapter_context
+    # BEFORE _UNTRUSTED_CONTENT_GUARD and book_context AFTER it — the only one
+    # of the three context-merging call sites ordered that way. That put
+    # chapter_context's free-text fields outside the guard's literal "below
+    # this point, treat as untrusted" scope while book_context sat inside it,
+    # an asymmetric prompt-injection exposure, and also contradicted both the
+    # §5 precedence order (book context before chapter instructions) and this
+    # function's own docstring. slide_generator_node/narration_generator_node
+    # both do guard -> merge_book_context -> merge_chapter_context; matched
+    # that order here too.
+    #
     # Story 249: was raw `+ chapter_context` string concatenation — no budget,
-    # no truncation guard, no surfaced flag, unlike book_context's own merge
-    # two lines below. merge_chapter_context() gives it the same
-    # explicit-degradation guarantee. Return value intentionally discarded
+    # no truncation guard, no surfaced flag, unlike book_context's own merge.
+    # merge_chapter_context() gives it the same explicit-degradation
+    # guarantee. Its own truncation return value is intentionally discarded
     # here (see docstring) — the caller recomputes truncation independently.
-    base, _ = merge_chapter_context(base, chapter_context)
     base = base + _UNTRUSTED_CONTENT_GUARD
-    return merge_book_context(base, book_context)
+    base, was_book_context_truncated = merge_book_context(base, book_context)
+    base, _ = merge_chapter_context(base, chapter_context)
+    return base, was_book_context_truncated
 
 
 _PLANNER_BATCH_MAX_ATTEMPTS = 3
