@@ -149,6 +149,14 @@ class PipelineState(TypedDict, total=False):
     # student submitted no context.
     book_context: str
 
+    # Story 249 (issue #249): chapter-level personalization context, mirroring
+    # book_context exactly — fetched once in lesson_planner_node (it already
+    # fetched this value before this story, just never gave it a state slot to
+    # travel through) and propagated to slide_generator and narration_generator
+    # via _FAN_OUT_STATE_KEYS. Empty string when the student submitted no
+    # context for this chapter.
+    chapter_context: str
+
     # Node 6: slide_generator
     slides: list[
         dict[str, Any]
@@ -221,6 +229,12 @@ class PipelineState(TypedDict, total=False):
     # truncated lessons. Default False (most lessons have no book context at all).
     # Last-write-wins (not a reducer) — True is sticky; once set it stays set.
     book_context_truncated: bool
+
+    # Story 249: same convention as book_context_truncated, for chapter_context's
+    # own (smaller) truncation budget — set by any of the 3 chapter-context
+    # merge sites (lesson_planner_node, slide_generator_node,
+    # narration_generator_node) when merge_chapter_context() had to truncate.
+    chapter_context_truncated: bool
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
