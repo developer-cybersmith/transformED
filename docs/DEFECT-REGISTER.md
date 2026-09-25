@@ -924,7 +924,7 @@ name never collides with the Account button's.
 
 ---
 
-## D189 — Sidebar's collapsed-state expand toggle was invisible (clipped by overflow-hidden)
+## D192 — Sidebar's collapsed-state expand toggle was invisible (clipped by overflow-hidden)
 
 **Status:** FIXED-GUARDED · **Owner:** Dev 2 (frontend) · **Detected:** 2026-09-25, direct user
 report immediately after PR #251's sidebar collapse feature (D183) merged to `main` ·
