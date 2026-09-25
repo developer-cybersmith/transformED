@@ -393,3 +393,108 @@ class TestNodeWiring:
 
         ids = [g._derive_section_id(s, i) for i, s in enumerate(result["sections"])]
         assert len(set(ids)) == len(ids), f"duplicate section ids would collide in Storage: {ids}"
+
+
+# ── Dev 2's PR #255 review — all five findings, verified and pinned ──────────
+
+
+class TestReviewFindings:
+    def test_per_topic_allocation_is_indexed_by_original_topic_position(self):
+        """Finding 1 (severe). `plan_segments` filtered empty bodies before
+        building the allocation, but the node indexes the result by the
+        UNFILTERED topic index. With any earlier empty topic, every later one
+        reads the wrong entry — and falls through to `else 1` past the end, so
+        the topic holding the real content silently gets ONE slice. That
+        defeats the narration minimum this story exists to deliver, with no
+        error and no log line.
+        """
+        from app.modules.content.pipeline.nodes.segment_expansion import plan_segments
+
+        plan = plan_segments(
+            topic_bodies=["", _paragraphs(400)],  # topic 0 empty, topic 1 real
+            min_narration_minutes=45.0,
+            effective_wpm=150.0,
+            words_per_segment=900,
+            max_segments=60,
+        )
+
+        assert len(plan.per_topic_segments) == 2, (
+            "the allocation must align with the ORIGINAL topic list, or the "
+            "caller's topic_index reads the wrong entry"
+        )
+        assert plan.per_topic_segments[0] == 0, "an empty topic has nothing to teach"
+        assert plan.per_topic_segments[1] == plan.segment_count
+        assert plan.per_topic_segments[1] > 1, (
+            "the topic with real content must get its full allocation, not the "
+            "off-by-one fallback of 1"
+        )
+
+    def test_allocation_never_exceeds_max_segments(self):
+        """Finding 2. `_allocate`'s at-least-one-per-topic rule ran AFTER the
+        cap and `segment_count` was then recomputed from the sum, so the
+        documented hard cap could be silently exceeded."""
+        from app.modules.content.pipeline.nodes.segment_expansion import plan_segments
+
+        plan = plan_segments(
+            topic_bodies=[_paragraphs(50), _paragraphs(50)],
+            min_narration_minutes=45.0,
+            effective_wpm=150.0,
+            words_per_segment=900,
+            max_segments=1,
+        )
+
+        assert plan.segment_count <= 1, (
+            f"max_narration_segments=1 produced {plan.segment_count} segments"
+        )
+        assert sum(plan.per_topic_segments) == plan.segment_count
+
+    def test_chars_per_word_is_shared_not_retyped(self):
+        """Finding 5. The node hardcoded 6.0 while the planner used
+        CHARS_PER_WORD — tuning one would silently desync the slice size from
+        the capacity maths, with nothing failing loudly."""
+        import inspect
+
+        from app.modules.content.pipeline import graph as g
+        from app.modules.content.pipeline.nodes.segment_expansion import CHARS_PER_WORD
+
+        src = inspect.getsource(g.segment_expansion_node)
+        assert "CHARS_PER_WORD" in src, "the node must import the shared constant"
+        assert "* 6.0" not in src, "a retyped 6.0 desyncs from CHARS_PER_WORD"
+        assert CHARS_PER_WORD == 6.0
+
+    @pytest.mark.asyncio
+    async def test_an_empty_topic_body_ships_no_blank_segment(self):
+        """Finding 3. `split_body(...) or [body]` turned split_body's correct
+        empty return into `['']` — a blank delivery unit fanned out to all five
+        Phase-1 economy nodes as a real segment, which is precisely what
+        split_body's docstring says must not happen."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from app.modules.content.pipeline import graph as g
+
+        sb = MagicMock()
+        chain = sb.table.return_value.select.return_value.eq.return_value
+        chain.single.return_value.execute.return_value.data = {"node_outputs": {}}
+        sb.table.return_value.update.return_value.eq.return_value.execute.return_value = MagicMock()
+        state = {
+            "lesson_id": "70707070-7070-7070-7070-707070707070",
+            "tier": "T1",
+            "sections": [
+                {"id": "s0", "title": "Empty", "body": ""},
+                {"id": "s1", "title": "Real", "body": _paragraphs(400)},
+            ],
+        }
+        with (
+            patch("app.core.db.get_supabase", return_value=sb),
+            patch.object(g, "_update_job_progress", new=AsyncMock(return_value=None)),
+        ):
+            result = await g.segment_expansion_node(state)
+
+        out = result["sections"]
+        assert all(s["body"].strip() for s in out), "no blank segment may be shipped"
+        assert all(s["topic_index"] == 1 for s in out), (
+            "every unit must come from the topic that actually had content"
+        )
+        assert len(out) > 1, (
+            "the real topic must still get its full allocation despite the empty sibling"
+        )

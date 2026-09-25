@@ -152,8 +152,15 @@ def plan_segments(
     from the count: `content_limited` and `capped_by_max_segments` are distinct
     because a thin chapter and a capped fan-out want different responses.
     """
-    bodies = [b for b in topic_bodies if b]
-    if not bodies or words_per_segment <= 0 or effective_wpm <= 0:
+    # Indices matter: the caller reads `per_topic_segments[topic_index]` with
+    # the ORIGINAL topic index, so the returned list must be the same length
+    # and order as `topic_bodies`. An earlier version filtered empty bodies
+    # out first, which shifted every later topic's entry and dropped the real
+    # content's allocation to the caller's `else 1` fallback — the narration
+    # minimum silently defeated, with no error and no log line (PR #255
+    # review, finding 1).
+    usable = [i for i, b in enumerate(topic_bodies) if b]
+    if not usable or words_per_segment <= 0 or effective_wpm <= 0:
         return SegmentPlan(
             segment_count=0,
             per_topic_segments=[0] * len(topic_bodies),
@@ -165,17 +172,32 @@ def plan_segments(
     required_words = max(0.0, min_narration_minutes) * effective_wpm
     n_needed = max(1, math.ceil(required_words / words_per_segment))
 
-    source_words = sum(len(b) for b in bodies) / CHARS_PER_WORD
+    source_words = sum(len(topic_bodies[i]) for i in usable) / CHARS_PER_WORD
     available_words = source_words * NARRATION_WORDS_PER_SOURCE_WORD
     n_possible = max(1, math.ceil(available_words / words_per_segment))
 
     n_wanted = min(n_needed, n_possible)
-    n_final = min(n_wanted, max(1, max_segments))
+    cap = max(1, max_segments)
+    # Floor at one unit per usable topic. Without this, a chapter too thin to
+    # fill even one slice per topic collapses to a single unit — and because
+    # slices are cut from ONE topic's body, every other topic's text is then
+    # never taught at all. That is silent content loss, which is the defect
+    # class this whole story exists to remove, so the floor takes precedence
+    # over the duration arithmetic. Found by the how-to and tier integration
+    # tests, not by the unit tests, which is why they exercise the real graph.
+    #
+    # The operator cap still wins: if `max_segments` is below the topic count,
+    # topics genuinely are dropped, and `capped_by_max_segments` records it.
+    n_final = min(max(n_wanted, len(usable)), cap)
 
-    # Allocate proportionally to body length, but never erase a topic:
-    # topic_selection chose each one deliberately, and a topic with no slice
-    # would silently drop the content it represents.
-    per_topic = _allocate(bodies, n_final)
+    # Allocate across the usable topics only, then scatter back onto the
+    # original indices. `_allocate` is authoritative for the total: it never
+    # returns more than it was given, so the cap holds even when there are
+    # more topics than slices (PR #255 review, finding 2).
+    allocated = _allocate([topic_bodies[i] for i in usable], n_final)
+    per_topic = [0] * len(topic_bodies)
+    for slot, topic_index in enumerate(usable):
+        per_topic[topic_index] = allocated[slot]
     n_final = sum(per_topic)
 
     achievable_words = min(n_final * words_per_segment, available_words)
@@ -187,7 +209,7 @@ def plan_segments(
         requested_min_minutes=max(0.0, min_narration_minutes),
         achievable_minutes=achievable_minutes,
         content_limited=achievable_minutes + 1e-9 < min_narration_minutes,
-        capped_by_max_segments=n_wanted > max(1, max_segments),
+        capped_by_max_segments=max(n_wanted, len(usable)) > cap,
     )
 
 
@@ -198,9 +220,19 @@ def _allocate(bodies: list[str], total: int) -> list[int]:
     would drift the lesson's real length away from the plan it was built from.
     """
     k = len(bodies)
+    if total <= 0:
+        return [0] * k
     if total <= k:
-        # Not enough to go round: one each. Never zero — see plan_segments.
-        return [1] * k
+        # Fewer slices than topics. "At least one each" is impossible here, and
+        # inventing extra slices would silently breach max_narration_segments —
+        # the documented hard cap (PR #255 review, finding 2). Give the one
+        # slice to the largest topics and zero to the rest; the shortfall is
+        # already reported through content_limited / capped_by_max_segments.
+        ranked = sorted(range(k), key=lambda i: len(bodies[i]), reverse=True)
+        counts = [0] * k
+        for i in ranked[:total]:
+            counts[i] = 1
+        return counts
 
     lengths = [float(len(b)) for b in bodies]
     span = sum(lengths)

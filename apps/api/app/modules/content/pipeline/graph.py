@@ -1555,6 +1555,7 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
     from app.config import get_settings
     from app.core.db import get_supabase
     from app.modules.content.pipeline.nodes.segment_expansion import (
+        CHARS_PER_WORD,
         plan_segments,
         split_body,
     )
@@ -1611,7 +1612,10 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
     # the per-unit word budget expressed in characters; `max_chars` is the
     # unchanged Phase-1 window, so no slice can ever exceed what the LLM will
     # be shown (which is what made the old truncation lossy).
-    target_chars = int(words_per_segment * 6.0)
+    # Shared with the planner's capacity maths — a retyped 6.0 here would
+    # silently desync slice size from capacity if either were tuned
+    # (PR #255 review, finding 5).
+    target_chars = int(words_per_segment * CHARS_PER_WORD)
     expanded: list[dict[str, Any]] = []
     for topic_index, section in enumerate(sections):
         body = section.get("body") or ""
@@ -1620,13 +1624,23 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
             if topic_index < len(plan.per_topic_segments)
             else 1
         )
+        # No `or [body]` fallback: split_body returns [] for an empty body by
+        # contract, and coercing that to [""] shipped a blank delivery unit to
+        # all five Phase-1 economy nodes as a real segment — exactly what that
+        # contract exists to prevent (PR #255 review, finding 3). A topic the
+        # plan allocated nothing to is likewise skipped, not forced to one.
+        if want <= 0:
+            continue
         pieces = split_body(
             body, target_chars=target_chars, max_chars=settings.section_body_max_chars
-        ) or [body]
-        # Only as many units as the plan allocated: a topic far larger than the
-        # duration needs is taught from its prefix rather than fanned out past
-        # the budget. Recorded as a known limitation in the story.
-        pieces = pieces[: max(1, want)]
+        )
+        if not pieces:
+            continue
+        # Only as many units as the plan allocated. D191: a topic far larger
+        # than the duration needs is taught from its PREFIX — the tail is never
+        # reached. Acceptable while topic_selection owns which content is
+        # taught, but it is a selection bias, not a neutral truncation.
+        pieces = pieces[:want]
         for piece_index, piece in enumerate(pieces):
             slice_section = dict(section)
             slice_section["body"] = piece
