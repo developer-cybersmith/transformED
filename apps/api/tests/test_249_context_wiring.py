@@ -172,3 +172,128 @@ def test_phase1_economy_nodes_never_reference_either_context():
         source = inspect.getsource(getattr(graph_module, name))
         assert "book_context" not in source, f"{name} must not reference book_context (D189)"
         assert "chapter_context" not in source, f"{name} must not reference chapter_context (D189)"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# E. slide_generator_node / narration_generator_node — chapter_context text
+#    actually reaches the real constructed LLM prompt (AC 6, AC 7). Mirrors
+#    test_slide_generator_node.py's own
+#    test_prompt_never_includes_raw_summaries_or_sections style: inspect the
+#    real prompt sent to the mocked provider, not just that a mock was called.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_slide_generator_node_prompt_includes_chapter_context() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    plan_segments = [
+        {
+            "segment_id": "sec_0",
+            "title": "Getting Started",
+            "summary": "Intro summary.",
+            "duration_min": 4.0,
+        },
+    ]
+    state = {
+        "lesson_id": "40404040-4040-4040-4040-404040404040",
+        "lesson_plan": {
+            "title": "T",
+            "subject": "S",
+            "objectives": ["O"],
+            "complexity_level": "medium",
+            "total_segments": 1,
+            "total_duration_min": 4.0,
+            "segments": plan_segments,
+        },
+        "progress_pct": 38.0,
+        "error": None,
+        "chapter_context": (
+            "\n\n[Chapter Instructions]\nStudent-supplied doubt: UNIQUE_CHAPTER_DOUBT_MARKER_XYZ"
+        ),
+    }
+
+    response = MagicMock()
+    seg_mock = MagicMock(
+        segment_id="sec_0",
+        slides=[MagicMock(title="Welcome", bullets=["Point A"])],
+    )
+    response.segments = [seg_mock]
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = response
+    sb = MagicMock()
+    jobs_mock = MagicMock()
+    jobs_mock.select.return_value.eq.return_value.single.return_value.execute.return_value.data = {
+        "node_outputs": {}
+    }
+    jobs_mock.update.return_value.eq.return_value.execute.return_value = MagicMock()
+    sb.table.return_value = jobs_mock
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+    ):
+        await slide_generator_node(state)
+
+    sent_messages = mock_provider.complete_structured.call_args.args[0]
+    full_prompt = "\n".join(m["content"] for m in sent_messages)
+    assert "UNIQUE_CHAPTER_DOUBT_MARKER_XYZ" in full_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_generator_node_prompt_includes_chapter_context() -> None:
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from app.modules.content.pipeline.graph import narration_generator_node
+
+    mock_output = type(
+        "Narration",
+        (),
+        {"narration_style": "conversational", "script": "Let's begin."},
+    )()
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = mock_output
+
+    state = {
+        "lesson_id": "40404040-4040-4040-4040-404040404040",
+        "_section": {
+            "title": "Intro",
+            "body": "prose. " * 20,
+            "page_start": 1,
+            "page_end": 2,
+        },
+        "_section_index": 0,
+        "chapter_context": (
+            "\n\n[Chapter Instructions]\nStudent-supplied doubt: UNIQUE_NARRATION_DOUBT_MARKER_XYZ"
+        ),
+    }
+
+    jobs_mock = MagicMock()
+    _jobs_data = {"node_outputs": {}}
+    jobs_mock.select.return_value.eq.return_value.single.return_value.execute.return_value.data = (
+        _jobs_data
+    )
+    _maybe_single = jobs_mock.select.return_value.eq.return_value.maybe_single
+    _maybe_single.return_value.execute.return_value.data = _jobs_data
+    jobs_mock.update.return_value.eq.return_value.execute.return_value = MagicMock()
+    mock_supabase = MagicMock()
+    mock_supabase.table.return_value = jobs_mock
+    mock_redis = AsyncMock()
+    mock_redis.get.return_value = None
+
+    with (
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+        patch("app.core.db.get_supabase", return_value=mock_supabase),
+        patch("app.core.redis.get_redis", return_value=mock_redis),
+        patch("app.core.cost_tracker.check_ceiling", new=AsyncMock(return_value=False)),
+    ):
+        await narration_generator_node(state)
+
+    sent_messages = mock_provider.complete_structured.call_args.args[0]
+    full_prompt = "\n".join(m["content"] for m in sent_messages)
+    assert "UNIQUE_NARRATION_DOUBT_MARKER_XYZ" in full_prompt
