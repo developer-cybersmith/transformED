@@ -924,6 +924,33 @@ name never collides with the Account button's.
 
 ---
 
+## D189 — Sidebar's collapsed-state expand toggle was invisible (clipped by overflow-hidden)
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 2 (frontend) · **Detected:** 2026-09-25, direct user
+report immediately after PR #251's sidebar collapse feature (D183) merged to `main` ·
+**Fixed:** 2026-09-25, same day, `docs/stories/sidebar-collapsed-toggle-clipped.md`
+
+D183's new collapse toggle, when collapsed, was positioned `absolute -right-3 top-11` —
+deliberately floated 12px outside the sidebar's own right edge, as a circular button peeking
+past the collapsed rail. The `<aside>` element carries `overflow-hidden` (needed for the
+rounded-corner card look and the gradient overlay). A child positioned outside its nearest
+`overflow-hidden` ancestor's bounds is clipped by it — the button rendered, but was invisible
+(or only a sliver visible), with no way to click it to expand again short of clearing
+`localStorage` or a hard reload landing on the always-expanded first-paint frame.
+
+**Resolution:** the collapsed-state Logo Area now stacks the logo and the toggle vertically
+(`flex-col items-center`) instead of trying to fit them side-by-side in the ~40px of content
+width left after padding on the 80px (`w-20`) collapsed rail. The toggle no longer uses
+`absolute` positioning or a negative offset in either state — it stays fully in-flow, inside
+the sidebar's own clipped bounds, in both layouts.
+
+**Enforcement:** `Sidebar.test.tsx`'s new regression test asserts the collapsed toggle's
+`className` never matches `absolute` combined with a negative-offset utility — the structural
+signature of the actual bug. jsdom doesn't compute real layout/clipping, so a class-level
+assertion is the meaningful guard here, not a pixel-level one.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
