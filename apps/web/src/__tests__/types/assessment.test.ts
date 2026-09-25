@@ -74,21 +74,34 @@ describe('assessment types', () => {
     expect(sub.segment_id).toBe('seg_01');
   });
 
-  it('OnboardingAnswer has dimension union type', () => {
+  it('OnboardingAnswer has a format union type (Story 235: 3 answer formats)', () => {
     const ans: OnboardingAnswer = {
-      question_id: 'c1',
-      dimension: 'cognitive',
+      question_id: 'q1',
+      format: 'mcq',
       selected_index: 2,
-      selected_text: 'I prefer to understand the why',
+      response_text: 'I prefer to understand the why',
     };
-    expect(['cognitive', 'emotional', 'self_direction']).toContain(ans.dimension);
+    expect(['mcq', 'one_liner', 'true_false']).toContain(ans.format);
+  });
+
+  it('OnboardingAnswer supports one_liner and true_false formats', () => {
+    const oneLiner: OnboardingAnswer = {
+      question_id: 'q21',
+      format: 'one_liner',
+      response_text: 'Pass my exam by December',
+    };
+    const trueFalse: OnboardingAnswer = {
+      question_id: 'q26',
+      format: 'true_false',
+      response_bool: true,
+    };
+    expect(oneLiner.response_text).toBe('Pass my exam by December');
+    expect(trueFalse.response_bool).toBe(true);
   });
 
   it('OnboardingDiagnosticSubmission uses responses[] (not subject/grade_level)', () => {
     const sub: OnboardingDiagnosticSubmission = {
-      responses: [
-        { question_id: 'c1', dimension: 'cognitive', selected_index: 1, selected_text: 'Why' },
-      ],
+      responses: [{ question_id: 'q1', format: 'mcq', selected_index: 1, response_text: 'Why' }],
     };
     expect(sub.responses).toHaveLength(1);
     expect(Object.keys(sub)).not.toContain('subject');

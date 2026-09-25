@@ -8,19 +8,23 @@ import { AnimatePresence } from "framer-motion";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { onboardingService } from "@/services/onboarding.service";
-import { QuestionCard } from "./QuestionCard";
+import { QuestionCard, type AnswerValue } from "./QuestionCard";
 import { DNAResultCard } from "./DNAResultCard";
-import { QUESTIONS, DIMENSION_LABEL } from "./questions";
-import type { LearnerDNA, OnboardingResult } from "@/types/assessment";
+import { QUESTIONS, type Question } from "./questions";
+import type { LearnerDNA, OnboardingAnswer, OnboardingResult } from "@/types/assessment";
 
 type Phase = "checking" | "disclaimer" | "questions" | "result" | "error";
 
 const TOTAL = QUESTIONS.length;
-const STORAGE_KEY = "onboarding_progress_v1";
+// Story 235: bumped from v1 -- a persisted v1 blob (old 20-question,
+// index-only answer shape) must never be resumed into the new 30-question
+// 3-format flow. Old key is never read or migrated; a returning user
+// mid-way through the old form on redeploy day simply restarts.
+const STORAGE_KEY = "onboarding_progress_v2";
 
 interface PersistedProgress {
     current: number;
-    answers: Record<string, number>;
+    answers: Record<string, AnswerValue>;
     disclaimerAcknowledged: boolean;
     // Set only while resuming a re-assessment (Story 2-12) — ties the persisted blob to the
     // specific reassessment instance so a stale attempt from an earlier due session_count is
@@ -74,11 +78,29 @@ function getErrorDetail(err: unknown): string | undefined {
     return axios.isAxiosError<{ detail?: string }>(err) ? err.response?.data?.detail : undefined;
 }
 
+// Story 235 AC9: distinguishes "unanswered" from "answered false" (true_false)
+// and "answered index 0" (mcq) for every format — blank/whitespace-only text
+// never counts as answered for one_liner, consistent with the backend's own
+// model_validator on OnboardingAnswer.
+//
+// Also requires value.format === question.format: a persisted answer whose
+// format no longer matches the current question at that id (e.g. sessionStorage
+// held a stale mid-flight blob from before a question's format changed in a
+// later deploy) is treated as NOT answered, rather than silently letting the
+// student proceed/submit — forces a fresh answer in the current format instead
+// of handleSubmit()'s own per-question fallback silently fabricating one.
+function isAnswered(value: AnswerValue | undefined, question: Question): boolean {
+    if (!value) return false;
+    if (value.format !== question.format) return false;
+    if (value.format === "one_liner") return value.text.trim().length > 0;
+    return true; // mcq: index is always a definite number once set; true_false: value is always set once set
+}
+
 export function OnboardingFlow() {
     const router = useRouter();
     const [phase, setPhase] = useState<Phase>("checking");
     const [current, setCurrent] = useState(0);
-    const [answers, setAnswers] = useState<Record<string, number>>({});
+    const [answers, setAnswers] = useState<Record<string, AnswerValue>>({});
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [result, setResult] = useState<OnboardingResult | LearnerDNA | null>(null);
     const [submitError, setSubmitError] = useState<string | null>(null);
@@ -143,12 +165,12 @@ export function OnboardingFlow() {
     }, [phase, current, answers, dueSessionCount]);
 
     const question = QUESTIONS[current];
-    const selectedIndex = question ? answers[question.id] : undefined;
+    const currentAnswer = question ? answers[question.id] : undefined;
     const isLast = current === TOTAL - 1;
-    const canProceed = selectedIndex !== undefined;
+    const canProceed = question ? isAnswered(currentAnswer, question) : false;
 
-    function handleSelect(index: number) {
-        setAnswers((prev) => ({ ...prev, [question.id]: index }));
+    function handleChange(value: AnswerValue) {
+        setAnswers((prev) => ({ ...prev, [question.id]: value }));
     }
 
     function handleBack() {
@@ -164,12 +186,25 @@ export function OnboardingFlow() {
         setSubmitError(null);
         setSubmitErrorTerminal(false);
 
-        const responses = QUESTIONS.map((q) => ({
-            question_id: q.id,
-            dimension: q.dimension,
-            selected_index: answers[q.id] ?? 0,
-            selected_text: q.options[answers[q.id] ?? 0],
-        }));
+        const responses: OnboardingAnswer[] = QUESTIONS.map((q) => {
+            const a = answers[q.id];
+            if (q.format === "mcq") {
+                const index = a?.format === "mcq" ? a.index : 0;
+                return {
+                    question_id: q.id,
+                    format: "mcq",
+                    selected_index: index,
+                    response_text: q.options?.[index] ?? "",
+                };
+            }
+            if (q.format === "one_liner") {
+                const text = a?.format === "one_liner" ? a.text : "";
+                return { question_id: q.id, format: "one_liner", response_text: text };
+            }
+            // true_false
+            const value = a?.format === "true_false" ? a.value : false;
+            return { question_id: q.id, format: "true_false", response_bool: value };
+        });
 
         try {
             const data = await onboardingService.submitOnboarding(responses);
@@ -297,9 +332,6 @@ export function OnboardingFlow() {
             <div className="mb-6">
                 <div className="mb-1.5 flex items-center justify-between text-xs text-neutral-400">
                     <span>Question {current + 1} of {TOTAL}</span>
-                    <span className="font-medium text-[var(--accent-primary)]">
-                        {DIMENSION_LABEL[question.dimension]}
-                    </span>
                 </div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-neutral-200">
                     <div
@@ -313,8 +345,8 @@ export function OnboardingFlow() {
                 <QuestionCard
                     key={question.id}
                     question={question}
-                    selectedIndex={selectedIndex}
-                    onSelect={handleSelect}
+                    value={currentAnswer}
+                    onChange={handleChange}
                 />
             </AnimatePresence>
 

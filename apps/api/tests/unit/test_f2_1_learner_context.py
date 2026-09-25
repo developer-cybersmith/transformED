@@ -105,12 +105,15 @@ def _mock_supabase(
     dna_row: dict | None = _DNA_ROW,
     quiz_rows: list[dict] | None = None,
     teachback_rows: list[dict] | None = None,
+    headline_rows: list[dict] | None = None,
 ) -> MagicMock:
     """Build a Supabase client mock returning the given rows."""
     if quiz_rows is None:
         quiz_rows = _QUIZ_ROWS
     if teachback_rows is None:
         teachback_rows = _TEACHBACK_ROWS
+    if headline_rows is None:
+        headline_rows = []  # Story 235: Tier A headline answers (Q1-Q5), empty by default
 
     supabase = MagicMock()
 
@@ -152,6 +155,17 @@ def _mock_supabase(
             chain.execute.return_value = execute_resp
             return chain
 
+        def _chain_headline_answers():
+            # Story 235: _read_onboarding_headline_answers's .eq().in_().limit().execute()
+            chain = MagicMock()
+            chain.eq.return_value = chain
+            chain.in_.return_value = chain
+            chain.limit.return_value = chain
+            execute_resp = MagicMock()
+            execute_resp.data = headline_rows or []
+            chain.execute.return_value = execute_resp
+            return chain
+
         if table_name == "sessions":
             m.select.return_value = _chain_sessions()
         elif table_name == "learner_dna":
@@ -160,6 +174,8 @@ def _mock_supabase(
             m.select.return_value = _chain_quiz()
         elif table_name == "teachback_attempts":
             m.select.return_value = _chain_teachback()
+        elif table_name == "onboarding_answers_v2":
+            m.select.return_value = _chain_headline_answers()
         else:
             m.select.return_value = MagicMock()
 
@@ -307,6 +323,155 @@ def test_dna_block_populated_when_row_exists(mock_single_row, mock_to_thread):
     assert labels["curiosity_index"] == "strong"
     # help_seeking=43.0 → "building" (35≤x<55)
     assert labels["help_seeking"] == "building"
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Story 235 AC6 — Tier A headline preferences (Q1-Q5) populate LearnerContextDNA
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+@patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn())
+@patch("app.modules.assessment.service.single_row")
+def test_dna_block_includes_tier_a_headline_answers_when_present(mock_single_row, mock_to_thread):
+    """AC6: stated_goal/current_level/schooling_level/preferred_language/preferred_tone
+    are populated from onboarding_answers_v2's Q1-Q5 rows, and the prompt_text includes
+    a Stated Preferences line built from them."""
+    mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
+
+    import asyncio
+
+    from app.modules.assessment.service import get_learner_context
+
+    headline_rows = [
+        {"question_id": "q1", "response_text": "Crack a competitive exam"},
+        {"question_id": "q2", "response_text": "Intermediate"},
+        {"question_id": "q4", "response_text": "Witty / humorous"},
+    ]
+    result = asyncio.run(
+        get_learner_context(
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            supabase=_mock_supabase(headline_rows=headline_rows),
+        )
+    )
+
+    assert result.dna is not None
+    assert result.dna.stated_goal == "Crack a competitive exam"
+    assert result.dna.current_level == "Intermediate"
+    assert result.dna.preferred_tone == "Witty / humorous"
+    # q3 (language) and q5 (schooling) had no row — stay None
+    assert result.dna.preferred_language is None
+    assert result.dna.schooling_level is None
+
+    assert "Stated Preferences" in result.prompt_text
+    assert "Crack a competitive exam" in result.prompt_text
+    assert "Witty / humorous" in result.prompt_text
+
+
+@pytest.mark.unit
+@patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn())
+@patch("app.modules.assessment.service.single_row")
+def test_dna_block_tier_a_fields_none_and_no_preferences_line_when_absent(
+    mock_single_row, mock_to_thread
+):
+    """AC6: when the student hasn't onboarded via the new form (no Q1-Q5 rows), all
+    5 headline fields are None and no 'Stated Preferences' line is added."""
+    mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
+
+    import asyncio
+
+    from app.modules.assessment.service import get_learner_context
+
+    result = asyncio.run(
+        get_learner_context(
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            supabase=_mock_supabase(headline_rows=[]),
+        )
+    )
+
+    assert result.dna is not None
+    headline_fields = (
+        "stated_goal",
+        "current_level",
+        "schooling_level",
+        "preferred_language",
+        "preferred_tone",
+    )
+    for field in headline_fields:
+        assert getattr(result.dna, field) is None
+    assert "Stated Preferences" not in result.prompt_text
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Story 235 AC6b — Penta badges must actually reach the tutor prompt, not just
+# process_onboarding()'s own response. Reverting _VALID_BADGE_LABELS' union back
+# to frozenset(BADGE_THRESHOLDS.values()) alone must fail this test.
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+@patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn())
+@patch("app.modules.assessment.service.single_row")
+def test_prompt_text_surfaces_a_penta_badge_when_present(mock_single_row, mock_to_thread):
+    """AC6b: a Penta-Intelligence badge (Story 235, PENTA_BADGE_THRESHOLDS) in
+    dna.badge_labels must actually appear in _build_learner_prompt_text's output —
+    not just in process_onboarding()'s returned OnboardingResult (AC10 alone
+    doesn't cover this path, since DNAResultCard.tsx reads badge_labels unfiltered
+    and would have masked a regression here). Without _VALID_BADGE_LABELS
+    unioning in PENTA_BADGE_THRESHOLDS.values(), a real Penta badge renders fine
+    on the result card but is silently stripped from the tutor's system prompt."""
+    mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
+
+    import asyncio
+
+    from app.modules.assessment.service import get_learner_context
+
+    dna_row_with_penta_badge = {**_DNA_ROW, "badge_labels": ["Sharp Reasoner"]}
+    result = asyncio.run(
+        get_learner_context(
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            supabase=_mock_supabase(dna_row=dna_row_with_penta_badge),
+        )
+    )
+
+    assert result.dna is not None
+    assert "Sharp Reasoner" in result.dna.badge_labels
+    assert "Sharp Reasoner" in result.prompt_text, (
+        "A Penta badge present on dna.badge_labels must reach the tutor prompt text "
+        "via _build_learner_prompt_text's allowlist filter, not be silently stripped."
+    )
+
+
+@pytest.mark.unit
+@patch("asyncio.to_thread", side_effect=lambda fn, *a, **kw: fn())
+@patch("app.modules.assessment.service.single_row")
+def test_prompt_text_excludes_a_badge_label_outside_both_allowlists(
+    mock_single_row, mock_to_thread
+):
+    """AC6b negative case: a badge_labels entry that is neither an old 9-dimension
+    badge nor a Penta badge (e.g. stale/corrupted DB data) must not reach the
+    prompt text — proves the allowlist filters, not just passes everything through."""
+    mock_single_row.side_effect = lambda resp: resp.data[0] if resp.data else None
+
+    import asyncio
+
+    from app.modules.assessment.service import get_learner_context
+
+    dna_row_with_bogus_badge = {**_DNA_ROW, "badge_labels": ["Not A Real Badge"]}
+    result = asyncio.run(
+        get_learner_context(
+            session_id=_SESSION_ID,
+            user_id=_USER_ID,
+            supabase=_mock_supabase(dna_row=dna_row_with_bogus_badge),
+        )
+    )
+
+    assert result.dna is not None
+    assert "Not A Real Badge" not in result.prompt_text
+    assert "none yet" in result.prompt_text
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -185,20 +185,38 @@ class TeachbackResult(BaseModel):
 
 
 # ── Onboarding schemas ─────────────────────────────────────────────────────────
-# Frozen contract (Sprint 2, Story 3-18) — shape changes require 4-dev PR review.
+# Frozen contract (Sprint 2, Story 3-18; reshaped Story 235, 4-dev-reviewed PR #239).
 # No raw numeric dimension scores in OnboardingResult (CLAUDE.md Learner DNA rules).
+# Story 235: OnboardingAnswer now carries 3 answer formats (mcq/one_liner/true_false)
+# instead of MCQ-only, replacing the old dimension-tagged shape.
 
 
 class OnboardingAnswer(BaseModel):
     question_id: str
-    dimension: Literal["cognitive", "emotional", "self_direction"]
-    selected_index: int = Field(ge=0, le=3)
-    selected_text: str
-    response_time_ms: int | None = Field(default=None, ge=0)
+    format: Literal["mcq", "one_liner", "true_false"]
+    selected_index: int | None = Field(default=None, ge=0)
+    response_text: str | None = Field(default=None, max_length=1000)
+    response_bool: bool | None = None
+    # le=3_600_000 (1 hour): generous but principled ceiling — a client-reported
+    # timing value with no upper bound corrupts any future per-question timing
+    # analytics (e.g. a stray 27+ hour value). Flagged in PR #239 review.
+    response_time_ms: int | None = Field(default=None, ge=0, le=3_600_000)
+
+    @model_validator(mode="after")
+    def _validate_shape_matches_format(self) -> OnboardingAnswer:
+        if self.format == "mcq" and (
+            self.selected_index is None or not (self.response_text or "").strip()
+        ):
+            raise ValueError("mcq answers require selected_index and non-blank response_text")
+        if self.format == "one_liner" and not (self.response_text or "").strip():
+            raise ValueError("one_liner answers require non-blank response_text")
+        if self.format == "true_false" and self.response_bool is None:
+            raise ValueError("true_false answers require response_bool")
+        return self
 
 
 class OnboardingDiagnosticSubmission(BaseModel):
-    responses: list[OnboardingAnswer] = Field(min_length=20, max_length=20)
+    responses: list[OnboardingAnswer] = Field(min_length=30, max_length=30)
 
 
 class OnboardingResult(BaseModel):
@@ -272,6 +290,14 @@ class LearnerContextDNA(BaseModel):
     profile_text: str | None  # always ends with DPDP Act 2023 disclaimer when not None
     session_count: int
     dimension_labels: dict[str, str]  # 9 dimension keys → band: strong|developing|building|emerging
+    # Story 235 (Tier A, Q1-5): plain onboarding preference facts, read directly —
+    # never derived/scored. All None when the student hasn't onboarded via the new
+    # 30-question form, or has no answer on file for that specific question.
+    stated_goal: str | None = None
+    current_level: str | None = None
+    schooling_level: str | None = None
+    preferred_language: str | None = None
+    preferred_tone: str | None = None
 
 
 class LearnerContextSession(BaseModel):

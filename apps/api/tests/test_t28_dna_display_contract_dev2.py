@@ -52,6 +52,13 @@ _RAW_DIMENSION_KEYS: list[str] = [
     "cognitive_score",
     "emotional_score",
     "self_direction_score",
+    # Story 235: 5 new Penta-Intelligence learner_dna columns — same rule applies,
+    # raw scores never reach a student-facing response, only descriptive badges.
+    "penta_iq",
+    "penta_eq",
+    "penta_sq",
+    "penta_ctq",
+    "penta_rrq",
 ]
 
 # AC5: badge labels must never use clinical or pseudo-clinical framing.
@@ -102,21 +109,56 @@ _FULL_DNA_ROW: dict = {
     "goal_orientation": 92.0,
     "curiosity_index": 79.0,
     "study_independence": 84.0,
+    # Story 235: 5 Penta-Intelligence columns — must also be stripped (AC1 forward-guard)
+    "penta_iq": 91.0,
+    "penta_eq": 88.0,
+    "penta_sq": 73.0,
+    "penta_ctq": 95.0,
+    "penta_rrq": 60.0,
 }
 
-# Minimal 20-answer onboarding payload — schema requires exactly 20 OnboardingAnswer objects.
-_VALID_ONBOARDING_PAYLOAD: dict = {
-    "responses": [
-        {
-            "question_id": f"q{i:02d}",
-            "dimension": ["cognitive", "emotional", "self_direction"][i % 3],
-            "selected_index": 2,
-            "selected_text": "Sometimes",
-            "response_time_ms": 1500,
-        }
-        for i in range(20)
-    ]
-}
+
+def _valid_onboarding_payload() -> dict:
+    """30-answer onboarding payload (Story 235 shape: q1-q30, 3 formats) — schema
+    requires exactly 30 OnboardingAnswer objects. process_onboarding is mocked in
+    every test that uses this, so only Pydantic-level validity matters here."""
+    from app.modules.assessment.onboarding_questions import MCQ_OPTION_COUNTS, Q_SPEC
+
+    responses = []
+    for qid, fmt in Q_SPEC.items():
+        if fmt == "mcq":
+            index = min(2, MCQ_OPTION_COUNTS[qid] - 1)
+            responses.append(
+                {
+                    "question_id": qid,
+                    "format": "mcq",
+                    "selected_index": index,
+                    "response_text": "Sometimes",
+                    "response_time_ms": 1500,
+                }
+            )
+        elif fmt == "one_liner":
+            responses.append(
+                {
+                    "question_id": qid,
+                    "format": "one_liner",
+                    "response_text": "An honest answer.",
+                    "response_time_ms": 1500,
+                }
+            )
+        else:
+            responses.append(
+                {
+                    "question_id": qid,
+                    "format": "true_false",
+                    "response_bool": True,
+                    "response_time_ms": 1500,
+                }
+            )
+    return {"responses": responses}
+
+
+_VALID_ONBOARDING_PAYLOAD: dict = _valid_onboarding_payload()
 
 # Realistic onboarding service return dict — includes all nine dimension fields to prove AC2.
 # The real process_onboarding() never includes these (OnboardingResult schema has no dimension
@@ -145,6 +187,12 @@ _ONBOARDING_RESULT_DICT: dict = {
     "cognitive_score": 67.0,
     "emotional_score": 71.0,
     "self_direction_score": 73.0,
+    # Story 235: 5 Penta-Intelligence columns — must also be stripped (AC2 forward-guard)
+    "penta_iq": 91.0,
+    "penta_eq": 88.0,
+    "penta_sq": 73.0,
+    "penta_ctq": 95.0,
+    "penta_rrq": 60.0,
 }
 
 

@@ -2136,6 +2136,38 @@ re-mounts). Full frontend suite: 95 files / 1269 tests, zero regressions. Full d
 
 ---
 
+## 13B. Platform Change Initiative
+
+### Story 235 — Onboarding Form: 20-Question → 30-Question Redesign (GitHub issue #235, added 2026-09-22)
+**Priority:** Medium — **Status:** ✅ DONE — ✅ 2026-09-22 (branch `feature/235-onboarding-30-question-redesign`, PR #239)
+
+Full end-to-end replacement of the onboarding diagnostic per the product spec's Section 4.1: 30
+questions across 3 formats (20 MCQ, 5 one-liner free-text, 5 true/false), replacing the old 20-question
+MCQ-only c/e/s-dimension form. First draft of this story proposed dropping Learner DNA computation
+from onboarding entirely, reasoning the new taxonomy doesn't map onto the old 9 behavioral dimensions
+— caught in review (the whole point of onboarding is to seed a first-lesson profile before any
+session exists). Revised, PR-approved plan: a 3-tier split matching the source spec's own design —
+**Tier A** (Q1-5, plain preference facts, stored raw and wired directly into the tutor's existing
+`LearnerContextDNA` prompt-injection path, no scoring); **Tier B** (Q16-20, the PDF's own "(scored)"
+Penta-Intelligence section, a real answer key → 5 new `learner_dna` columns, additive alongside the
+untouched 9 behavioral ones); **Tier C** (Q6-15 + Q21-30, each naming a system issue #235 itself
+defers — stored raw only). New `onboarding_answers_v2` table (with RLS) replaces `onboarding_responses`
+as the write target for the new form; the frozen `onboarding_responses`/`initial_schema.sql` are
+untouched. Two frozen-contract changes (`OnboardingAnswer`'s 3-format shape, `LearnerContextDNA`'s 5
+new fields) went through the full 4-developer review PR #239 requires — Dev 4 caught a missing RLS
+policy on the new table and a badge-allowlist gap that would have silently stripped Penta badges from
+the tutor prompt; Dev 3 caught a missing `D-nn` register entry (now D171) and required a PDF-sourced
+verification table for the Penta scoring answer key before implementation. 15 existing backend test
+files updated for the new shape (not deleted), plus 2 pre-existing test-mock bugs found and fixed
+along the way (both test-only, no production impact). Full backend suite run in full (not scoped to
+touched files, per CLAUDE.md binding rule 1): 2708 passed, 75 failed, all 75 pre-existing/unrelated
+(missing optional deps, network-dependent smoke tests, tutor-state-machine timing flakiness, and
+another PR's rate-limiter test-isolation issue) — zero onboarding/assessment files in the failure
+list. Full frontend suite: 95 files / 1279 tests, zero regressions (baseline 95/1254). Full detail in
+`docs/stories/235-onboarding-30-question-redesign.md`.
+
+---
+
 ## 14. Launch Week
 **Period:** Week 10 | **Status:** 🔲 NOT STARTED
 

@@ -132,6 +132,33 @@ def _build_dna_service_supabase(dna_data: dict | None = None) -> MagicMock:
     return supabase
 
 
+def _dummy_30_responses():
+    """30 minimally-valid OnboardingAnswer objects (Story 235 shape) -- used only to
+    satisfy OnboardingDiagnosticSubmission's Pydantic validation in tests where
+    process_onboarding itself is mocked out and never inspects the content."""
+    from app.modules.assessment.onboarding_questions import MCQ_OPTION_COUNTS, Q_SPEC
+    from app.modules.assessment.schemas import OnboardingAnswer
+
+    answers = []
+    for qid, fmt in Q_SPEC.items():
+        if fmt == "mcq":
+            index = min(1, MCQ_OPTION_COUNTS[qid] - 1)
+            answers.append(
+                OnboardingAnswer(
+                    question_id=qid, format="mcq", selected_index=index, response_text="Option A"
+                )
+            )
+        elif fmt == "one_liner":
+            answers.append(
+                OnboardingAnswer(question_id=qid, format="one_liner", response_text="Answer.")
+            )
+        else:
+            answers.append(
+                OnboardingAnswer(question_id=qid, format="true_false", response_bool=True)
+            )
+    return answers
+
+
 _DEFAULT_DNA_ROW = {
     "user_id": "user-123",
     "badge_labels": ["Pattern Thinker"],
@@ -427,7 +454,7 @@ def test_get_learner_dna_data_redis_exception_returns_false():
 def test_submit_onboarding_clears_reassessment_flag():
     """After successful onboarding, redis.delete(user:{uid}:reassessment_due) is called."""
     from app.modules.assessment.router import submit_onboarding_diagnostic
-    from app.modules.assessment.schemas import OnboardingAnswer, OnboardingDiagnosticSubmission
+    from app.modules.assessment.schemas import OnboardingDiagnosticSubmission
 
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)  # onboarding_done key set OK
@@ -435,16 +462,7 @@ def test_submit_onboarding_clears_reassessment_flag():
     mock_redis.delete = AsyncMock()
 
     dummy_result = MagicMock()
-    dummy_responses = [
-        OnboardingAnswer(
-            question_id=f"q{i}",
-            dimension="cognitive",
-            selected_index=0,
-            selected_text="Option A",
-        )
-        for i in range(20)
-    ]
-    body = OnboardingDiagnosticSubmission(responses=dummy_responses)
+    body = OnboardingDiagnosticSubmission(responses=_dummy_30_responses())
     current_user = {"sub": "user-123"}
 
     with (
@@ -467,7 +485,7 @@ def test_submit_onboarding_clears_reassessment_flag():
 def test_submit_onboarding_flag_clear_failure_is_non_fatal():
     """If reassessment flag delete raises, the onboarding result is still returned."""
     from app.modules.assessment.router import submit_onboarding_diagnostic
-    from app.modules.assessment.schemas import OnboardingAnswer, OnboardingDiagnosticSubmission
+    from app.modules.assessment.schemas import OnboardingDiagnosticSubmission
 
     mock_redis = AsyncMock()
     mock_redis.set = AsyncMock(return_value=True)
@@ -480,16 +498,7 @@ def test_submit_onboarding_flag_clear_failure_is_non_fatal():
     mock_redis.delete = _selective_delete
 
     dummy_result = MagicMock()
-    dummy_responses = [
-        OnboardingAnswer(
-            question_id=f"q{i}",
-            dimension="cognitive",
-            selected_index=0,
-            selected_text="Option A",
-        )
-        for i in range(20)
-    ]
-    body = OnboardingDiagnosticSubmission(responses=dummy_responses)
+    body = OnboardingDiagnosticSubmission(responses=_dummy_30_responses())
     current_user = {"sub": "user-123"}
 
     with (
@@ -704,7 +713,7 @@ def test_reassessment_due_false_for_non_one_redis_value():
 def test_submit_onboarding_re_assessment_bypasses_idempotency_guard():
     """When reassessment_due is set, re-submission bypasses the 409 idempotency guard."""
     from app.modules.assessment.router import submit_onboarding_diagnostic
-    from app.modules.assessment.schemas import OnboardingAnswer, OnboardingDiagnosticSubmission
+    from app.modules.assessment.schemas import OnboardingDiagnosticSubmission
 
     mock_redis = AsyncMock()
     # Simulate: onboarding_done exists (nx=True set returns None = not set)
@@ -722,16 +731,7 @@ def test_submit_onboarding_re_assessment_bypasses_idempotency_guard():
     mock_redis.delete = AsyncMock()
 
     dummy_result = MagicMock()
-    dummy_responses = [
-        OnboardingAnswer(
-            question_id=f"q{i}",
-            dimension="cognitive",
-            selected_index=0,
-            selected_text="Option A",
-        )
-        for i in range(20)
-    ]
-    body = OnboardingDiagnosticSubmission(responses=dummy_responses)
+    body = OnboardingDiagnosticSubmission(responses=_dummy_30_responses())
     current_user = {"sub": "user-123"}
 
     with (
@@ -765,7 +765,7 @@ def test_submit_onboarding_bypass_does_not_trigger_for_non_one_flag_value():
     strict '== 1' check is enforced.
     """
     from app.modules.assessment.router import submit_onboarding_diagnostic
-    from app.modules.assessment.schemas import OnboardingAnswer, OnboardingDiagnosticSubmission
+    from app.modules.assessment.schemas import OnboardingDiagnosticSubmission
 
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value="0")  # non-"1" value — bypass must NOT fire
@@ -773,16 +773,7 @@ def test_submit_onboarding_bypass_does_not_trigger_for_non_one_flag_value():
     mock_redis.delete = AsyncMock()
 
     dummy_result = MagicMock()
-    dummy_responses = [
-        OnboardingAnswer(
-            question_id=f"q{i}",
-            dimension="cognitive",
-            selected_index=0,
-            selected_text="Option A",
-        )
-        for i in range(20)
-    ]
-    body = OnboardingDiagnosticSubmission(responses=dummy_responses)
+    body = OnboardingDiagnosticSubmission(responses=_dummy_30_responses())
     current_user = {"sub": "user-456"}
 
     with (

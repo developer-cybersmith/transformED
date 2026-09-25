@@ -215,6 +215,20 @@ async def book_ingest_job(ctx: dict[str, Any], book_id: str, storage_path: str) 
             "page_count": int(extracted["page_count"]),
         }
 
+    except asyncio.CancelledError:
+        # CancelledError is a BaseException, not an Exception (Python 3.8+), so it
+        # skips the `except Exception` branch below entirely -- ARQ's own
+        # arq_job_timeout_s cancels the task this way, and without this branch the
+        # book was left at status='processing' forever with no record ARQ had
+        # already given up (D181). Must re-raise CancelledError itself, not
+        # BookIngestError -- swallowing or retyping it breaks asyncio's own
+        # cancellation contract for the caller.
+        logger.exception("book_ingest_job CANCELLED (timeout or shutdown) book_id=%s", book_id)
+        try:
+            supabase.table("books").update({"status": "failed"}).eq("book_id", book_id).execute()
+        except Exception:  # noqa: BLE001 — never mask the original cancellation
+            logger.exception("book_ingest_job could not mark book %s failed", book_id)
+        raise
     except Exception as exc:
         logger.exception("book_ingest_job FAILED book_id=%s", book_id)
         # Mark failed before re-raising: ARQ retries, and after the last attempt

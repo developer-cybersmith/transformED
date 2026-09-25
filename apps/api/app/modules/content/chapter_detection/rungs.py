@@ -53,6 +53,31 @@ def r1_outline(page_count: int, toc: Sequence[dict[str, Any]]) -> list[DetectedC
     return []
 
 
+#: Bounded budget for stitching a chapter title back together when the PDF's
+#: own typography wraps it across the opener's next visual line(s) -- e.g.
+#: "Chapter 1. Picking an" / "Interpreter" (two physical lines for one title,
+#: confirmed on a real production upload, D182). Both numbers are explicit,
+#: fixed caps: past them the loop simply stops with whatever it has, never an
+#: unbounded absorb-until-something-looks-right scan.
+_TITLE_WORD_TARGET = 3
+_MAX_TITLE_CONTINUATION_LINES = 2
+_MAX_CONTINUATION_CANDIDATE_WORDS = 6
+
+
+def _looks_like_title_continuation(line: str) -> bool:
+    """A short, header-like line that could be the wrapped remainder of a
+    chapter title -- not itself a new chapter opener, a TOC section row, or
+    ordinary body prose (proxied by word count, since font size isn't
+    available at this layer -- see D28/r4_font_signals for why a real,
+    font-aware fix is deferred to the docling migration)."""
+    if not line:
+        return False
+    if CHAPTER_RE.match(line) or SECTION_ROW_RE.match(line):
+        return False
+    words = line.split()
+    return 0 < len(words) <= _MAX_CONTINUATION_CANDIDATE_WORDS
+
+
 def _openers(page_texts: Sequence[str], skip: set[int]) -> list[tuple[int, int, str]]:
     """(chapter_number, page_index, title) for pages that OPEN a chapter."""
     found: list[tuple[int, int, str]] = []
@@ -68,7 +93,22 @@ def _openers(page_texts: Sequence[str], skip: set[int]) -> list[tuple[int, int, 
             if num is None:
                 continue
             tail = (m.group(2) or "").strip()
-            title = tail or (lines[j + 1] if j + 1 < len(lines) else "")
+            if tail:
+                title, k = tail, j + 1
+            else:
+                title = lines[j + 1] if j + 1 < len(lines) else ""
+                k = j + 2
+            appended = 0
+            while (
+                title
+                and len(title.split()) < _TITLE_WORD_TARGET
+                and appended < _MAX_TITLE_CONTINUATION_LINES
+                and k < len(lines)
+                and _looks_like_title_continuation(lines[k])
+            ):
+                title = f"{title} {lines[k]}".strip()
+                k += 1
+                appended += 1
             found.append((num, i, title.strip()))
             break
     return found

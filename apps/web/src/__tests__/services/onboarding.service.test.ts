@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 
 const RESPONSES: OnboardingAnswer[] = [
-  { question_id: 'c1', dimension: 'cognitive', selected_index: 2, selected_text: 'Option C' },
+  { question_id: 'q1', format: 'mcq', selected_index: 2, response_text: 'Option C' },
 ];
 
 describe('onboardingService.submitOnboarding', () => {

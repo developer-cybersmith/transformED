@@ -12,7 +12,7 @@ vi.mock('@/components/reports/SessionReport', () => ({
   },
 }));
 
-import SessionReportPage from '@/app/reports/[sessionId]/page';
+import SessionReportPage from '@/app/(dashboard)/reports/[sessionId]/page';
 
 beforeEach(() => {
   sessionReportMock.mockReset();

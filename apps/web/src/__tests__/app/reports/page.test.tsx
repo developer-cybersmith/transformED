@@ -12,7 +12,7 @@ vi.mock('@/components/reports/ReportsIndex', () => ({
   },
 }));
 
-import ReportsIndexPage from '@/app/reports/page';
+import ReportsIndexPage from '@/app/(dashboard)/reports/page';
 
 beforeEach(() => {
   reportsIndexMock.mockReset();
