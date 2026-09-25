@@ -17,7 +17,12 @@ vi.mock('@/services/books.service', () => ({
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: useAuthMock }));
 
 import { useChapters } from '@/hooks/useChapters';
-import { BOOK_READY, CHAPTERS_CAPTURED } from '../fixtures/books.fixtures';
+import {
+    BOOK_READY,
+    CHAPTER_LATEST_FAILED,
+    CHAPTER_NO_LESSON,
+    CHAPTERS_CAPTURED,
+} from '../fixtures/books.fixtures';
 
 const BOOK_ID = BOOK_READY.book_id;
 
@@ -73,11 +78,15 @@ describe('useChapters', () => {
         expect(refreshInterval([])).toBeGreaterThan(0);
     });
 
-    it('does not poll once the book is ready', () => {
+    it('does not poll once the book is ready AND no chapter has a lesson generating', () => {
         renderHook(() => useChapters(BOOK_ID, 'ready'));
         const refreshInterval = useSWRMock.mock.calls[0][2].refreshInterval;
+        // CHAPTER_LATEST_FAILED ('failed') and CHAPTER_NO_LESSON (null) --
+        // deliberately excludes CHAPTER_LESSON_COUNT_2, whose latest_lesson
+        // is 'running' in the captured fixture (see the test below).
+        const noneGenerating = [CHAPTER_LATEST_FAILED, CHAPTER_NO_LESSON];
 
-        expect(refreshInterval(CHAPTERS_CAPTURED)).toBe(0);
+        expect(refreshInterval(noneGenerating)).toBe(0);
     });
 
     it('does not poll while the book status is still unknown', () => {
@@ -85,6 +94,30 @@ describe('useChapters', () => {
         const refreshInterval = useSWRMock.mock.calls[0][2].refreshInterval;
 
         expect(refreshInterval(undefined)).toBe(0);
+    });
+
+    // D183: `bookStatus === 'ready'` alone used to stop polling dead, even
+    // while a chapter's own lesson generation was still running -- freezing
+    // a "Generating..." card until a manual page refresh. CHAPTERS_CAPTURED's
+    // chapter 1 ("Preliminaries") has latest_lesson.status === 'running' in
+    // the captured fixture, so this reproduces the exact real shape.
+    it('keeps polling once the book is ready IF a chapter has a lesson still generating', () => {
+        renderHook(() => useChapters(BOOK_ID, 'ready'));
+        const refreshInterval = useSWRMock.mock.calls[0][2].refreshInterval;
+
+        expect(refreshInterval(CHAPTERS_CAPTURED)).toBeGreaterThan(0);
+    });
+
+    it('stops polling once every chapter lesson has left queued/running', () => {
+        renderHook(() => useChapters(BOOK_ID, 'ready'));
+        const refreshInterval = useSWRMock.mock.calls[0][2].refreshInterval;
+        const nowSettled = CHAPTERS_CAPTURED.map((chapter) =>
+            chapter.latest_lesson?.status === 'running'
+                ? { ...chapter, latest_lesson: { ...chapter.latest_lesson, status: 'ready' as const } }
+                : chapter,
+        );
+
+        expect(refreshInterval(nowSettled)).toBe(0);
     });
 });
 

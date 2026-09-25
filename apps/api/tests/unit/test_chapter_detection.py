@@ -454,3 +454,84 @@ def test_d2l_leading_introduction_is_not_touched_by_the_numbered_title_heuristic
     kept = [c.title for c in res.chapters]
     assert kept[0] == "Introduction"
     assert res.chapters[0].page_start == 40  # unchanged from the pinned toc page_index
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# D182 (2026-09-24) — a real production upload ("The Hitchhiker's Guide to
+# Python") shipped chapter titles like ". Picking an" instead of "Picking an
+# Interpreter": the PDF wraps the title onto the opener page's NEXT visual
+# line, and CHAPTER_RE's post-number separator plus _openers()'s single-line
+# capture both silently dropped the remainder. Synthetic page_texts (no
+# fixture file needed -- this is exactly the "pure function" design point of
+# the module) reproducing the real wrap byte-for-byte.
+# ════════════════════════════════════════════════════════════════════════════
+@pytest.mark.unit
+def test_a_title_wrapped_onto_the_opener_pages_next_line_is_stitched_back_together() -> None:
+    """The exact real-world input that surfaced D182. Three chapters, not two:
+    the gate's MAX_SHARE=0.40 rule mathematically cannot be satisfied by only
+    two chapters (their spans partition the whole book, so the two shares
+    always sum to 1.0 -- at least one must exceed 0.40)."""
+    pages = [
+        "Chapter 1. Picking an\nInterpreter\nThe State of Python 2 Versus Python 3\nbody",
+        *(["filler body text about interpreters and versions"] * 9),
+        "Chapter 2. Properly\nInstalling Python\nThis chapter walks through installation on",
+        *(["filler body text about installation steps"] * 9),
+        "Chapter 3. Your\nDevelopment Environment\nThis chapter covers editors and IDEs",
+        *(["filler body text about editors and IDEs"] * 9),
+    ]
+    res = detect_chapters(page_count=len(pages), toc=[], page_texts=pages)
+    assert res.rung == "heading"
+    titles = [c.title for c in res.chapters]
+    assert "Picking an Interpreter" in titles
+    assert "Properly Installing Python" in titles
+    assert "Your Development Environment" in titles
+    assert not any(t.startswith(".") for t in titles), f"stray leading punctuation: {titles}"
+
+
+@pytest.mark.unit
+def test_title_continuation_rejects_a_line_that_is_itself_a_chapter_opener() -> None:
+    """A short tail immediately followed by what looks like ANOTHER chapter's
+    opener line must not absorb it as if it were a continuation of THIS
+    title."""
+    from app.modules.content.chapter_detection.rungs import _looks_like_title_continuation
+
+    assert not _looks_like_title_continuation("Chapter 2. Some Other Chapter")
+    assert _looks_like_title_continuation("Interpreter")
+
+
+@pytest.mark.unit
+def test_title_continuation_does_not_absorb_an_ordinary_sentence() -> None:
+    """A short tail followed by a normal (longer) prose sentence must not pull
+    that sentence into the title -- only short, header-like lines qualify."""
+    from app.modules.content.chapter_detection.rungs import _openers
+
+    pages = [
+        "Chapter 1. Setup\n"
+        "This chapter walks through the full installation process end to end\nbody",
+        *(["filler"] * 9),
+    ]
+    found = _openers(pages, skip=set())
+    titles = {num: title for num, _page, title in found}
+    assert titles[1] == "Setup", f"a body sentence was absorbed into the title: {titles[1]!r}"
+
+
+@pytest.mark.unit
+def test_title_continuation_is_bounded_and_does_not_run_away() -> None:
+    """Many consecutive short lines after the opener must not all be absorbed
+    -- the continuation budget is a fixed, explicit cap (CLAUDE.md: every
+    fixed budget must be bounded and stated), not an unbounded scan."""
+    from app.modules.content.chapter_detection.rungs import (
+        _MAX_TITLE_CONTINUATION_LINES,
+        _openers,
+    )
+
+    pages = [
+        "Chapter 1. A\nB\nC\nD\nE\nF\nG\nbody",
+        *(["filler"] * 9),
+    ]
+    found = _openers(pages, skip=set())
+    title = found[0][2]
+    # at most 1 (the captured tail) + _MAX_TITLE_CONTINUATION_LINES words
+    assert len(title.split()) <= 1 + _MAX_TITLE_CONTINUATION_LINES, (
+        f"continuation loop ran unbounded: {title!r}"
+    )

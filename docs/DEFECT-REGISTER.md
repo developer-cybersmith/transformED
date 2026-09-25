@@ -754,6 +754,176 @@ This is the **higher-priority** of the two gaps issue #245 reports: the postgres
 
 ---
 
+## D181 — `book_ingest_job` left `books.status='processing'` forever when ARQ cancelled it on `job_timeout`
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 1 (content pipeline) · **Detected:** 2026-09-24, live
+production smoke-test of book ingestion (real 501-page PDF upload via `hieiq.ai/upload`) ·
+**Fixed:** 2026-09-24, same day, `docs/stories/book-ingest-cancellederror-status.md`
+
+`book_ingest_job`'s single `except Exception as exc:` block was the only place `books.status`
+was ever set to `'failed'`. `asyncio.CancelledError` inherits from `BaseException`, not
+`Exception`, since Python 3.8 — it skips that block entirely. When ARQ's own outer
+`job_timeout` (`arq_job_timeout_s`, default 1800s) fires and cancels the job's task, the
+cancellation is exactly what reaches this code path, so `books.status` was **never** written
+and stayed at `'processing'` permanently, with no error surfaced anywhere a human or the
+frontend would see.
+
+**Confirmed live** against book_id `22dce7c5-55c5-4086-b885-9f45f052871b` (`hie-api`, machine
+`873d97a0404d78`, `sin` region): job started `13:02:25`, ARQ logged
+`book_ingest_job failed, TimeoutError` at `13:32:25` — exactly `1800.03s`, i.e.
+`arq_job_timeout_s`, not the code's own 900s `_EXTRACT_TIMEOUT_S`. Traceback showed
+`asyncio.CancelledError` raised inside `proc.communicate()`/`proc.wait()`, later relabeled
+`TimeoutError` by `asyncio.wait_for`'s own `__aexit__` machinery **after it had already
+escaped `book_ingest_job`'s frame unhandled** (confirmed by direct read of the traceback's
+frame order — the exception passed through `book_ingest.py:173` without matching
+`except Exception`). A `books` row query over an hour later still showed
+`status='processing'`, `updated_at` unchanged since the original insert — silently stuck
+forever, exactly the failure class CLAUDE.md's Scale Contract Q2 exists to catch.
+
+This is a distinct root cause from **D180** (ARQ's `max_tries` job-level retry never firing for
+exceptions this codebase raises) — that entry is about the job not being *retried*; this one is
+about the job's own *failure bookkeeping* silently not running on cancellation, independent of
+whether a retry follows.
+
+**Resolution:** `book_ingest_job` now has a dedicated `except asyncio.CancelledError:` branch
+(before `except Exception`) that writes `books.status='failed'` and then bare `raise`s —
+re-raising `CancelledError` itself, never retyping it to `BookIngestError`, so asyncio's own
+cancellation propagation contract for the caller is preserved.
+
+**Enforcement:** `tests/unit/test_book_ingest_job.py::test_book_ingest_job_cancelled_marks_books_failed`
+(asserts the `books.status='failed'` write happens on cancellation) and
+`::test_book_ingest_job_cancellation_is_not_retyped_as_bookingesterror` (asserts the propagated
+exception stays `asyncio.CancelledError`, not `BookIngestError`).
+
+**Out of scope, tracked separately, not silently dropped:** *why* the extraction subprocess
+itself ran past both the 900s inner timeout and the full 1800s outer `arq_job_timeout_s` in
+production for a book that extracts in well under 60s locally with the correctly pinned
+`pypdfium2==4.30.0` — resource contention on the shared `sin`-region Fly worker vs. a genuine
+hang has not yet been distinguished. Filed as a follow-up investigation, not folded into this
+fix.
+
+---
+
+## D182 — Chapter titles silently truncated when they wrap onto the PDF's next line
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 1 (content pipeline) · **Detected:** 2026-09-24, live
+production smoke-test, inspecting the actually-stored chapter titles for a real successfully-
+ingested book (`_OceanofPDF.com_The_Hitchhikers_Guide_to_Python_-_Kenneth_Reitz.pdf`, book_id
+`9d3345ef-c196-4fc1-b618-35a62896af76`, 11 chapters, all `boundary_confidence='heading'`) ·
+**Fixed:** 2026-09-24, same day, `docs/stories/chapter-title-line-wrap-truncation.md`
+
+`SELECT title FROM chapters` returned, verbatim: `". Picking an"`, `". Properly"`, `". Your"`,
+`". Writing Great"`, `". Reading Great"`, `". Shipping Great"`, `". User"`, `". Code Management"`,
+`". Software"`, `". Data"`, `". Data"` — every title truncated to 1-3 words with a stray leading
+`". "`. Confirmed against the real extracted page text (page 11, 0-based, chapter 1's opener):
+`'Chapter 1. Picking an\r\nInterpreter\r\n...'` — the real title, **"Picking an Interpreter"**,
+wraps across two physical lines in the PDF's own typography (common chapter-opener styling, not
+specific to this book).
+
+Two compounding bugs in `chapter_detection/rungs.py`'s `_openers()` (used by both the `heading`
+rung and `r2_contents_page`'s contents-page parsing — both consume `CHAPTER_RE`'s `group(2)`):
+1. `CHAPTER_RE` (`chapter_detection/text.py`) had an optional separator **before** the chapter
+   number but nothing symmetric **after** it — `"Chapter 1. Picking an"` left the period as part
+   of the captured tail, and `.strip()` only removes whitespace, not punctuation.
+2. `_openers()` took the captured/fallback tail as the *whole* title and never looked further —
+   when the remainder is typeset on its own visual line, it is silently dropped. No error, no
+   degradation flag; `boundary_confidence` still reports the normal `'heading'` rung.
+
+Exactly the class of defect CLAUDE.md's Silent Truncation rule exists to catch: a fixed
+assumption (title fits on the chapter-number's own line) meeting a variable input (real
+publisher typography) that fails silently and cheaply rather than loudly.
+
+**Resolution:** (1) `CHAPTER_RE` gained a symmetric optional separator group after the number,
+cleanly stripping a trailing `.`/`:`/`-` before the title capture. (2) `_openers()` now stitches
+in up to `_MAX_TITLE_CONTINUATION_LINES` (2) more physical lines when the captured title is
+short (`< _TITLE_WORD_TARGET`, 3 words) — but only lines that look like a title continuation
+(not a new chapter opener, not a TOC section row, `<= 6` words). Both the word-count target and
+the line-count bound are explicit, fixed budgets, not an unbounded scan.
+
+Confirmed **no regression risk**: neither `test_chapter_detection.py` nor
+`test_chapter_detection_text.py` previously exercised `_openers()`'s title-continuation
+behavior — the D2L/NCERT/`evading-edr` fixtures resolve via the `toc`/`contents` rungs, whose
+titles come from a different source. All 57 tests in both files pass after the fix, including
+every pre-existing fixture-based assertion.
+
+**Enforcement:** `test_chapter_detection_text.py::TestChapterRePostNumberSeparator` (regex-level,
+5 cases) and `test_chapter_detection.py`'s new D182 section — the exact real-world wrap
+(3-chapter synthetic fixture, since the gate's `MAX_SHARE=0.40` rule mathematically cannot be
+satisfied by only 2 chapters), a rejection test for a candidate line that is itself a chapter
+opener, a rejection test for ordinary body prose, and a bound test proving the continuation loop
+cannot run away.
+
+**Out of scope, tracked separately, not folded into this fix:** the real structural fix
+(font-size-aware extraction) is deferred to the Sprint 3 docling migration, per the existing
+`r4_font_signals`/D28 precedent — this is a heuristic, bounded improvement, not a rewrite.
+Re-running detection against the 11 already-generated chapters of the book that surfaced this
+is a follow-up operational action (fresh upload or explicit re-ingestion), not part of this
+code change.
+
+---
+
+## D183 — Chapter-context 500, chapter list not auto-updating, raw 0-based page numbers, and missing dashboard/reports navigation
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 2 (frontend) + Dev 1 (rate-limiter endpoints) ·
+**Detected:** 2026-09-24, live verification of chapter/lesson generation on `hieiq.ai`, plus a
+follow-up pass over `/reports` the same day ·
+**Fixed:** 2026-09-24, same day, `docs/stories/chapter-context-500-page-refresh-numbering.md`
+
+Five compounding UX/correctness defects, all found live in the same session: (1) `PUT`/`GET
+.../chapters/{chapter_id}/context` returned a real `500` — `slowapi`'s header-injection falls
+back to `kwargs.get("response")` when the endpoint's own return value isn't a
+`starlette.responses.Response`, and neither endpoint declared a `response` parameter (every
+OTHER `@limiter.limit(...)` endpoint in the file already did). (2) The chapter list never
+updated on its own after "Generate" — `useChapters`'s SWR poll was keyed only on the BOOK's
+`processing` status, which stops being true the moment ingestion finishes, long before any
+individual chapter's lesson generation is done; the card froze on "Generating…" until a manual
+reload. (3) `ChapterRow` displayed the raw backend 0-based page index inline ("PDF pages 11–17
+(0-based index)"), reading as a bug to a student. (4) `/reports` and `/reports/[sessionId]`
+lived entirely outside the `(dashboard)` route group — no Sidebar, no mobile nav, by a
+documented-as-deliberate-but-wrong past convention. (5) `SessionReport.tsx`'s only in-content
+navigation was "Back to Reports" — no path back to `/dashboard` on the success-render path.
+
+**Resolution:** (1) added `response: Response` to both endpoints, plus a new source-level
+AST-scan guard (`test_limiter_response_param.py`) that flags ANY `@limiter.limit(...)`
+endpoint missing it, repo-wide. (2) `useChapters`'s poll now also continues while any loaded
+chapter has `latest_lesson.status` in `queued`/`running` (reusing the existing
+`isLessonProcessing` helper). (3) `ChapterRow` now displays `page_start + 1`–`page_end + 1`,
+matching how every PDF reader numbers pages; the not-necessarily-matching-printed-page-numbers
+caveat moved from cluttered inline text to the existing tooltip. (4) moved both reports routes
+into `app/(dashboard)/reports/` with a new `layout.tsx` matching every sibling route's own
+duplicated Sidebar+TopUtilityBar shell (no shared `(dashboard)/layout.tsx` exists). (5) added a
+`← Dashboard / Reports` breadcrumb to `SessionReport.tsx`.
+
+**Also shipped in the same PR (feature, not a defect):** a Sidebar collapse/expand toggle
+(`ChevronLeft`/`ChevronRight`, default expanded, icon-only when collapsed with `aria-label` +
+hover tooltip on every control, persisted to `localStorage` since the Sidebar remounts fresh
+on every top-level route change).
+
+**Incidental, found only because fixing (1) let the existing tests' real assertions finally
+run:** `tests/test_s5_3_endpoints.py` had no rate-limiter reset between test cases (module-level
+`memory://` storage leaking state across methods in one pytest process — confirmed pre-existing
+via `git stash` + rerun, not introduced by this fix) and one test used
+`MagicMock(spec=APIError)` as a mock `side_effect`, which isn't a real exception instance and
+fails with `TypeError` when raised. Both fixed in the same PR since they sat in the same file
+this story was already touching.
+
+**Enforcement:** `test_limiter_response_param.py` (2 tests — the repo-wide scan, and a premise
+check that the scan actually flags a synthetic broken function). `useChapters.test.ts` — new
+tests for both polling directions (continues while a lesson is generating, stops once settled).
+`ChapterRow.test.tsx`/`BookDetail.test.tsx`/`books-msw.integration.test.tsx` updated for the new
+1-based display. `test_s5_3_endpoints.py`'s autouse `_reset_rate_limiter` fixture. A real
+`next build` confirms both reports routes still resolve correctly under the new path (no route
+collision, `[sessionId]` still dynamic). `SessionReport.test.tsx` covers the new Dashboard link.
+`Sidebar.test.tsx` covers the collapse toggle's default state, label hiding, re-expand,
+`localStorage` persistence across a full unmount/remount, and that the toggle's own accessible
+name never collides with the Account button's.
+
+**Out of scope, not folded into this fix:** `test_rate_limit_redis_storage.py`'s 2 failures
+(`fakeredis`'s `evalsha` unimplemented) — confirmed pre-existing and unrelated via the same
+`git stash` check, not touched here.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent
@@ -1010,6 +1180,7 @@ register, `dna_fusion.py`, `schemas.py`, `test_unbounded_queries.py`,
 | **D168** | **`lesson_planner_node`'s `segments_out` assembly (and therefore `lesson_plan.segments`' entire order, `slide_generator_node`'s slide order, and now — issue #236 — `continuity_notes`' "force empty for the first segment" logic) trusted `segment_summaries`' list order as "the authoritative input order" — but `segment_summaries` is `Annotated[list, operator.add]`, fed by `summarise_segment_node`'s `Send()`-dispatched fan-out with NO cross-call ordering guarantee, the exact same class of channel as `narration_scripts` (which `_apply_narration_char_cap` already has to re-sort via `_segment_order_key` for precisely this reason). Nothing in `lesson_planner_node` ever re-sorted `segment_summaries` before this story. A real, pre-existing gap on `main` — confirmed via `git show main:...graph.py`, the trusting comment and unsorted `enumerate(segment_summaries)` loop both predate issue #236 — not introduced by it, but issue #236's own `continuity_notes` feature is the first thing to actually DEPEND on the order being correct (an out-of-order Send()-fan-in arrival would blank the wrong segment's `continuity_notes`, non-deterministically across otherwise-identical runs).** Found by a second independent reviewer (`Developer-2-max`) on PR #237, 2026-09-21. | Medium (before this fix: `lesson_plan.segments`' order — and therefore slide order and `total_duration_min`'s per-segment attribution via `slide_budget` — could non-deterministically diverge from the chapter's true section order on any lesson where Phase-1 `summarise_segment` dispatches didn't complete in section-index order, which `Send()` never guarantees; `total_duration_min` itself stayed correct since that sum is order-independent) | **FIXED same PR (#237), in two passes.** Round 1 re-sorted `segment_summaries` by `_segment_order_key` immediately before `segments_out`'s final assembly — correct for the single-call path, but WRONG for the multi-batch path: the batch split (`segment_summaries[i:i+batch_size]`) runs BEFORE that point, so it still partitioned the raw, unsorted arrival order — "batch 1" was whichever segments arrived first, not the chapter's true first N, found by the SAME reviewer's Round 2 pass. **Round 2 correction:** moved the sort to immediately after the initial structural-validation guards, BEFORE the batch-size decision — fixing the actual batch composition, not just the final list's display order. | `test_segment_summaries_out_of_order_fan_in_is_resorted_by_true_section_index` (Round 1, `test_lesson_planner_node.py`) — scrambled-order segments, single-call path, asserts final order + `continuity_notes`. `test_out_of_order_fan_in_is_resorted_before_the_batch_split_not_after` (Round 2, new) — forces batching (`batch_size=2`, 4 scrambled segments) and captures which segment_ids each INDIVIDUAL batch call actually received (parsed from that call's own prompt), proving batch 1 gets the true first two sections, not whichever two arrived first. |
 | **D169** | **`narration_generator_node`'s new per-dispatch `check_ceiling(lesson_id)` call (issue #236 — added to replace a full-lesson-abort at the fan-out level, D-class fix in the same PR) is a plain read-and-compare with no budget reservation, and it now runs CONCURRENTLY across up to N `Send()`-dispatched sections for the same lesson (narration_generator is fanned out once per `lesson_plan` segment). All N dispatches can read the same pre-spend cost total and pass the check before any of their own spend is ever recorded (`accumulate_cost` only runs after a successful LLM call completes) — a lesson sitting just under the $3.00 ceiling can overshoot by up to N × one narration call's cost instead of stopping at the first section that would cross it.** Found by a second independent review pass (`Developer-2-max`) on PR #237, 2026-09-21, which correctly notes this exact check-then-act TOCTOU shape already existed elsewhere in this file (e.g. between separate lessons' pipelines) — this PR spreads it to a third, genuinely-concurrent-WITHIN-one-lesson site, not a wholly novel class of bug. | Medium (bounded, not unbounded — worst case is `_MAX_PHASE1_SECTIONS` (60) × one `llm_mini` narration completion's cost, itself a small fraction of the $3.00 budget; not a security boundary, and CLAUDE.md's own ceiling language is "downshift... complete lesson," i.e. already a soft/best-effort budget, not a hard cap the codebase treats as inviolable elsewhere either) | **Registered, not fixed — a real fix needs an atomic reserve-then-spend budget primitive (e.g. a Redis `INCRBY` against a pre-committed budget, checked-and-reserved in one round trip), which is genuine architectural work belonging to `cost_tracker.py` itself, not a narrow review-response patch to one call site.** Fixing it narrowly here (e.g. a per-lesson lock just for narration) would leave the identical shape everywhere else `check_ceiling` is read-then-acted-on, address the symptom in one place while leaving the class of bug live elsewhere — not a real fix, per CLAUDE.md binding rule 6. **Owner: TBD (Dev 1, `core/cost_tracker.py`). Trigger: before this ceiling is ever treated as a hard, security-relevant boundary rather than a best-effort cost-control soft limit — or if real production spend data ever shows narration-driven overshoot as a measurable contributor to a ceiling breach.** | None — a real regression test would need to simulate genuinely concurrent `check_ceiling` reads racing each other, which is a concurrency-harness investment, not a unit test; the Scale & Load Q6 answer in `docs/stories/236-narration-post-planner-ordering.md` names this gap explicitly instead of asserting it's covered. |
 | **D170** | **The "degrade-not-fabricate" guard block (assembled-response segment-id count/set/uniqueness/blank-text validation) is now independently duplicated across THREE node functions — `lesson_planner_node`, `slide_generator_node`, and (issue #236) `narration_stitch_node` — each hand-rolling the same four checks against a different LLM response type.** First flagged by one reviewer on PR #237's Round 1 pass (comparing all three), independently flagged again by a second reviewer on the Round 2 pass (comparing `narration_stitch_node` specifically against `lesson_planner_node`) — two independent convergent findings on the same duplication, per CLAUDE.md binding rule 6 ("matches existing accepted pattern is not a justification... open a register entry instead" — the ratchet warning applies here: a fourth future node copying this same block again would be exactly that ratchet). | Low (no behavioral bug — all three copies are independently tested and currently correct; this is a maintainability/drift risk, not a live defect: a future fix to one guard's logic could easily miss the other two copies) | **Registered, not fixed in this PR — extracting a shared generic guard (parameterized over the response type's `segment_id`/text-field accessors) is a real refactor touching three already-tested, already-shipped node functions under live review-response time pressure, which is exactly the kind of change that itself needs its own careful review, not a rushed patch bundled into an already-large review-response commit.** **Owner: TBD (Dev 1). Trigger: the next time any one of these three guard blocks needs a behavioral change — extract a shared helper in that same commit rather than editing three copies (or missing one).** | None — a design-boundary/maintainability finding, not a behavior a test should assert must never happen. The three existing per-node test suites (`test_lesson_planner_node.py`, `test_slide_generator_node.py`, `test_narration_stitch_node.py`) already independently verify each copy's current correctness. |
+| **D173** | **`process_onboarding` (`apps/api/app/modules/assessment/service.py`) does a plain `.insert()`, not an upsert, into `onboarding_responses` — a reassessment resubmission hits `UNIQUE(user_id, question_id)` and returns 409 "duplicate submission" before D137's EMA-blend-with-existing-scores logic ever runs, making `_fetch_existing_dna`'s reassessment path unreachable unless the prior response rows are deleted first.** Pre-existing on `main` (the current 20-question onboarding flow), not introduced by Story 235 — found while designing Story 235's `onboarding_answers_v2` table (issue #235, PR #239), which carries the identical `.insert()`/`UNIQUE(user_id, question_id)` shape forward unchanged. First flagged as an unregistered Dev Note in Story 235's own design doc during its own review (Dev 3, 2026-09-22) — citing CLAUDE.md binding rule 5 ("flagging for whoever touches it next" is exactly the silent-comment-with-no-ID pattern the rule prohibits, not an exemption from it). Confirmed still live and worse than described by PR #239's own `/bmad-code-review` (2026-09-22, Blind Hunter + Edge Case Hunter + Scale & Load Hunter, independently converging): the frontend's `OnboardingFlow.tsx` 409-handler treats *any* 409 as "already onboarded" and silently displays the student's stale pre-reassessment `LearnerDNA` as if the resubmission succeeded — so the failure isn't just a loud 409 at the API layer, it's masked into a false success at the UI layer, with zero indication to the student that their reassessment never took effect. | **Medium** — the reassessment flow (`user:{id}:reassessment_due`, fires every 10 sessions per `dna_fusion.py`'s `_REASSESSMENT_INTERVAL`) is a real, already-shipped feature whose resubmission path 409s (and is then silently masked as success by the frontend) for every user who reaches it, not a rare edge case; not yet observed in production because Sprint 4 has 0 real students who have completed 10 sessions. | **FIXED 2026-09-22, in Story 235's own onboarding_answers_v2 table (`process_onboarding`, Step 5).** `.insert(rows)` replaced with `.upsert(rows, on_conflict="user_id,question_id")` — a reassessment resubmission now overwrites the prior 30 rows in place instead of colliding with them, so `process_onboarding` completes normally (existing session_count preserved, Penta scores/badges freshly overwritten per the already-correct D137 behavior) rather than raising 409. The now-dead "duplicate"/"unique" string-matching branch that converted a unique-constraint violation into an explicit 409 was removed — any remaining write error is a genuine failure (500), since duplicate submission attempts are gated upstream by `router.py`'s Redis `SET NX`, not by a DB-level conflict here. The frontend-masking half of this entry (409 silently rendered as success) is now moot for the reassessment path specifically, since that path no longer 409s — left as-is for the genuine "already onboarded, no reassessment flag set" case, where showing the existing profile on a 409 is the correct, intended behavior. **This entry describes `onboarding_responses`' identical pre-existing shape on the OLD 20-question flow, which Story 235 replaces — that table/flow is being retired, not fixed, so this closes D173 for the table that matters going forward (`onboarding_answers_v2`).** | `apps/api/tests/unit/test_reassessment_blend.py::test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint` — uses `_FakeOnboardingAnswersTable`, an in-memory fake that actually enforces `UNIQUE(user_id, question_id)` semantics (raises the real Postgres-shaped duplicate-key error on a colliding `.insert()`, the way every other test in the file's MagicMock-based mocks do not), proving the fix against genuine conflict behavior rather than a mock that just agrees with itself: drives `process_onboarding` twice for the same user/question_ids (first-time, then reassessment) against one shared store, asserts the second call succeeds and overwrites rather than duplicating or raising. Also `test_onboarding_answers_written_on_reassessment` (same file) and `test_process_onboarding_writes_onboarding_answers_v2_via_upsert_on_conflict`/`test_process_onboarding_upsert_row_payload_mapping` (`test_onboarding_endpoint.py`) assert the `on_conflict="user_id,question_id"` kwarg is actually passed. Full onboarding/reassessment/posthog test files re-run green (189 passed) after the fix; `ruff`/`mypy` clean on the changed files. |
 
 ### Found by Story S5-3 BMAD 6-layer review (2026-09-21, chapter context form)
 

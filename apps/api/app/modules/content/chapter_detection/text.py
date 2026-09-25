@@ -70,7 +70,7 @@ _NUM_ALT = "|".join(WORD_NUM)
 #: A chapter opener. NOTE the token list is English-only — Hindi editions use
 #: अध्याय and are UNTESTED. Registered, not assumed (see the story's known gaps).
 CHAPTER_RE = re.compile(
-    rf"^\s*chapter\s*[\-–—:.]?\s*(\d{{1,2}}|{_NUM_ALT}|[ivx]{{1,5}})\b\s*(.*)$",
+    rf"^\s*chapter\s*[\-–—:.]?\s*(\d{{1,2}}|{_NUM_ALT}|[ivx]{{1,5}})\b\s*[\-–—:.]?\s*(.*)$",
     re.IGNORECASE,
 )
 #: Whole-line anchored, deliberately: matching the bare word "contents" inside
