@@ -1654,6 +1654,18 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
                 slice_section["title"] = f"{section.get('title', '')} (part {piece_index + 1})"
             expanded.append(slice_section)
 
+    if plan.cap_overrun > 0:
+        logger.warning(
+            "[%s] segment_expansion_node: max_narration_segments=%d would drop %d of %d "
+            "usable topic(s); exceeding the cap by %d unit(s) to preserve one unit per "
+            "topic (content preservation takes precedence — Story S5-5 AC11)",
+            lesson_id,
+            plan.max_segments_configured,
+            plan.cap_overrun,
+            sum(1 for sec in sections if (sec.get("body") or "")),
+            plan.cap_overrun,
+        )
+
     logger.info(
         "[%s] segment_expansion_node: %d topic(s) -> %d unit(s); tier %s wants >= %.0f min "
         "of narration, source supports ~%.1f min%s",
@@ -1681,6 +1693,12 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
             "achievable_minutes": round(plan.achievable_minutes, 2),
             "content_limited": plan.content_limited,
             "capped_by_max_segments": plan.capped_by_max_segments,
+            # Story S5-5 AC15: the cap is a safety bound, not a hard ceiling —
+            # it may be exceeded ONLY to preserve one unit per usable topic,
+            # and only by the minimum amount. Recorded so an overrun is
+            # visible rather than inferred from a unit count.
+            "cap_overrun": plan.cap_overrun,
+            "max_segments_configured": plan.max_segments_configured,
             "effective_wpm": effective_wpm,
         }
     )

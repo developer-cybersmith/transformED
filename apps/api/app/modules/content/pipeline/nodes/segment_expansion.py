@@ -57,7 +57,22 @@ class SegmentPlan:
     requested_min_minutes: float
     achievable_minutes: float
     content_limited: bool
+    # True when the cap actually SHORTENED the lesson (the duration and the
+    # source both wanted more units than `max_segments` allowed). Deliberately
+    # independent of `cap_overrun` below: a lesson can be both shortened by the
+    # cap AND have exceeded it, because the two describe different halves of
+    # the same clamp. An earlier version conflated them and reported
+    # `capped=True` while the cap was simultaneously being exceeded.
     capped_by_max_segments: bool = False
+    # Units generated BEYOND `max_segments`, forced by the one-unit-per-usable-
+    # topic invariant (AC11, which takes precedence over AC15's cap). Always
+    # exactly `len(usable) - cap` when it fires, never more — the cap is
+    # exceeded by the minimum amount that preserves every topic's text, and by
+    # nothing else. 0 in the normal case.
+    cap_overrun: int = 0
+    # What the cap was, so an overrun is readable from the record without
+    # reconstructing config at read time.
+    max_segments_configured: int = 0
     # Populated by the node; the pure planner leaves it empty.
     notes: list[str] = field(default_factory=list)
 
@@ -178,22 +193,24 @@ def plan_segments(
 
     n_wanted = min(n_needed, n_possible)
     cap = max(1, max_segments)
-    # Floor at one unit per usable topic. Without this, a chapter too thin to
-    # fill even one slice per topic collapses to a single unit — and because
-    # slices are cut from ONE topic's body, every other topic's text is then
-    # never taught at all. That is silent content loss, which is the defect
-    # class this whole story exists to remove, so the floor takes precedence
-    # over the duration arithmetic. Found by the how-to and tier integration
-    # tests, not by the unit tests, which is why they exercise the real graph.
+    # Content preservation takes precedence over the fan-out cap (AC11 > AC15).
     #
-    # The operator cap still wins: if `max_segments` is below the topic count,
-    # topics genuinely are dropped, and `capped_by_max_segments` records it.
-    n_final = min(max(n_wanted, len(usable)), cap)
+    #   min(n_wanted, cap)        -- the cap applies as normal, and
+    #   max(..., len(usable))     -- is then lifted back ONLY far enough to give
+    #                                every usable topic one unit.
+    #
+    # So the cap is exceeded by exactly `len(usable) - cap` when it would
+    # otherwise have dropped a topic, and by nothing else. Without the floor, a
+    # chapter with more usable topics than the cap allows silently loses whole
+    # topics: slices are cut from one topic's body, so a topic allocated zero
+    # units has its text taught nowhere. That is the silent-content-loss class
+    # this story exists to remove, and a per-lesson fan-out guard is not worth
+    # it — `topic_selection` already bounds topics to 1-2, so the overrun is
+    # bounded by the topic count, and `_MAX_PHASE1_SECTIONS` remains the real
+    # DoS backstop.
+    n_final = max(min(n_wanted, cap), len(usable))
+    cap_overrun = max(0, n_final - cap)
 
-    # Allocate across the usable topics only, then scatter back onto the
-    # original indices. `_allocate` is authoritative for the total: it never
-    # returns more than it was given, so the cap holds even when there are
-    # more topics than slices (PR #255 review, finding 2).
     allocated = _allocate([topic_bodies[i] for i in usable], n_final)
     per_topic = [0] * len(topic_bodies)
     for slot, topic_index in enumerate(usable):
@@ -209,7 +226,10 @@ def plan_segments(
         requested_min_minutes=max(0.0, min_narration_minutes),
         achievable_minutes=achievable_minutes,
         content_limited=achievable_minutes + 1e-9 < min_narration_minutes,
-        capped_by_max_segments=max(n_wanted, len(usable)) > cap,
+        # "the cap shortened the lesson", not "the cap was involved".
+        capped_by_max_segments=n_wanted > n_final,
+        cap_overrun=cap_overrun,
+        max_segments_configured=cap,
     )
 
 

@@ -135,7 +135,12 @@ global window is **not** raised (product constraint) and no per-node exception i
 introduced — slices are sized so the existing window is sufficient.
 
 **AC11.** Slice count per topic is allocated in proportion to that topic's body
-length, with **at least one slice per topic**, so a short topic is never erased.
+length, with **at least one slice per USABLE topic** (one whose body is
+non-empty), so a topic that has content is never erased. A topic with an empty
+body is not usable and is correctly skipped — it has nothing to teach.
+
+**This invariant takes precedence over AC15's cap.** Where the two conflict,
+content preservation wins: see AC15.
 
 ### D. Downstream continues to work
 
@@ -152,8 +157,33 @@ audio with another's in Storage.
 slices must not multiply quiz volume by 4. Totals stay 16/10/5.
 
 **AC15.** Slice count is **bounded** — by available content, by
-`_MAX_PHASE1_SECTIONS`, and by an explicit per-lesson cap — so a large chapter
+`_MAX_PHASE1_SECTIONS`, and by `max_narration_segments` — so a large chapter
 cannot fan out unboundedly. See Scale & Load Q1/Q2.
+
+**`max_narration_segments` is a safety bound, not a hard ceiling.** It may be
+exceeded **only** to preserve AC11's one-unit-per-usable-topic invariant, and
+**only by the minimum amount required** (`len(usable) - cap`) — never rounded up
+to whatever the duration wanted. Any overrun is recorded as `cap_overrun`
+alongside `max_segments_configured` in the checkpoint, and logged as a warning
+naming the cap and the overrun. **The cap can never cause a usable topic's text
+to go untaught.**
+
+This resolves a contradiction the first draft left open: AC11 said "never
+erased" unconditionally while AC15 imposed a cap, and when
+`usable_topics > cap` both could not hold. The implementation had silently
+chosen the cap, dropping whole topics with a bare `continue` that logged
+nothing — the silent-content-loss class this story exists to remove. Product
+decided (2026-09-25) that preservation takes precedence. The overrun is
+bounded by the topic count, which `topic_selection` already fixes at 1-2, so
+at default config the worst case is 2 units against a cap of 24;
+`_MAX_PHASE1_SECTIONS` (60) remains the real fan-out backstop.
+
+**AC15b.** `capped_by_max_segments` means "the cap **shortened** the lesson"
+and is independent of `cap_overrun`. Both can be true at once — the cap both
+reduced the unit count below what the duration wanted *and* had to be exceeded
+to keep every topic. Conflating them (as the first implementation did) produced
+records reporting `capped=True` while the cap was simultaneously being
+exceeded.
 
 ### E. Tests
 

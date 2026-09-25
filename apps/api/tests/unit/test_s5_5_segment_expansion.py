@@ -429,10 +429,15 @@ class TestReviewFindings:
             "off-by-one fallback of 1"
         )
 
-    def test_allocation_never_exceeds_max_segments(self):
-        """Finding 2. `_allocate`'s at-least-one-per-topic rule ran AFTER the
-        cap and `segment_count` was then recomputed from the sum, so the
-        documented hard cap could be silently exceeded."""
+    def test_cap_is_never_exceeded_beyond_the_preservation_minimum(self):
+        """Finding 2, restated under Option A. The cap still binds — but it is
+        a safety bound, not a hard ceiling. It may be exceeded ONLY to keep one
+        unit per usable topic, and only by `len(usable) - cap`.
+
+        This replaces an assertion that the cap is absolute, which locked in
+        the content loss it was meant to prevent: with 2 topics and cap=1 the
+        old rule produced 1 unit and one whole topic's text was taught nowhere.
+        """
         from app.modules.content.pipeline.nodes.segment_expansion import plan_segments
 
         plan = plan_segments(
@@ -443,9 +448,10 @@ class TestReviewFindings:
             max_segments=1,
         )
 
-        assert plan.segment_count <= 1, (
-            f"max_narration_segments=1 produced {plan.segment_count} segments"
-        )
+        assert plan.segment_count == 2, "both topics must be represented"
+        assert plan.cap_overrun == 1, "exceeded by exactly the preservation minimum"
+        assert plan.max_segments_configured == 1
+        assert all(n >= 1 for n in plan.per_topic_segments)
         assert sum(plan.per_topic_segments) == plan.segment_count
 
     def test_chars_per_word_is_shared_not_retyped(self):
