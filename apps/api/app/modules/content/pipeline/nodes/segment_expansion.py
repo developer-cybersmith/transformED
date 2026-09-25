@@ -4,20 +4,30 @@ lesson's MINIMUM narration duration.
 Why this exists
 ---------------
 `topic_selection_node` (Story 233) collapses a chapter into 1 topic (T3) or 2
-(T1/T2) and overwrites ``state["sections"]``. Every Phase-1 call then reads at
-most ``section_body_max_chars`` (6,000) of one. So the text the generator could
-ever see was ``n_topics x 6,000`` — **13.3 min of narration at T1/T2, 6.7 at
-T3, regardless of chapter size.** Every tier was structurally short of the
-minimum Story S5-4 promises (45/30/15).
-
-The window is not the problem. 900 narration words is 5,400 characters, which
-fits inside it comfortably. The problem was reading that window **once per
-topic** instead of **once per delivery unit**.
+(T1/T2) and overwrites ``state["sections"]``. One topic then became one
+delivery unit, so a 45-minute lesson was asked for from two narration calls of
+~3,000 words each. A single completion does not produce that: lesson
+`d1d6a4e2` delivered 1,672 and 1,363 words (19.3 min of a possible 38.4).
 
 `merge_section_range` is text-preserving, so after `topic_selection` the whole
-chapter is still in state — just concentrated in 1-2 large bodies. This module
-tiles those bodies into window-sized slices. Nothing new is read, nothing is
-dropped, and the 6,000-char window is left exactly as it was.
+chapter is still in state, concentrated in 1-2 large bodies. This module cuts
+those bodies into the number of delivery units the tier's minimum duration
+needs. Nothing new is read.
+
+Two sizes, deliberately distinct (D195)
+---------------------------------------
+* **Phase-1 window** -- ``settings.section_body_max_chars`` (45,000 since
+  Story 233). The most text ONE Phase-1 call is shown. A hard ceiling only.
+* **Unit slice size** -- :func:`unit_slice_chars`: ``narration_words_per_segment
+  x CHARS_PER_WORD`` (900 x 6.0 = 5,400). The source ONE unit is sized for.
+
+S5-5 as first merged passed the window where the slice size belonged. It had
+been written believing the window was 6,000, which Story 233 had already
+raised. ``split_body`` returns a body whole when it is under ``max_chars``, so
+every topic under 45,000 chars came back as a single unit: the node ran,
+checkpointed and logged success while expanding nothing. And a size-driven
+slicer cannot honour a count the planner has already decided anyway -- see
+:func:`split_into`.
 
 Deliberately NOT fixed in `coalesce_sections`: that runs in `structure_node`,
 and `topic_selection` merges its output back into 1-2 topics immediately
@@ -75,6 +85,127 @@ class SegmentPlan:
     max_segments_configured: int = 0
     # Populated by the node; the pure planner leaves it empty.
     notes: list[str] = field(default_factory=list)
+
+
+def unit_slice_chars(*, words_per_segment: int, window_chars: int) -> int:
+    """Source characters ONE delivery unit is sized for (D195).
+
+    ``words_per_segment x CHARS_PER_WORD``, never above the Phase-1 window --
+    a unit bigger than the window would be truncated by the very call it
+    feeds. Derived, not configured, so it cannot drift away from the word
+    target it represents.
+    """
+    return max(1, min(int(words_per_segment * CHARS_PER_WORD), window_chars))
+
+
+def coverage_per_topic(
+    topic_lengths: list[int],
+    units: list[int],
+    *,
+    unit_chars: int,
+    window_chars: int,
+) -> list[int]:
+    """How many characters of each topic the lesson's units will carry.
+
+    The lesson carries ``min(total_source, sum(units) x unit_chars)``: exactly
+    the source the plan's ``achievable_minutes`` counted on. Carry less and the
+    record claims minutes the slices cannot deliver.
+
+    Each topic first gets ``min(length, units x unit_chars)``. Coverage a topic
+    cannot use, because it is shorter than its allocation, passes to topics
+    that still have text left. Without that hand-off, a small topic beside a
+    large one strands its spare allocation: the diagnosed chapter at 127.5 WPM
+    claims 45.16 min while per-topic prefixes cover only 42.72.
+
+    No topic is ever given more than ``units x window_chars``: past that a unit
+    would exceed what its Phase-1 call is shown. Topics allocated no units get
+    zero. Whatever is not covered is the caller's to record (D194).
+    """
+    caps = [
+        min(length, u * window_chars) if u > 0 else 0
+        for length, u in zip(topic_lengths, units, strict=True)
+    ]
+    target = min(sum(caps), sum(max(0, u) for u in units) * unit_chars)
+    cover = [min(cap, max(0, u) * unit_chars) for cap, u in zip(caps, units, strict=True)]
+    leftover = target - sum(cover)
+    for i, cap in enumerate(caps):
+        if leftover <= 0:
+            break
+        take = min(cap - cover[i], leftover)
+        cover[i] += take
+        leftover -= take
+    return cover
+
+
+# A cut may move off its ideal position by up to this fraction of one slice to
+# land on a paragraph break. Beyond that, even unit sizes matter more than
+# starting each unit on a fresh paragraph.
+_BOUNDARY_SLACK = 0.25
+
+
+def _nearest_boundary(body: str, lo: int, hi: int, ideal: int) -> int:
+    """A cut position in ``[lo, hi]`` near *ideal*: a paragraph break within
+    the slack, else the nearest space, else *ideal* itself (clamped)."""
+    ideal = min(max(ideal, lo), hi)
+    slack = max(1, int((ideal - lo + 1) * _BOUNDARY_SLACK))
+    best = -1
+    for m in _PARAGRAPH_BREAK.finditer(body, max(lo - 1, 0), min(hi + 2, len(body))):
+        cut = m.end()
+        if lo <= cut <= hi and abs(cut - ideal) <= slack:
+            if best == -1 or abs(cut - ideal) < abs(best - ideal):
+                best = cut
+    if best != -1:
+        return best
+    before = body.rfind(" ", lo, ideal)
+    after = body.find(" ", ideal, hi)
+    candidates = [c + 1 for c in (before, after) if c != -1 and lo <= c + 1 <= hi]
+    if candidates:
+        return min(candidates, key=lambda c: abs(c - ideal))
+    return ideal
+
+
+def split_into(body: str, units: int, *, max_chars: int) -> list[str]:
+    """Cut *body* into EXACTLY *units* contiguous slices (D195).
+
+    ``split_body`` answers "how many pieces of at most N chars?", but by the
+    time the node slices, the planner has already decided how many. Deriving
+    the count back from a size gets it wrong in both directions on real text:
+    a topic smaller than one slice yields one piece where the plan wanted two,
+    and paragraph-snapped cuts land short, so a topic that should fill five
+    slices yields six and the sixth is dropped.
+
+    Lossless (``"".join(...) == body``) and balanced: each cut aims at an even
+    share of what remains, snapped to a nearby paragraph break or space.
+    Returns ``min(units, len(body))`` slices (a body cannot be cut into more
+    non-empty pieces than it has characters) and ``[]`` for an empty body.
+    No slice exceeds *max_chars* provided ``len(body) <= units x max_chars``,
+    which :func:`coverage_per_topic` guarantees for the node.
+    """
+    if not body or units <= 0:
+        return []
+    count = min(units, len(body))
+    n = len(body)
+    slices: list[str] = []
+    pos = 0
+    for remaining in range(count, 1, -1):
+        ideal = pos + math.ceil((n - pos) / remaining)
+        # Leave at least one character for every slice still to cut.
+        hi = min(pos + max(1, max_chars), n - (remaining - 1))
+        cut = _nearest_boundary(body, pos + 1, hi, ideal)
+        slices.append(body[pos:cut])
+        pos = cut
+    slices.append(body[pos:])
+    return slices
+
+
+def boundary_at_or_before(body: str, limit: int) -> int:
+    """Where to end a covered prefix of at most *limit* chars, preferring a
+    paragraph break, then a space, within the last slack-fraction of it."""
+    if limit >= len(body):
+        return len(body)
+    if limit <= 0:
+        return 0
+    return _nearest_boundary(body, max(1, limit - int(limit * _BOUNDARY_SLACK)), limit, limit)
 
 
 def split_body(body: str, *, target_chars: int, max_chars: int) -> list[str]:
