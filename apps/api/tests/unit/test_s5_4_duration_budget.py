@@ -46,7 +46,7 @@ class TestSeatTimeConstants:
         # spoken narration, not total seat time and not a 65% share of it.
         # S5-4 shipped the share reading, so a lesson sold as 45 minutes was
         # generated against a 29.25-minute target — the headline number was
-        # never the number enforced. See D189.
+        # never the number enforced. See D192.
         assert TIER_MIN_NARRATION_MINUTES == {"T1": 45, "T2": 30, "T3": 15}
         assert TIER_SEAT_MINUTES is TIER_MIN_NARRATION_MINUTES
 

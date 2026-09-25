@@ -65,7 +65,7 @@ DEFAULT_TIER = "T2"  # Story S2-LM3/LM4/LM5 (2026-07-17) — single source of tr
 # selecting 45 minutes was promised 45 and the pipeline targeted 29. S5-4 had
 # already merged (6f19918) by the time the intent was clarified, so unlike an
 # amendment-before-merge this is a genuine behaviour change to shipped code —
-# recorded as D189.
+# recorded as D192.
 #
 # Consequence for the other two budgets: quiz and tutor Q&A time is now
 # ADDITIVE to the narration minimum rather than carved out of it, so a T1

@@ -239,7 +239,7 @@ rather than by anyone.
 3. Stop generating one image per slide (e.g. images only for key slides).
 4. Accept text-only degradation for T1 and say so in the UI.
 
-Registered as **D190** (D188 was already taken on main by the sibling slide-budget issue — the two want deciding together). **This story ships the duration fix and does not touch
+Registered as **D193** (D188 and D190 were both already taken on main — D188 by the sibling slide-budget issue, which wants deciding together with this one). **This story ships the duration fix and does not touch
 slide or image volume** — so merging it makes the cost conflict *reachable*,
 which is exactly why the decision is needed before T1 is offered to real
 students.
