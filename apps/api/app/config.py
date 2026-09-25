@@ -689,20 +689,29 @@ class Settings(BaseSettings):
         ),
     )
 
-    # ── Section body cap for Phase 1 LLM calls (Story 3-39) ───────────────────
+    # ── Section body cap for Phase 1 LLM calls (Story 3-39, re-derived 233) ────
     section_body_max_chars: int = Field(
-        default=6000,
+        default=45_000,
         gt=0,
         description=(
             "Max chars of a section's body sent to each Phase 1 economy-node LLM "
             "call (_get_section_body). Was a hardcoded function-default before "
             "Story 3-39 — moved to Settings so re-tuning doesn't require editing "
-            "all 6 call sites. NOTE (Scale & Load, unrevisited-inherited per "
-            "SCALE-CONTRACT Q5): the 6000 VALUE itself predates book-scale "
-            "generation and is out of this story's scope to re-derive; Story "
-            "3-39 only made truncation past this cap an explicit, persisted, "
-            "surfaced degradation (section_truncations) instead of a "
-            "logger.warning nobody reads."
+            "all 6 call sites. RE-DERIVED by Story 233 (piece 1 of 4, issue #233, "
+            "SCALE-CONTRACT Q5): the prior 6000 default was sized for one of up "
+            "to structure_max_sections (15) small sections; topic_selection_node "
+            "now collapses those into 1-2 topics before this cap ever applies, so "
+            "'one section' can be up to ~structure_max_sections/TIER_TOPIC_COUNT "
+            "(15x for the 1-topic/T3 case, 7.5x for the 2-topic case) larger than "
+            "the value this cap was tuned for. Raised to 45,000 — a first-cut "
+            "estimate covering the 2-topic worst case exactly and most of the "
+            "1-topic worst case, not a proof that no topic is ever truncated: "
+            "the existing section_truncations surfacing (Story 3-39) already "
+            "distinguishes a genuinely short chapter from this cap being the "
+            "real limit, so a still-truncated 1-topic lesson degrades loudly, "
+            "never silently — re-tune empirically from that signal, matching "
+            "this codebase's established pattern (narration's own D76->D78 "
+            "history: 10,000 -> 17,000 -> 120,000 as real data came in)."
         ),
     )
 
@@ -831,7 +840,7 @@ class Settings(BaseSettings):
     # letting extract_node's own cleanup (killpg) run instead of orphaning the child.
     arq_job_timeout_s: int = Field(
         default=1800,
-        description="ARQ job_timeout for the whole 15-node pipeline (seconds)",
+        description="ARQ job_timeout for the whole 17-node pipeline (seconds)",
     )
     extract_timeout_cap_s: int = Field(
         default=1500,

@@ -35,7 +35,11 @@ from typing import Any
 
 import pytest
 
-from tests.integration.test_howto_pipeline_e2e import HOWTO_TEXT, _run_howto_tier
+from tests.integration.test_howto_pipeline_e2e import (
+    _QUIZ_FAKE_BATCH_SIZE,
+    HOWTO_TEXT,
+    _run_howto_tier,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
@@ -91,12 +95,17 @@ async def test_tier_changes_the_delivered_package() -> None:
         pkg = await _run_howto_tier(HOWTO_TEXT, str(uuid.uuid4()), tier=tier)
         shapes[tier] = _package_shape(pkg)
 
-    # Same input every time — segment count must not move, or we are comparing
-    # different lessons and any quiz-count difference is meaningless.
+    # Story 233 (piece 1 of 4): topic_selection_node now makes segment count a
+    # DELIBERATE function of tier (T3 -> 1 topic, T1/T2 -> 2 topics) — this
+    # replaces the pre-233 "segment count must be identical across tiers"
+    # premise check, which is no longer true by design. The quiz-total
+    # comparison below remains valid across differing segment counts because
+    # the S5-4 allocator distributes a fixed LESSON-total budget, not a
+    # per-segment one — segment count was never actually load-bearing for it.
     seg_counts = {t: s["segments"] for t, s in shapes.items()}
-    assert len(set(seg_counts.values())) == 1, (
-        f"segment count differs across tiers {seg_counts} — the comparison below is invalid"
-    )
+    assert seg_counts["T3"] == 1, f"T3 must collapse to exactly 1 topic, got {seg_counts}"
+    assert seg_counts["T1"] == 2, f"T1 must collapse to exactly 2 topics, got {seg_counts}"
+    assert seg_counts["T2"] == 2, f"T2 must collapse to exactly 2 topics, got {seg_counts}"
 
     # S5-4: the invariant is now the LESSON total, not a per-segment band —
     # a per-segment ceiling was exactly the thing that let quiz volume scale
@@ -108,8 +117,11 @@ async def test_tier_changes_the_delivered_package() -> None:
             f"budget of {_lesson_budget(tier)} — the seat-time budget was not honoured"
         )
         # Premise check: if the fake's per-batch size were the binding constraint,
-        # the totals above would be measuring the fake, not the allocator.
-        assert max(shape["quiz_per_segment"]) <= 5, (
+        # the totals above would be measuring the fake, not the allocator. Bound
+        # against the real fixture constant (Story 233: topic-collapse means a
+        # single topic can now be allocated far more than an old per-section
+        # share ever was — see _QUIZ_FAKE_BATCH_SIZE's own comment).
+        assert max(shape["quiz_per_segment"]) <= _QUIZ_FAKE_BATCH_SIZE, (
             f"{tier}: a segment was allocated more than the fake supplies — this "
             "comparison would be measuring the fixture, not the tier"
         )

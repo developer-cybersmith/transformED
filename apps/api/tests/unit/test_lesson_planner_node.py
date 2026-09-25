@@ -1213,13 +1213,22 @@ async def test_planner_batches_above_threshold_produces_full_plan() -> None:
 @pytest.mark.asyncio
 async def test_planner_batches_at_structure_max_sections_boundary() -> None:
     """D75 (Story 3-43): a chapter coalesced to EXACTLY structure_max_sections
-    (15 segments — the maximal, most common real-world case, since coalescing
-    caps at this value) must genuinely batch under the current default
-    config, not silently take the single-call path. Two real production runs
-    on a 15-segment chapter returned 5 and 12 segments before this fix —
-    proving the single-call path is unreliable at this size. This test uses
-    the REAL settings.structure_max_sections value (not a hardcoded 15) so it
-    stays correct if that default is ever re-tuned."""
+    (15 segments) must genuinely batch under the current default config, not
+    silently take the single-call path. Two real production runs on a
+    15-segment chapter returned 5 and 12 segments before this fix — proving
+    the single-call path is unreliable at this size. This test uses the REAL
+    settings.structure_max_sections value (not a hardcoded 15) so it stays
+    correct if that default is ever re-tuned.
+
+    Calls lesson_planner_node directly with a hand-built 15-entry
+    segment_summaries list — this exercises the node's OWN batching logic in
+    isolation. Note (Story 233, piece 1 of 4): as of topic_selection_node,
+    a real pipeline run can no longer reach lesson_planner_node with more
+    than 1-2 segment_summaries (sections are collapsed to 1 topic for T3, 2
+    for T1/T2, before the Phase 1 fan-out that produces segment_summaries
+    ever runs) — 15 is no longer "the maximal, most common real-world case,"
+    only a direct-call unit-test scenario proving the batching logic itself
+    is still correct if ever reached."""
     from app.config import get_settings
     from app.modules.content.pipeline.graph import (
         _LessonPlanLLM,
@@ -1458,7 +1467,9 @@ def _make_plan_llm(ids: list[str]) -> Any:
     [
         (10, 1),  # == batch_size (D75: now 10, was 15) -> single call (boundary)
         (11, 2),  # batch_size + 1 -> 10 + 1 (one-element final batch)
-        (15, 2),  # structure_max_sections (D75's real-world case) -> 10 + 5
+        (15, 2),  # structure_max_sections boundary (D75) -> 10 + 5 (direct-call
+        # unit-test scenario only as of Story 233's topic_selection_node — a
+        # real pipeline run no longer reaches lesson_planner_node with 15)
         (20, 2),  # exact multiple -> 10 + 10 (no remainder)
     ],
 )

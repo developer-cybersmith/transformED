@@ -167,7 +167,11 @@ def _merge_two(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
     b_title = (b.get("title") or "").strip()
     b_body = (b.get("body") or "").strip()
     folded = "\n".join(part for part in (b_title, b_body) if part)
-    merged_body = a.get("body", "")
+    # `.get("body", "")` only substitutes "" when the key is ABSENT — an
+    # explicit `a["body"] = None` (review finding, Story 233 round) would
+    # otherwise leave `merged_body` as `None`, breaking every downstream
+    # `.strip()`/string call on a section's body. `or ""` covers both cases.
+    merged_body = a.get("body") or ""
     if folded:
         merged_body = f"{merged_body}\n\n{folded}" if merged_body else folded
     a_level = a.get("level", "topic")
@@ -180,6 +184,32 @@ def _merge_two(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:
         "page_start": min(a.get("page_start", 1), b.get("page_start", 1)),
         "page_end": max(a.get("page_end", 1), b.get("page_end", 1)),
     }
+
+
+def merge_section_range(sections: list[dict[str, Any]]) -> dict[str, Any]:
+    """Merge an arbitrary-length list of sections into a single section dict.
+
+    Story 233 (piece 1 of 4): the primitive `topic_selection_node` uses to
+    collapse a chapter's sections into one topic. A left-fold over the same
+    text-preserving `_merge_two` `coalesce_sections` already uses — no new
+    merge logic. Keeps the first section's title, the coarsest level among
+    all members, and the union of every member's page range; every title and
+    body is folded into the result, so no source text is ever dropped.
+
+    Raises ``ValueError`` on an empty list — callers must not invoke this with
+    zero sections (there is nothing to merge)."""
+    if not sections:
+        raise ValueError("merge_section_range: sections must be non-empty")
+    merged = dict(sections[0])
+    # Single-section input skips the _merge_two loop below entirely, so its
+    # own None-body normalization never runs — normalize here too, at this
+    # function's own boundary, so "body is always a string" holds regardless
+    # of how many sections were passed in.
+    merged["body"] = merged.get("body") or ""
+    for nxt in sections[1:]:
+        merged = _merge_two(merged, nxt)
+    merged["id"] = "s0"
+    return merged
 
 
 def coalesce_sections(
@@ -234,10 +264,12 @@ def coalesce_sections(
             size = base + (1 if b < extra else 0)
             group = kept[idx : idx + size]
             idx += size
-            merged = group[0]
-            for nxt in group[1:]:
-                merged = _merge_two(merged, nxt)
-            bucketed.append(merged)
+            # Review finding (Developer-2-max, PR #252): this was an inline
+            # left-fold duplicating merge_section_range's own loop — reuse it
+            # instead of maintaining two copies of the same _merge_two fold.
+            # `group` is never empty: base >= 1 is guaranteed by the
+            # `n > max_sections >= 1` precondition above.
+            bucketed.append(merge_section_range(group))
         kept = bucketed
 
     # ── Re-sequence ids ──────────────────────────────────────────────────────
