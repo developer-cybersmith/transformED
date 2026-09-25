@@ -862,6 +862,68 @@ code change.
 
 ---
 
+## D183 — Chapter-context 500, chapter list not auto-updating, raw 0-based page numbers, and missing dashboard/reports navigation
+
+**Status:** FIXED-GUARDED · **Owner:** Dev 2 (frontend) + Dev 1 (rate-limiter endpoints) ·
+**Detected:** 2026-09-24, live verification of chapter/lesson generation on `hieiq.ai`, plus a
+follow-up pass over `/reports` the same day ·
+**Fixed:** 2026-09-24, same day, `docs/stories/chapter-context-500-page-refresh-numbering.md`
+
+Five compounding UX/correctness defects, all found live in the same session: (1) `PUT`/`GET
+.../chapters/{chapter_id}/context` returned a real `500` — `slowapi`'s header-injection falls
+back to `kwargs.get("response")` when the endpoint's own return value isn't a
+`starlette.responses.Response`, and neither endpoint declared a `response` parameter (every
+OTHER `@limiter.limit(...)` endpoint in the file already did). (2) The chapter list never
+updated on its own after "Generate" — `useChapters`'s SWR poll was keyed only on the BOOK's
+`processing` status, which stops being true the moment ingestion finishes, long before any
+individual chapter's lesson generation is done; the card froze on "Generating…" until a manual
+reload. (3) `ChapterRow` displayed the raw backend 0-based page index inline ("PDF pages 11–17
+(0-based index)"), reading as a bug to a student. (4) `/reports` and `/reports/[sessionId]`
+lived entirely outside the `(dashboard)` route group — no Sidebar, no mobile nav, by a
+documented-as-deliberate-but-wrong past convention. (5) `SessionReport.tsx`'s only in-content
+navigation was "Back to Reports" — no path back to `/dashboard` on the success-render path.
+
+**Resolution:** (1) added `response: Response` to both endpoints, plus a new source-level
+AST-scan guard (`test_limiter_response_param.py`) that flags ANY `@limiter.limit(...)`
+endpoint missing it, repo-wide. (2) `useChapters`'s poll now also continues while any loaded
+chapter has `latest_lesson.status` in `queued`/`running` (reusing the existing
+`isLessonProcessing` helper). (3) `ChapterRow` now displays `page_start + 1`–`page_end + 1`,
+matching how every PDF reader numbers pages; the not-necessarily-matching-printed-page-numbers
+caveat moved from cluttered inline text to the existing tooltip. (4) moved both reports routes
+into `app/(dashboard)/reports/` with a new `layout.tsx` matching every sibling route's own
+duplicated Sidebar+TopUtilityBar shell (no shared `(dashboard)/layout.tsx` exists). (5) added a
+`← Dashboard / Reports` breadcrumb to `SessionReport.tsx`.
+
+**Also shipped in the same PR (feature, not a defect):** a Sidebar collapse/expand toggle
+(`ChevronLeft`/`ChevronRight`, default expanded, icon-only when collapsed with `aria-label` +
+hover tooltip on every control, persisted to `localStorage` since the Sidebar remounts fresh
+on every top-level route change).
+
+**Incidental, found only because fixing (1) let the existing tests' real assertions finally
+run:** `tests/test_s5_3_endpoints.py` had no rate-limiter reset between test cases (module-level
+`memory://` storage leaking state across methods in one pytest process — confirmed pre-existing
+via `git stash` + rerun, not introduced by this fix) and one test used
+`MagicMock(spec=APIError)` as a mock `side_effect`, which isn't a real exception instance and
+fails with `TypeError` when raised. Both fixed in the same PR since they sat in the same file
+this story was already touching.
+
+**Enforcement:** `test_limiter_response_param.py` (2 tests — the repo-wide scan, and a premise
+check that the scan actually flags a synthetic broken function). `useChapters.test.ts` — new
+tests for both polling directions (continues while a lesson is generating, stops once settled).
+`ChapterRow.test.tsx`/`BookDetail.test.tsx`/`books-msw.integration.test.tsx` updated for the new
+1-based display. `test_s5_3_endpoints.py`'s autouse `_reset_rate_limiter` fixture. A real
+`next build` confirms both reports routes still resolve correctly under the new path (no route
+collision, `[sessionId]` still dynamic). `SessionReport.test.tsx` covers the new Dashboard link.
+`Sidebar.test.tsx` covers the collapse toggle's default state, label hiding, re-expand,
+`localStorage` persistence across a full unmount/remount, and that the toggle's own accessible
+name never collides with the Account button's.
+
+**Out of scope, not folded into this fix:** `test_rate_limit_redis_storage.py`'s 2 failures
+(`fakeredis`'s `evalsha` unimplemented) — confirmed pre-existing and unrelated via the same
+`git stash` check, not touched here.
+
+---
+
 Six open entries are this rule stated after the fact, and are the evidence for it —
 **do not re-register them under new ids, cite them**: **D45** (check-then-insert on
 `(chapter_id, tier)` with no UNIQUE constraint anywhere to fall back on — two concurrent

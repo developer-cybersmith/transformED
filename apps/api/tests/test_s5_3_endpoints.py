@@ -11,14 +11,30 @@ focused on the endpoint behaviour rather than the internal helper.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> None:
+    """`limiter`'s default `memory://` storage is a module-level singleton, so
+    without a reset every PUT/GET in this file shares ONE "3/minute" (or
+    "30/minute") budget across the whole test run -- the 4th successful PUT
+    call anywhere in this file gets a real 429 regardless of what it's
+    actually testing. Confirmed pre-existing (reproduces identically on
+    `main` before D183's fix): `test_put_fk_violation_returns_404` was
+    already the 4th PUT in file order and already flaky on this exact cause."""
+    from app.core.rate_limit import limiter
+
+    limiter.reset()
+
 
 BOOK_ID = "11111111-1111-1111-1111-111111111111"
 CHAPTER_ID = "22222222-2222-2222-2222-222222222222"
@@ -159,8 +175,12 @@ class TestPutChapterContext:
         from postgrest.exceptions import APIError
 
         mock_resolve.return_value = (BOOK_ID, CHAPTER_ID)
-        api_err = MagicMock(spec=APIError)
-        api_err.code = "23503"
+        # A real APIError instance, not MagicMock(spec=APIError) -- mock's
+        # side_effect must `raise` it, and a Mock (even spec'd) isn't
+        # actually a BaseException instance, so `raise`-ing it fails with
+        # "TypeError: exceptions must derive from BaseException" before ever
+        # reaching the code under test.
+        api_err = APIError({"code": "23503", "message": "FK violation"})
         mock_upsert.side_effect = api_err
 
         client = _make_client_with_user(USER_ID)

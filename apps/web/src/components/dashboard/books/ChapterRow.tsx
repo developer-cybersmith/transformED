@@ -11,10 +11,15 @@ import { ChapterGenerateControl } from "./ChapterGenerateControl";
 // the button is now live, so the reason constant is gone rather than left behind
 // as a string nothing renders.
 
-// Page ranges are 0-BASED PDF page indices, not printed page numbers. Never
-// show a bare "page 69" to a student without saying what the number is.
+// `chapter.page_start`/`page_end` are 0-BASED PDF page indices server-side.
+// Showing that raw index (e.g. "PDF pages 11-17 (0-based index)") reads as a
+// bug to a student -- nobody thinks of "page 0" as the first page of a book.
+// Displayed page numbers are the 0-based index + 1, matching how every PDF
+// reader numbers pages by file position. That still isn't guaranteed to match
+// the number PRINTED on the page (front matter, roman numerals, etc.), so the
+// honest caveat moves to the tooltip instead of cluttering the inline text.
 export const PAGE_RANGE_EXPLANATION =
-    "0-based PDF page indices — these are positions in the PDF file, not the page numbers printed on the page.";
+    "Page numbers reflect position in the PDF file and may not match the numbers printed on the page.";
 
 function lessonCountLabel(count: number): string {
     return count === 1 ? "1 lesson" : `${count} lessons`;
@@ -133,7 +138,7 @@ export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
                 )}
 
                 <p className="mt-1 text-xs text-neutral-500" title={PAGE_RANGE_EXPLANATION}>
-                    PDF pages {chapter.page_start}–{chapter.page_end} (0-based index) · {pageSpan} pages
+                    Pages {chapter.page_start + 1}–{chapter.page_end + 1} · {pageSpan} pages
                 </p>
 
                 {/* boundary_confidence describes HOW the chapter was detected -- it is
