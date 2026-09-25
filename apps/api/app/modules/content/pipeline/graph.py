@@ -7439,6 +7439,14 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # truncated. Admins can query lesson_jobs
                 # WHERE node_outputs->'book_context_truncated' = 'true'.
                 "book_context_truncated": state.get("book_context_truncated", False),
+                # Story 249 (issue #249): same convention, chapter_context's
+                # own 1,300-char budget. Review finding: this was computed
+                # into PipelineState by lesson_planner_node/slide_generator_node
+                # but never reached THIS persisted, admin-visible record — AC 8
+                # requires "surfaced the same way book_context_truncated
+                # already is," and a transient state key nobody ever
+                # persists is not surfaced, it is silent (CLAUDE.md).
+                "chapter_context_truncated": state.get("chapter_context_truncated", False),
             },
         }
     ).eq("lesson_id", lesson_id).execute()

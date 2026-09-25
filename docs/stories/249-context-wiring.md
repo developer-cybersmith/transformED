@@ -278,6 +278,59 @@ don't require exact formatting, and `_format_chapter_context_block` has its own 
 this story's guard-test survey explicitly scoped out of touching ("this story only changes what
 *consumes* the already-tested formatted block, not how it's built").
 
+### Senior Developer Review — Round 1 (2026-09-25, 6-agent Workflow, partial failure + fixes)
+
+**Process note — a real tooling failure, not swept under the rug.** Launched a 6-agent
+`Workflow` (Story Quality / Blind Hunter / Test Coverage / AC Completeness / Process Integrity /
+Scale & Load, per CLAUDE.md's 6-layer gate). 5 of 6 agents ignored their assigned review prompt
+entirely and instead each independently re-answered an unrelated, already-resolved question from
+several turns earlier in the parent conversation ("check the main once again if it is updated or
+not"), reasoning that a stale relayed message overrode their actual task. Only the `testCoverage`
+agent performed its assigned review. This is a genuine subagent context-confusion bug in the
+Workflow tool, not a review-design mistake — filed via `SendFeedback` (bug,
+`failure_mode: context_and_memory`) with the reproduction. The 5 failed layers (Story Quality,
+Blind Hunter, AC Completeness, Process Integrity, Scale & Load) did not run their intended review
+this round; that coverage gap is open, not closed — see Task 6 follow-up below.
+
+**`testCoverage`'s findings — all independently re-verified against real code before fixing, per
+this repo's standing rule never to trust a reviewer's claim at face value:**
+
+1. **(HIGH, CONFIRMED) AC 8 gap — `chapter_context_truncated` computed but never persisted.**
+   `package_builder_node`'s Supabase `node_outputs` update wrote `book_context_truncated` as a
+   sibling key but had no matching `chapter_context_truncated` line — the flag lived only in
+   transient `PipelineState`, never reaching the durable, admin-visible record. This is exactly
+   the "silent truncation is never acceptable" failure class CLAUDE.md names directly. **Fixed:**
+   added `"chapter_context_truncated": state.get("chapter_context_truncated", False)` immediately
+   after the existing `book_context_truncated` line. Two new tests added
+   (`test_chapter_context_truncated_reaches_persisted_admin_record`,
+   `test_chapter_context_truncated_defaults_false_when_absent`), calling the real
+   `package_builder_node` and asserting on the actual `jobs_update_kwargs["node_outputs"]` dict.
+2. **(HIGH, CONFIRMED) No test exercised the real `lesson_planner_node`/`slide_generator_node`
+   return dict for these two keys** — only the private `_planner_system_prompt` helper and the
+   pure `merge_chapter_context` function were tested; a regression dropping either key from a
+   return-dict literal would have passed the whole suite undetected. **Fixed:** added
+   `test_lesson_planner_node_returns_chapter_context_fresh_computation_path` and
+   `test_lesson_planner_node_returns_chapter_context_on_cache_hit_path` (both call the real async
+   node, patching `get_chapter_context_prompt_block` to return a unique marker, asserting on the
+   returned dict directly on both idempotency paths), plus
+   `test_slide_generator_node_returns_chapter_context_truncated_in_dict`.
+3. **(MEDIUM, CONFIRMED) No test proved `book_context` and `chapter_context` compose correctly
+   together** when both are non-empty in the same prompt — each was only ever tested in
+   isolation. A regression re-feeding the pre-book-merge base prompt into `merge_chapter_context`
+   would silently drop `book_context` whenever `chapter_context` is also present, and nothing
+   would catch it. **Fixed:** added
+   `test_book_and_chapter_context_both_reach_slide_prompt_uncorrupted` — asserts both unique
+   markers reach the real prompt, in the documented book-then-chapter order, with both truncation
+   flags correctly `False`.
+4. **(LOW, CONFIRMED) `PipelineState`'s new fields were never asserted to exist** — minor, since
+   `TypedDict` has no runtime enforcement, but unverified by the suite in isolation. **Fixed:**
+   added `test_pipeline_state_declares_chapter_context_fields`, using `typing.get_type_hints()`
+   (not raw `__annotations__`, which are unresolved `ForwardRef`s under this file's
+   `from __future__ import annotations`).
+
+All 4 findings fixed; 7 new tests added (20 total in the file, up from 13); full regression
+re-run green (see Completion Notes below).
+
 ### Completion Notes
 All 10 ACs implemented and verified:
 - `PipelineState` gains `chapter_context`/`chapter_context_truncated` (AC 1).
@@ -294,21 +347,31 @@ All 10 ACs implemented and verified:
   narration's own post-planner dispatch) get a matching `setdefault("chapter_context", "")`.
 - `chapter_context_truncated` surfaced identically to `book_context_truncated` — set by
   `lesson_planner_node`/`slide_generator_node`, deliberately NOT returned by
-  `narration_generator_node` (AC 8).
-- 13 new tests in `test_249_context_wiring.py`: 8 for `merge_chapter_context` (mirroring
-  `TestMergeBookContext` exactly), 1 proving `_planner_system_prompt` uses the real merge (not raw
-  concatenation) via an over-budget input, 1 for `_FAN_OUT_STATE_KEYS`, 1 regression guard proving
-  the 5 Phase-1 nodes reference neither context (AC 9), and 2 proving `chapter_context` text
-  actually reaches `slide_generator_node`'s and `narration_generator_node`'s real constructed
-  prompts (not just that a mock was called) (AC 6/7, Task 5.2).
+  `narration_generator_node` (AC 8); persisted into `package_builder_node`'s durable
+  `node_outputs` record alongside `book_context_truncated` (review Finding 1, fixed).
 - `D189` registered (Task 3.1) documenting the deferred Phase-1-economy-node question, per AC 10.
-- Full regression: 206 directly-relevant existing tests + 4 real-graph integration tests + 1,684
-  full unit-suite tests passing (1 pre-existing, unrelated failure —
+- 20 tests in `test_249_context_wiring.py`: 8 for `merge_chapter_context` (mirroring
+  `TestMergeBookContext` exactly), 1 proving `_planner_system_prompt` uses the real merge (not raw
+  concatenation), 1 for `_FAN_OUT_STATE_KEYS`, 1 regression guard proving the 5 Phase-1 nodes
+  reference neither context (AC 9), 2 proving `chapter_context` text reaches
+  `slide_generator_node`'s/`narration_generator_node`'s real constructed prompts, 2 proving
+  `chapter_context_truncated` reaches the real persisted admin record, 2 calling the real
+  `lesson_planner_node` (fresh + cache-hit paths) and asserting on its returned dict directly,
+  1 proving `slide_generator_node`'s real returned dict carries `chapter_context_truncated`,
+  1 proving `book_context`+`chapter_context` compose correctly together in the same prompt
+  (order, no dropping, no duplication), and 1 asserting `PipelineState`'s new fields via
+  `typing.get_type_hints()` — the last 7 added in Round 1 review to close findings 1-4 above.
+- Full regression: 20/20 new tests + 48/48 mandatory guard tests (`test_ces.py`,
+  `test_node_return_shape.py`, `test_unbounded_queries.py`) + full `tests/unit` + `tests/integration
+  -m "not postgres"` suite, all green (1 pre-existing, unrelated failure —
   `test_effective_wpm_is_not_the_raw_rate`, already confirmed pre-existing during Story 233's own
-  work). `ruff check .` / `ruff format --check .`: clean repo-wide. `mypy app`: clean on every file
-  this story touches (4 pre-existing errors elsewhere, unrelated httpx/OpenAI typing).
-- Not yet done: Task 6 (6-layer adversarial review) and Task 7.2/7.3 (implementation commit,
-  dev1-tracker entry) — next steps.
+  work). `ruff check .`: clean (auto-fixed 2 import-order nits introduced by the new tests).
+  `mypy` on both touched app files: clean (3 pre-existing errors elsewhere, unrelated
+  httpx/httpx2 OpenAI-client typing, confirmed present on this branch's own last commit before
+  today's edits — not a regression).
+- Round 1 review coverage gap (Story Quality / Blind Hunter / AC Completeness / Process Integrity
+  / Scale & Load layers never ran, see Senior Developer Review above) remains open — Task 6
+  follow-up, not yet re-run.
 
 ### File List
 - `apps/api/app/modules/content/pipeline/graph.py` — `PipelineState` gains `chapter_context`/
@@ -316,10 +379,11 @@ All 10 ACs implemented and verified:
   `lesson_planner_node`'s chapter-context fetch moved earlier + returns it on both paths + computes
   `chapter_context_truncated`; `slide_generator_node`/`narration_generator_node` merge
   `chapter_context`; `_FAN_OUT_STATE_KEYS` extended; both fan-out payload builders get a
-  `chapter_context` `setdefault`.
+  `chapter_context` `setdefault`; `package_builder_node` persists `chapter_context_truncated` into
+  `node_outputs` (Round 1 review fix).
 - `apps/api/app/modules/content/pipeline/prompt_context.py` — shared `_merge_context_block`
   extracted; new `merge_chapter_context`/`_CHAPTER_CONTEXT_MAX_CHARS`/`_CHAPTER_TRUNCATION_MARKER`.
-- `apps/api/tests/test_249_context_wiring.py` — new file, 13 tests.
+- `apps/api/tests/test_249_context_wiring.py` — new file, 20 tests.
 - `docs/DEFECT-REGISTER.md` — new `D189`.
 
 ### Change Log
@@ -327,4 +391,7 @@ All 10 ACs implemented and verified:
   on `main` at `60eefc22`.
 - 2026-09-25: Implementation complete (Tasks 1-5) — see Dev Agent Record above, including the
   mid-work `main` merge (PR #252/issue #233 landed) and its resolution. Full regression green.
-  Task 6 (adversarial review) and Task 7.2/7.3 next.
+- 2026-09-25: Round 1 review (5 of 6 agent layers failed to run due to a Workflow tool subagent
+  context-confusion bug, reported separately; `testCoverage` layer's 4 findings all independently
+  re-verified and fixed, 7 new tests added). Task 6 re-run (remaining 5 layers) and Task 7.2/7.3
+  (dev1-tracker entry, PR) next.
