@@ -264,10 +264,12 @@ def coalesce_sections(
             size = base + (1 if b < extra else 0)
             group = kept[idx : idx + size]
             idx += size
-            merged = group[0]
-            for nxt in group[1:]:
-                merged = _merge_two(merged, nxt)
-            bucketed.append(merged)
+            # Review finding (Developer-2-max, PR #252): this was an inline
+            # left-fold duplicating merge_section_range's own loop — reuse it
+            # instead of maintaining two copies of the same _merge_two fold.
+            # `group` is never empty: base >= 1 is guaranteed by the
+            # `n > max_sections >= 1` precondition above.
+            bucketed.append(merge_section_range(group))
         kept = bucketed
 
     # ── Re-sequence ids ──────────────────────────────────────────────────────

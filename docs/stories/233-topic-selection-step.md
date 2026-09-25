@@ -468,6 +468,61 @@ addressed:
 unrelated failure). `ruff check`/`ruff format --check`: clean. `mypy app`: clean on every file this
 story touches.
 
+### Senior Developer Review — Round 3 (2026-09-25, external reviewer `Developer-2-max` on PR #252)
+
+An external human/agent reviewer left a comment on PR #252 with 2 confirmed findings and 5
+lower-severity/style observations. Every claim independently re-verified against the real code
+before acting on it (never taken at face value).
+
+**Confirmed and fixed:**
+
+1. **Stale Phase-1 checkpoint reuse across a deploy that spans this feature.** Verified: a merged
+   topic's `_derive_section_id`-computed key is GUARANTEED to collide, for the first merged topic,
+   with whatever key an original (pre-`topic_selection_node`) section 0 would have used — because
+   `merge_section_range` keeps `sections[0]`'s title verbatim, and `_derive_section_id`'s
+   uniqueness comes from index+title-slug only, never content. An ARQ job that reached Phase 1
+   before this PR's deploy and retries after it would silently reuse the OLD, narrow (pre-collapse)
+   checkpoint as if it were the summary/quiz/complexity/jargon/interventions/narration for the new,
+   much larger merged topic — no error, no log a human would see. **Fixed**: new
+   `_purge_stale_phase1_checkpoints` helper, called only on the actual-collapse paths (never the
+   AC-4 no-op path, where nothing changes), removes any checkpoint (and its `section_truncation:`
+   sibling) keyed to an id the new merged topics are about to reuse, forcing Phase 1 to regenerate
+   fresh output for them instead of cache-hitting on stale data.
+2. **`s.get('title', '')` in the split-index LLM prompt only substitutes on a MISSING key, not an
+   explicit `None`** — every other title-touching spot in this file (`_derive_section_id`,
+   `_merge_two`) already guards with `or ""`; this one spot didn't, and a `None` title (the
+   rule-based heading detector can produce these) would render as the literal string `"None"` in
+   the prompt. **Fixed**: `s.get('title') or ''`.
+
+**Lower-severity items — evaluated individually, not accepted or rejected as a block:**
+
+- **`merge_section_range` duplicates `coalesce_sections`' Pass-2 bucket-merge loop** — confirmed:
+  both were independent left-folds over `_merge_two`. **Fixed**: `coalesce_sections` now calls
+  `merge_section_range(group)` instead of maintaining its own copy of the fold.
+- **`merge_section_range` hardcodes the merged id to `"s0"`, "a latent collision trap if a future
+  caller ever trusts `section['id']`"** — real but explicitly flagged by the reviewer as harmless
+  today. The actual current risk (both `topic_selection_node` branches previously relying on this
+  default rather than setting it themselves) is closed by making both branches set `.id` explicitly
+  right after calling `merge_section_range` (the 2-topic branch already did; the 1-topic branch now
+  does too) — the function's own default is left in place rather than changing its public contract
+  (and an existing test's documented behavior) for a risk with no live caller today.
+- **`topics_record` in the checkpoint is write-only, no reader anywhere** — true, but this is the
+  SAME accepted pattern as `section_truncations`/`source_was_truncated` (`D185`): a persisted
+  admin-visible signal, deliberately written ahead of its future consumer, per this story's own
+  AC 8. Not a defect, not fixed.
+- **1-topic/2-topic branches "duplicate the same shape," could share one loop over a computed
+  boundary list** — a 2-way branch, not a duplicated-N-times pattern; the suggested unification
+  would add indirection (computing a boundary list, generic iteration) for arguably worse
+  readability. Judged as over-engineering for what it would prevent; not fixed.
+- **`_write_checkpoint` closure captures `supabase`/`node_outputs`/`lesson_id`, "harder to unit-test
+  in isolation than an explicit-argument helper"** — explicitly framed as a style nit by the
+  reviewer; the closure's behavior is already fully covered by this file's own checkpoint tests.
+  Not fixed.
+
+**Post-round-3 regression**: 1,665 unit tests (3 new: title-None guard, checkpoint-purge, no-op
+path doesn't purge) + 20 integration tests passing (same 1 pre-existing, unrelated failure).
+`ruff check`/`ruff format --check`: clean. `mypy app`: clean on every file this story touches.
+
 ### File List
 - `apps/api/app/config.py` — `section_body_max_chars` default + description re-derived.
 - `apps/api/app/schemas/lesson.py` — new `TIER_TOPIC_COUNT`.

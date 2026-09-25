@@ -547,3 +547,103 @@ def test_slide_budget_per_segment_known_interim_gap_d188() -> None:
     assert t3_total < 7, (
         f"T3 no longer falls short of its mandated total ({t3_total}) — re-check this pin"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_two_topic_prompt_never_renders_a_none_title_as_literal_none() -> None:
+    """External review finding (Developer-2-max, PR #252): `s.get('title', '')`
+    only substitutes when the key is ABSENT, not when it's explicitly `None`
+    — every other title-touching spot in this file guards with `or ""`
+    (`_derive_section_id`, `_merge_two`), this one didn't. A section with
+    `title: None` (the rule-based heading detector can produce these) would
+    render as the literal string "None" in the split-index prompt."""
+    from app.modules.content.pipeline.graph import topic_selection_node
+
+    sections = _sections([f"TOKEN_{i}" for i in range(6)])
+    sections[2]["title"] = None
+    provider = AsyncMock()
+    provider.complete_structured.return_value = _split_response(3)
+    with (
+        patch("app.core.db.get_supabase", return_value=_mock_supabase()),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        await topic_selection_node(_base_state(sections, tier="T2"))
+
+    provider.complete_structured.assert_called_once()
+    messages = provider.complete_structured.call_args.args[0]
+    user_message = next(m["content"] for m in messages if m["role"] == "user")
+    assert "2: None —" not in user_message, "a None title leaked as the literal string 'None'"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_collapse_purges_stale_phase1_checkpoints_reused_by_merged_topics() -> None:
+    """External review finding (Developer-2-max, PR #252, verified): a merged
+    topic's derived section_id (index + title-slug) can collide with a
+    checkpoint written under the OLD (pre-topic_selection) per-original-
+    section keying — guaranteed for index 0, since merge_section_range keeps
+    sections[0]'s title verbatim. An in-flight job retried across this
+    feature's deploy would otherwise silently serve the OLD, narrow
+    checkpoint as if it were e.g. the summary for the new, much larger
+    merged topic. The stale entry (and its section_truncation sibling) must
+    be purged from node_outputs when a collapse actually happens."""
+    from app.modules.content.pipeline.graph import _derive_section_id, topic_selection_node
+
+    sections = _sections([f"TOKEN_{i}" for i in range(6)])
+    # merge_section_range keeps sections[0]'s title verbatim for the merged
+    # topic at index 0 -- so its derived id is IDENTICAL to what a pre-merge
+    # run would have computed for original section 0 alone.
+    stale_id = _derive_section_id(sections[0], 0)
+    stale_key = f"summarise_segment:{stale_id}"
+    stale_truncation_key = f"section_truncation:summarise_segment:{stale_id}"
+    unrelated_key = "structure"  # must survive the purge untouched
+    node_outputs = {
+        stale_key: {"segment_id": stale_id, "summary": "STALE pre-collapse summary"},
+        stale_truncation_key: {"original_chars": 999, "capped_chars": 500},
+        unrelated_key: {"sections": sections},
+    }
+    sb = _mock_supabase(node_outputs)
+    provider = AsyncMock()
+    provider.complete_structured.return_value = _split_response(3)
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.factory.get_llm_provider", return_value=provider),
+    ):
+        await topic_selection_node(_base_state(sections, tier="T2"))
+
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    assert len(checkpoint_calls) == 1
+    written_node_outputs = checkpoint_calls[0]["node_outputs"]
+    assert stale_key not in written_node_outputs, "stale checkpoint survived the collapse"
+    assert stale_truncation_key not in written_node_outputs, "stale truncation record survived"
+    assert unrelated_key in written_node_outputs, "purge must not touch unrelated entries"
+    assert "topic_selection" in written_node_outputs
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_noop_path_does_not_purge_anything() -> None:
+    """The AC-4 no-op path leaves `sections` (and therefore every derived id)
+    unchanged, so there is nothing stale to purge — confirms the purge is
+    scoped to the actual-collapse paths only."""
+    from app.modules.content.pipeline.graph import _derive_section_id, topic_selection_node
+
+    sections = _sections(["only body"])
+    existing_id = _derive_section_id(sections[0], 0)
+    existing_key = f"summarise_segment:{existing_id}"
+    node_outputs = {existing_key: {"segment_id": existing_id, "summary": "real, still valid"}}
+    sb = _mock_supabase(node_outputs)
+    with patch("app.core.db.get_supabase", return_value=sb):
+        await topic_selection_node(_base_state(sections, tier="T3"))
+
+    checkpoint_calls = [
+        c.args[0]
+        for c in sb.table.return_value.update.call_args_list
+        if "node_outputs" in c.args[0]
+    ]
+    assert existing_key in checkpoint_calls[0]["node_outputs"]

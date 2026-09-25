@@ -1323,7 +1323,7 @@ async def _topic_selection_llm_split(
         return _topic_selection_midpoint_split(sections)
 
     preview_lines = "\n".join(
-        f"{i}: {_single_line(s.get('title', ''))} — {_single_line((s.get('body') or '')[:200])}"
+        f"{i}: {_single_line(s.get('title') or '')} — {_single_line((s.get('body') or '')[:200])}"
         for i, s in enumerate(sections)
     )
     messages = [
@@ -1369,6 +1369,36 @@ async def _topic_selection_llm_split(
             exc_info=True,
         )
     return _topic_selection_midpoint_split(sections)
+
+
+def _purge_stale_phase1_checkpoints(
+    node_outputs: dict[str, Any], new_sections: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Review finding (Developer-2-max, PR #252, verified): a merged topic's
+    derived section_id can collide with a PRE-EXISTING Phase-1/narration
+    checkpoint written under the OLD (pre-topic_selection) per-original-
+    section keying — guaranteed for the first merged topic, since
+    `merge_section_range` keeps `sections[0]`'s title verbatim and
+    `_derive_section_id`'s uniqueness comes from index+title-slug only. An
+    in-flight job retried across this feature's deploy would otherwise
+    silently serve a stale, narrow (pre-collapse) checkpoint as if it were
+    the summary/quiz/complexity/jargon/interventions/narration for the new,
+    much larger merged topic — with no error, no log a human would notice.
+
+    Purges any checkpoint (and its `section_truncation:` sibling) keyed to
+    an id the new merged topics are about to reuse, so Phase 1 regenerates
+    fresh output for them instead of cache-hitting on stale, pre-collapse
+    data. Only called when topic_selection actually collapses sections
+    (never the AC-4 no-op path, where ids are unchanged and nothing stale
+    could be mismatched)."""
+    checkpoint_prefixes = (*_ECONOMY_NODES, *_POST_PLANNER_FAN_OUT_NODES)
+    purged = dict(node_outputs)
+    for i, sec in enumerate(new_sections):
+        stale_id = _derive_section_id(sec, i)
+        for prefix in checkpoint_prefixes:
+            purged.pop(f"{prefix}:{stale_id}", None)
+            purged.pop(f"section_truncation:{prefix}:{stale_id}", None)
+    return purged
 
 
 async def topic_selection_node(state: PipelineState) -> PipelineState:
@@ -1459,6 +1489,7 @@ async def topic_selection_node(state: PipelineState) -> PipelineState:
     if target_topic_count <= 1:
         # ── AC 5: 1-topic case — merge everything, zero LLM calls ─────────────
         topic = merge_section_range(sections)
+        topic["id"] = "s0"
         new_sections = [topic]
         topics_record = [{"title": topic["title"], "folded_indices": list(range(len(sections)))}]
     else:
@@ -1477,6 +1508,12 @@ async def topic_selection_node(state: PipelineState) -> PipelineState:
                 "folded_indices": list(range(split_index, len(sections))),
             },
         ]
+
+    # Review finding (Developer-2-max, PR #252): purge any Phase-1/narration
+    # checkpoint an in-flight, pre-deploy retry left behind under an id the
+    # new merged topics are about to reuse — see
+    # _purge_stale_phase1_checkpoints' own docstring for the exact scenario.
+    node_outputs = _purge_stale_phase1_checkpoints(node_outputs, new_sections)
 
     _write_checkpoint(
         {
