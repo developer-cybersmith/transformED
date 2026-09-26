@@ -635,11 +635,14 @@ class Settings(BaseSettings):
         default=900,
         gt=0,
         description=(
-            "Target narration words per delivery unit. Chosen so one unit's "
-            "SOURCE slice (900 x ~6 chars/word = ~5,400 chars) fits inside "
-            "section_body_max_chars (6,000) — which is why S5-5 needs no "
-            "increase to that window. Raising this past ~1,000 pushes slices "
-            "over the window and re-introduces truncation."
+            "Target narration words per delivery unit. Also sizes each unit's "
+            "SOURCE slice (segment_expansion.unit_slice_chars: this x "
+            "CHARS_PER_WORD = 5,400 chars at 900), which must stay below the "
+            "Phase-1 window section_body_max_chars (45,000) — D195. At or above "
+            "~7,500 the slice is clamped to the window and each unit needs a "
+            "whole window of source. Lowering it multiplies units, so "
+            "max_narration_segments binds sooner (recorded as "
+            "capped_by_max_segments)."
         ),
     )
     max_narration_segments: int = Field(

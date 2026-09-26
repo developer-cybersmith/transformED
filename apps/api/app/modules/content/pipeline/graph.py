@@ -1555,18 +1555,20 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
     """Story S5-5: expand `topic_selection`'s 1-2 topics into enough delivery
     units to meet the lesson's MINIMUM narration duration.
 
-    `topic_selection_node` collapses a chapter to 1 topic (T3) or 2 (T1/T2).
-    Every Phase-1 call then reads at most `section_body_max_chars` (6,000) of
-    one, so the text the generator could ever see was `n_topics x 6,000` —
-    13.3 min of narration at T1/T2, 6.7 at T3, regardless of chapter size.
-    Every tier was structurally short of the minimum S5-4 promises.
+    `topic_selection_node` collapses a chapter to 1 topic (T3) or 2 (T1/T2),
+    and one topic as one delivery unit cannot carry a 45-minute narration: a
+    single completion asked for ~3,000 words returns roughly half. This node
+    cuts the topics into the number of units `plan_segments` allocates and
+    overwrites `state["sections"]`, exactly as topic_selection already does,
+    so every downstream node needs zero changes.
 
-    The window is not too small: 900 narration words is ~5,400 chars, inside
-    it. The bug was reading it once per TOPIC instead of once per delivery
-    unit. `merge_section_range` is text-preserving, so the whole chapter is
-    still in state after topic_selection — this node tiles those bodies into
-    window-sized slices and overwrites `state["sections"]`, exactly as
-    topic_selection already does, so every downstream node needs zero changes.
+    D195: the unit slice size (`unit_slice_chars`, 900 words x CHARS_PER_WORD
+    = 5,400) and the Phase-1 window (`section_body_max_chars`, 45,000) are
+    different things. S5-5 as first merged passed the window as the slice
+    size, and split_body returns anything under it whole, so this node
+    expanded nothing in production. The window is now only the per-unit hard
+    ceiling, and each topic is cut into EXACTLY its allocated count
+    (`split_into`), so dispatched units == sum(per_topic_segments).
 
     Topic identity is preserved on each slice (`topic_index`/`topic_title`),
     so Story 233's grouping is refined, not undone: topic_selection still
@@ -1578,9 +1580,11 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
     from app.config import get_settings
     from app.core.db import get_supabase
     from app.modules.content.pipeline.nodes.segment_expansion import (
-        CHARS_PER_WORD,
+        boundary_at_or_after,
+        coverage_per_topic,
         plan_segments,
-        split_body,
+        split_into,
+        unit_slice_chars,
     )
     from app.schemas.lesson import DEFAULT_TIER, narration_budget_minutes
 
@@ -1631,39 +1635,40 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
         max_segments=settings.max_narration_segments,
     )
 
-    # Slice each topic into its allocated number of units. `target_chars` is
-    # the per-unit word budget expressed in characters; `max_chars` is the
-    # unchanged Phase-1 window, so no slice can ever exceed what the LLM will
-    # be shown (which is what made the old truncation lossy).
-    # Shared with the planner's capacity maths — a retyped 6.0 here would
-    # silently desync slice size from capacity if either were tuned
-    # (PR #255 review, finding 5).
-    target_chars = int(words_per_segment * CHARS_PER_WORD)
+    # D195: two sizes, never interchangeable. `unit_chars` is what ONE unit is
+    # sized for; `window_chars` is only the ceiling one Phase-1 call accepts.
+    # Passing the window as the slice size is exactly the defect this replaced.
+    window_chars = settings.section_body_max_chars
+    unit_chars = unit_slice_chars(words_per_segment=words_per_segment, window_chars=window_chars)
+    bodies = [s.get("body") or "" for s in sections]
+    wants = [
+        plan.per_topic_segments[i] if i < len(plan.per_topic_segments) else 1
+        for i in range(len(sections))
+    ]
+    # How much of each topic the units carry: exactly what the plan's
+    # achievable_minutes assumed, with coverage a short topic cannot use passed
+    # to the others.
+    coverage = coverage_per_topic(
+        [len(b) for b in bodies], wants, unit_chars=unit_chars, window_chars=window_chars
+    )
+    untaught_chars_per_topic = [0] * len(sections)
     expanded: list[dict[str, Any]] = []
     for topic_index, section in enumerate(sections):
-        body = section.get("body") or ""
-        want = (
-            plan.per_topic_segments[topic_index]
-            if topic_index < len(plan.per_topic_segments)
-            else 1
-        )
-        # No `or [body]` fallback: split_body returns [] for an empty body by
-        # contract, and coercing that to [""] shipped a blank delivery unit to
-        # all five Phase-1 economy nodes as a real segment — exactly what that
-        # contract exists to prevent (PR #255 review, finding 3). A topic the
-        # plan allocated nothing to is likewise skipped, not forced to one.
-        if want <= 0:
+        body = bodies[topic_index]
+        want = wants[topic_index]
+        # An empty or whitespace-only topic, or one the plan allocated nothing
+        # to, is skipped and never forced into a blank unit (PR #255 review,
+        # finding 3). Whitespace is not untaught text.
+        if want <= 0 or not body.strip():
+            untaught_chars_per_topic[topic_index] = len(body) if body.strip() else 0
             continue
-        pieces = split_body(
-            body, target_chars=target_chars, max_chars=settings.section_body_max_chars
-        )
-        if not pieces:
-            continue
-        # Only as many units as the plan allocated. D194: a topic far larger
-        # than the duration needs is taught from its PREFIX — the tail is never
-        # reached. Acceptable while topic_selection owns which content is
-        # taught, but it is a selection bias, not a neutral truncation.
-        pieces = pieces[:want]
+        covered = body[
+            : boundary_at_or_after(body, coverage[topic_index], ceiling=want * window_chars)
+        ]
+        # D194: a topic larger than the duration needs is taught from its
+        # PREFIX. Now recorded per lesson rather than implied.
+        untaught_chars_per_topic[topic_index] = len(body) - len(covered)
+        pieces = split_into(covered, want, max_chars=window_chars)
         for piece_index, piece in enumerate(pieces):
             slice_section = dict(section)
             slice_section["body"] = piece
@@ -1685,20 +1690,22 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
             lesson_id,
             plan.max_segments_configured,
             plan.cap_overrun,
-            sum(1 for sec in sections if (sec.get("body") or "")),
+            sum(1 for sec in sections if (sec.get("body") or "").strip()),
             plan.cap_overrun,
         )
 
     logger.info(
-        "[%s] segment_expansion_node: %d topic(s) -> %d unit(s); tier %s wants >= %.0f min "
-        "of narration, source supports ~%.1f min%s",
+        "[%s] segment_expansion_node: %d topic(s) -> %d unit(s) (planned %d); tier %s wants "
+        ">= %.0f min of narration, source supports ~%.1f min%s; untaught chars per topic %s",
         lesson_id,
         len(sections),
         len(expanded),
+        plan.segment_count,
         tier,
         plan.requested_min_minutes,
         plan.achievable_minutes,
         " (CONTENT-LIMITED)" if plan.content_limited else "",
+        untaught_chars_per_topic,
     )
 
     # Reuse topic_selection's purge: a retry crossing this deploy holds Phase-1
@@ -1723,6 +1730,10 @@ async def segment_expansion_node(state: PipelineState) -> PipelineState:
             "cap_overrun": plan.cap_overrun,
             "max_segments_configured": plan.max_segments_configured,
             "effective_wpm": effective_wpm,
+            # D195: the slice size actually used, so the record shows it was
+            # not the window. D194: text the units do not carry, per topic.
+            "unit_slice_chars": unit_chars,
+            "untaught_chars_per_topic": untaught_chars_per_topic,
         }
     )
     await _update_job_progress(lesson_id, 34.0, "segment_expansion")
@@ -7450,7 +7461,12 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
         # Without it, "thin chapter" and "we truncated the chapter" are the
         # same signal, and the admin cannot tell a real short chapter from a
         # structure-detection failure on a 1,151-page book.
-        "source_was_truncated": bool(state.get("section_truncations")),
+        # D194/D195: segment_expansion withholding a topic's tail is the same
+        # signal from a different mechanism — capacity_min is measured from the
+        # units it dispatched, so e.g. a max_narration_segments clamp reads as
+        # content_limited unless this says the source was not all shown.
+        "source_was_truncated": bool(state.get("section_truncations"))
+        or any((node_outputs.get("segment_expansion") or {}).get("untaught_chars_per_topic") or []),
         "planner_sum_before_rescale": round(
             float(_budget.get("planner_sum_before_rescale") or 0.0), 2
         ),
@@ -7624,8 +7640,11 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # surface, no migration. Always written. `outcome` separates a
                 # thin chapter that honestly ran short (`content_limited`) from
                 # a generator that missed on adequate material
-                # (`target_missed`); read it alongside `section_truncations`,
-                # since a chapter capped at section_body_max_chars can present
+                # (`target_missed`); read it alongside `section_truncations`
+                # and `segment_expansion.untaught_chars_per_topic` (both fold
+                # into `duration_report.source_was_truncated`), since a chapter
+                # capped at section_body_max_chars, or cut short by
+                # segment_expansion, can present
                 # as content-limited when the cap, not the chapter, was the
                 # real limit.
                 "duration_report": duration_report,
