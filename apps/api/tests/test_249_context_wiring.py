@@ -194,6 +194,20 @@ def test_fan_out_state_keys_includes_chapter_context():
     assert "book_context" in _FAN_OUT_STATE_KEYS  # unchanged, still there
 
 
+@pytest.mark.unit
+def test_fan_out_state_keys_includes_both_truncated_flags():
+    """D192. Without these two keys, the Send() payload built from
+    _FAN_OUT_STATE_KEYS never carries book_context_truncated/
+    chapter_context_truncated, so narration_generator_node's own
+    `state.get(...)` suppression check (below) was always falsy inside the
+    dispatched node regardless of what lesson_planner_node actually set --
+    dead code that silently logged N times instead of once per lesson."""
+    from app.modules.content.pipeline.graph import _FAN_OUT_STATE_KEYS
+
+    assert "book_context_truncated" in _FAN_OUT_STATE_KEYS
+    assert "chapter_context_truncated" in _FAN_OUT_STATE_KEYS
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # D. AC 9 regression guard — the 5 Phase-1 economy nodes never reference
 #    either context (they run before either fetch happens; D189 registers why
@@ -378,6 +392,55 @@ async def test_narration_generator_node_return_dict_excludes_both_truncated_flag
     result, _ = await _run_narration_generator_node(_narration_state_with_chapter_context(""))
     assert "chapter_context_truncated" not in result
     assert "book_context_truncated" not in result
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_generator_node_suppresses_the_repeat_warning_when_flag_is_present(
+    caplog,
+) -> None:
+    """D192. The suppression check only works if the dispatched node's own
+    `state` actually carries `chapter_context_truncated` -- which requires
+    `_FAN_OUT_STATE_KEYS` to include it (see the fan-out test above). This
+    proves the CONSUMER side: given a state shaped exactly like the FIXED
+    Send() payload (flag present, matching what lesson_planner_node already
+    logged), no repeat warning is emitted."""
+    import logging
+
+    from app.modules.content.pipeline.prompt_context import _CHAPTER_CONTEXT_MAX_CHARS
+
+    state = _narration_state_with_chapter_context(
+        "\n\n[Chapter Instructions]\n" + ("x" * (_CHAPTER_CONTEXT_MAX_CHARS + 500))
+    )
+    state["chapter_context_truncated"] = True  # already logged once by lesson_planner_node
+
+    with caplog.at_level(logging.WARNING):
+        await _run_narration_generator_node(state)
+
+    assert "chapter_context truncated" not in caplog.text
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_narration_generator_node_logs_the_warning_when_flag_is_absent(caplog) -> None:
+    """D192's regression case: this is exactly what every dispatched section
+    saw BEFORE the fan-out-keys fix -- the flag never reaches this node's
+    own `state`, so the guard's `not state.get(...)` is always True and the
+    warning fires on every one of N dispatched sections instead of zero
+    (lesson_planner_node already logged the one that matters)."""
+    import logging
+
+    from app.modules.content.pipeline.prompt_context import _CHAPTER_CONTEXT_MAX_CHARS
+
+    state = _narration_state_with_chapter_context(
+        "\n\n[Chapter Instructions]\n" + ("x" * (_CHAPTER_CONTEXT_MAX_CHARS + 500))
+    )
+    # chapter_context_truncated deliberately absent -- the pre-fix payload shape.
+
+    with caplog.at_level(logging.WARNING):
+        await _run_narration_generator_node(state)
+
+    assert "chapter_context truncated" in caplog.text
 
 
 @pytest.mark.unit

@@ -7700,6 +7700,17 @@ _FAN_OUT_STATE_KEYS: tuple[str, ...] = (
     "tier",
     "book_context",
     "chapter_context",
+    # D192 (2026-09-25): narration_generator_node's own truncation-warning
+    # suppression (`if ... and not state.get("book_context_truncated")`)
+    # was dead code without these two keys -- the Send() payload built from
+    # this tuple never carried them, so `state.get(...)` inside the
+    # dispatched node was always falsy and every one of N dispatched
+    # sections logged the warning instead of just the one lesson_planner_node
+    # already logged. Absent (via the `if k in state` guard below) on the
+    # Phase-1 fan-out, which runs before lesson_planner_node ever sets them
+    # -- harmless there, since Phase-1 nodes don't read either flag.
+    "book_context_truncated",
+    "chapter_context_truncated",
 )
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
@@ -7807,6 +7818,14 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     # docs/DEFECT-REGISTER.md) — kept for payload-shape consistency with
     # book_context, not because any Phase-1 node reads it.
     base.setdefault("chapter_context", "")
+    # D192: same payload-shape-consistency reasoning as book_context/
+    # chapter_context above — lesson_planner_node hasn't set either
+    # *_truncated flag yet at Phase-1 dispatch time, so `if k in state` alone
+    # would omit them here (test_fan_out_state_keys.py's
+    # test_fan_out_payload_carries_every_declared_key guards every declared
+    # key appearing in every dispatch, Phase-1 included).
+    base.setdefault("book_context_truncated", False)
+    base.setdefault("chapter_context_truncated", False)
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
     # Uses _PHASE1_INSTRUMENTED_NODES (all 5 as of issue #236 — narration_generator
@@ -7951,6 +7970,15 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
     # now actually merges this one (unlike the Phase-1 fan-out's own
     # setdefault above, which is payload-shape-only per D189).
     base.setdefault("chapter_context", "")
+    # D192: lesson_planner_node (which runs before this dispatch) normally
+    # already sets both *_truncated flags in state, so these setdefaults are
+    # a safety net rather than the common path -- but guaranteeing presence
+    # (default False) matches book_context/chapter_context's own idiom above
+    # and is what test_fan_out_payload_carries_every_declared_key_plus_plan_segment
+    # (test_fan_out_state_keys.py) requires of every declared _FAN_OUT_STATE_KEYS
+    # member, unconditionally.
+    base.setdefault("book_context_truncated", False)
+    base.setdefault("chapter_context_truncated", False)
     base["_total_sections"] = len(plan_segments) * len(_POST_PLANNER_FAN_OUT_NODES)
 
     sends: list[Send] = []
