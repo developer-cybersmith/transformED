@@ -1009,6 +1009,10 @@ describe('AudioTimeline — D197: handleEnded must not advance/end while a quiz 
     expect(usePlayerStore.getState().status).toBe('QUIZ');
     expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
     expect(sendControl).toHaveBeenCalledWith({ type: 'segment_complete' });
+    // Review finding (Acceptance Auditor/Test Coverage): prefer a real store
+    // read alongside the mock assertion, not the mock alone — setTutorState
+    // runs in the same unconditional branch as wsSendControl above.
+    expect(usePlayerStore.getState().tutorState).toBe('CHECKING_IN');
   });
 
   it('AC4: the identical race on the LAST segment must not end the lesson while its quiz is still open', () => {
@@ -1029,6 +1033,9 @@ describe('AudioTimeline — D197: handleEnded must not advance/end while a quiz 
     });
     expect(usePlayerStore.getState().status).toBe('QUIZ');
     sendControl.mockClear();
+    // Review finding (Acceptance Auditor): spy `endLesson` directly rather
+    // than inferring its non-call solely from `status` staying QUIZ.
+    const endLessonSpy = vi.spyOn(usePlayerStore.getState(), 'endLesson');
 
     fireEvent.ended(audio);
 
@@ -1036,7 +1043,117 @@ describe('AudioTimeline — D197: handleEnded must not advance/end while a quiz 
     // lesson_complete/endLesson() unconditionally once the segment is in
     // quizFiredForSegment — ending the lesson before its own quiz ran.
     expect(sendControl).not.toHaveBeenCalledWith({ type: 'lesson_complete' });
+    expect(endLessonSpy).not.toHaveBeenCalled();
     expect(usePlayerStore.getState().status).toBe('QUIZ');
+  });
+
+  it('AC4b: exiting the last segment\'s quiz/teach-back after the race DOES end the lesson (positive counterpart to AC4)', () => {
+    const lesson = loadThreeSegmentLesson();
+    const lastIndex = lesson.segments.length - 1;
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: lastIndex,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+
+    act(() => {
+      processTimeUpdate(148000);
+    });
+    // Real browser state at this point: the audio genuinely reached its end
+    // (that's the entire premise of D197's race), so `.ended` is already
+    // true — jsdom does not set this itself just because `fireEvent.ended`
+    // dispatched the DOM event (see the pre-existing "exitTeachBack() resumes
+    // PLAYING on an already-ended last segment" test for the same pattern).
+    Object.defineProperty(audio, 'ended', { configurable: true, value: true });
+    fireEvent.ended(audio); // the AC4 race — guard holds, quiz stays open
+    sendControl.mockClear();
+
+    // An implementation that merely never fires lesson_complete on this path
+    // would satisfy AC4 as originally worded while leaving the lesson unable
+    // to ever end — this proves it still ends once the quiz/teach-back the
+    // guard protected is actually exited. exitTeachBack() resumes PLAYING
+    // without itself calling endLesson() for the last segment — it relies on
+    // the play/pause effect noticing `audio.ended` is already true and
+    // driving handleEnded() -> endLesson() from there.
+    act(() => {
+      usePlayerStore.getState().exitQuiz();
+      usePlayerStore.getState().exitTeachBack();
+    });
+
+    expect(sendControl).toHaveBeenCalledWith({ type: 'lesson_complete' });
+    expect(usePlayerStore.getState().status).toBe('ENDED');
+  });
+
+  it('guard holds for non-PLAYING statuses beyond QUIZ (PAUSED) — advanceSegment never fires unconditionally', () => {
+    // Distinguishes "the guard checks status broadly" from "the guard
+    // happens to only ever be tested against QUIZ" (review finding: no test
+    // previously pinned the boundary at any other status value).
+    loadThreeSegmentLesson();
+    usePlayerStore.setState({
+      status: 'PAUSED',
+      currentSegmentIndex: 0,
+      // Already quizzed by an earlier, unrelated cycle — quizFiredForSegment
+      // is what would otherwise route handleEnded into its unconditional
+      // advanceSegment() branch, independent of enterQuiz()'s own internal
+      // status gate.
+      quizFiredForSegment: new Set(['seg_0']),
+    });
+    const { container } = render(<AudioTimeline />);
+
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+    expect(usePlayerStore.getState().status).toBe('PAUSED');
+  });
+
+  it('guard holds for non-PLAYING statuses beyond QUIZ (TEACH_BACK) on the last segment — endLesson never fires unconditionally', () => {
+    const lesson = loadThreeSegmentLesson();
+    const lastIndex = lesson.segments.length - 1;
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'TEACH_BACK',
+      currentSegmentIndex: lastIndex,
+      quizFiredForSegment: new Set(['seg_2']),
+      wsSendControl: sendControl,
+    });
+    const { container } = render(<AudioTimeline />);
+
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(sendControl).not.toHaveBeenCalledWith({ type: 'lesson_complete' });
+    expect(usePlayerStore.getState().status).toBe('TEACH_BACK');
+  });
+
+  it('guard holds when enterQuiz() skips QUIZ entirely for a zero-quiz-question segment (TEACH_BACK-direct branch, "the normal case for several segments per lesson")', () => {
+    const lesson = loadThreeSegmentLesson();
+    const zeroQuizLesson = {
+      ...lesson,
+      segments: lesson.segments.map((s, i) => (i === 0 ? { ...s, quiz: [] } : s)),
+    };
+    usePlayerStore.setState({
+      lesson: zeroQuizLesson,
+      status: 'PLAYING',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(),
+    });
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+
+    act(() => {
+      processTimeUpdate(92000); // seg_0's own end_ms
+    });
+    // Zero quiz questions: enterQuiz() routes straight to TEACH_BACK, never QUIZ.
+    expect(usePlayerStore.getState().status).toBe('TEACH_BACK');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+
+    fireEvent.ended(audio);
+
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+    expect(usePlayerStore.getState().status).toBe('TEACH_BACK');
   });
 });
 
