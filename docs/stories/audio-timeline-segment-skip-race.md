@@ -102,3 +102,45 @@ not apply to a client-side event-ordering race in already-loaded lesson playback
 The narration pacing gap the same report separately named (60db synthesises at ~163 wpm against a
 150 wpm budget, costing ~3.4 min of a lesson's target duration) is explicitly Dev 1's / backend's
 own issue, independent of this player-side race, and is not touched here.
+
+## Completion notes
+
+Implemented as designed, with one deviation from the fix section above: the guard is **not**
+inside `handleEnded()` itself. A first attempt added `if (status !== 'PLAYING') return;` directly
+to `handleEnded()`'s own body and it broke a pre-existing, legitimate test — the S2-33 virtual
+clock (no real `<audio>` element) calls `processTimeUpdate(nextMs)` and then `handleEnded()`
+directly in the same tick, on purpose, to finalize an already-quizzed segment even when
+`processTimeUpdate`'s own slide-transition-pause side effect just changed `status` away from
+`'PLAYING'` in that same tick. A guard inside `handleEnded()` silently swallowed that legitimate
+call too.
+
+Fixed instead with a new wrapper, `handleAudioEnded()`, applied only to the one call site that is
+actually racy — the `<audio onEnded={...}>` DOM prop:
+
+```ts
+function handleAudioEnded() {
+  if (usePlayerStore.getState().status !== 'PLAYING') return;
+  handleEnded();
+}
+```
+
+`handleEnded()` itself is unchanged. The other three call sites (play/pause effect's
+`audio.ended` check, the "no audio no script" degrade path, and the virtual clock) keep calling
+`handleEnded()` directly and are unaffected, since each already only calls it when `status` is (or
+was just synchronously confirmed) `'PLAYING'`, or deliberately needs to run regardless (the
+virtual clock).
+
+Both functions were relocated from their original position (just above the component's JSX
+return) to immediately after `const hasScript = ...`, ahead of the play/pause `useEffect` — an
+ESLint rule flagged `handleEnded` as "used before declaration" once a second reference
+(`handleAudioEnded`) was added, even though JS function-declaration hoisting makes the original
+ordering work correctly at runtime. Pure relocation, no behavior change: both functions only
+reference `usePlayerStore.getState()`.
+
+AC1–AC4 implemented as new tests in a `D197` describe block in
+`AudioTimeline.component.test.tsx`, using a new `loadThreeSegmentLesson()` fixture helper. AC5/AC6
+verified by running the full existing suite rather than adding new tests — no existing test
+needed changes.
+
+Verified: `AudioTimeline.component.test.tsx` 60/60, full player suite 458/458 (20 files), full web
+suite 1307/1307 (96 files), `eslint` clean, `tsc --noEmit` clean.

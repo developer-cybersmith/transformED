@@ -18,6 +18,23 @@ function loadLessonWithSignedAudioUrl() {
   usePlayerStore.getState().loadLesson(lesson);
 }
 
+// D197: the reported race needs >=3 segments to distinguish "segment 1 was
+// skipped" from "we just landed on the last segment" -- mockLessonPackage
+// only ships 2. Segment 2 is segment 1 duplicated under a new id/quiz ids,
+// keeping it non-last so the middle-segment (advanceSegment) branch, not the
+// isLast (endLesson) branch, is what AC1/AC2 exercise.
+function loadThreeSegmentLesson() {
+  const lesson = structuredClone(mockLessonPackage);
+  const seg2 = structuredClone(lesson.segments[1]);
+  seg2.segment_id = 'seg_2';
+  seg2.segment_index = 2;
+  seg2.quiz = seg2.quiz.map((q) => ({ ...q, question_id: `${q.question_id}_dup` }));
+  lesson.segments.push(seg2);
+  lesson.metadata.total_segments = 3;
+  usePlayerStore.getState().loadLesson(lesson);
+  return lesson;
+}
+
 let playMock: ReturnType<typeof vi.fn>;
 let pauseMock: ReturnType<typeof vi.fn>;
 const originalPlay = window.HTMLMediaElement.prototype.play;
@@ -922,6 +939,104 @@ describe('AudioTimeline — handleEnded sends segment_complete (S2-06 AC2/AC6)',
     fireEvent.ended(container.querySelector('audio')!);
 
     expect(sendControl).not.toHaveBeenCalled();
+  });
+});
+
+describe('AudioTimeline — D197: handleEnded must not advance/end while a quiz is already open', () => {
+  it('AC1: timeupdate reaching end_ms (enters QUIZ) then ended firing must NOT advance the segment', () => {
+    loadThreeSegmentLesson();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+
+    // The final native timeupdate crosses the segment's own end_ms boundary
+    // BEFORE `ended` fires -- exactly the real browser order this bug
+    // depends on (package generation now sets a segment's last end_ms to the
+    // measured real audio duration, so the two routinely land on one tick).
+    act(() => {
+      processTimeUpdate(92000); // seg_0's own end_ms (see lessonPackage.ts)
+    });
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+
+    fireEvent.ended(audio);
+
+    // Without the fix, handleEnded's "already quizzed" branch advances
+    // unconditionally here, moving to segment 1 WHILE segment 0's quiz is
+    // still open.
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+  });
+
+  it('AC2: exiting the quiz/teach-back after the race lands on segment 1, never skips to segment 2', () => {
+    loadThreeSegmentLesson();
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+
+    act(() => {
+      processTimeUpdate(92000);
+    });
+    fireEvent.ended(audio);
+
+    act(() => {
+      usePlayerStore.getState().exitQuiz();
+      usePlayerStore.getState().exitTeachBack();
+    });
+
+    // Exactly one advance (via exitTeachBack) — segment 1 plays next.
+    // Without the fix, handleEnded's own extra advance plus this one lands
+    // on segment 2, and segment 1's 5-plus minutes of audio never plays.
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(1);
+  });
+
+  it('AC3 (control, must keep passing): ended firing BEFORE any boundary timeupdate still opens the quiz normally', () => {
+    loadThreeSegmentLesson();
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: 0,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+    const { container } = render(<AudioTimeline />);
+
+    // No timeupdate ever reached end_ms — status is still PLAYING, matching
+    // "the audio ended before hitting the boundary" case the code's own
+    // comment already names.
+    fireEvent.ended(container.querySelector('audio')!);
+
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+    expect(usePlayerStore.getState().currentSegmentIndex).toBe(0);
+    expect(sendControl).toHaveBeenCalledWith({ type: 'segment_complete' });
+  });
+
+  it('AC4: the identical race on the LAST segment must not end the lesson while its quiz is still open', () => {
+    const lesson = loadThreeSegmentLesson();
+    const lastIndex = lesson.segments.length - 1;
+    const sendControl = vi.fn();
+    usePlayerStore.setState({
+      status: 'PLAYING',
+      currentSegmentIndex: lastIndex,
+      quizFiredForSegment: new Set(),
+      wsSendControl: sendControl,
+    });
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+
+    act(() => {
+      processTimeUpdate(148000); // seg_2 is a clone of seg_1's own end_ms
+    });
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
+    sendControl.mockClear();
+
+    fireEvent.ended(audio);
+
+    // Without the fix, the isLast branch's `else` clause fires
+    // lesson_complete/endLesson() unconditionally once the segment is in
+    // quizFiredForSegment — ending the lesson before its own quiz ran.
+    expect(sendControl).not.toHaveBeenCalledWith({ type: 'lesson_complete' });
+    expect(usePlayerStore.getState().status).toBe('QUIZ');
   });
 });
 

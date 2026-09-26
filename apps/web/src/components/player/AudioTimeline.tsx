@@ -171,6 +171,70 @@ export function AudioTimeline() {
   // nothing to advance the segment at all and keeps the immediate-advance path.
   const hasScript = Boolean(segment?.narration.script?.trim());
 
+  function handleEnded() {
+    const {
+      lesson: l,
+      currentSegmentIndex: idx,
+      quizFiredForSegment,
+      endLesson,
+      advanceSegment,
+      setTutorState,
+      wsSendControl,
+      enterQuiz,
+    } = usePlayerStore.getState();
+    if (!l) return;
+    const segment = l.segments[idx];
+    const isLast = idx >= l.segments.length - 1;
+
+    if (isLast) {
+      // Last segment: end the lesson (quiz boundary detection handles quiz first if not yet fired)
+      if (segment && !quizFiredForSegment.has(segment.segment_id)) {
+        setTutorState('CHECKING_IN');
+        wsSendControl?.({ type: 'segment_complete' });
+        enterQuiz(); // audio ended before quiz fired (very short audio or tight timing)
+      } else {
+        wsSendControl?.({ type: 'lesson_complete' });
+        endLesson();
+      }
+    } else {
+      // Non-last segment: if quiz already fired (student sought back and replayed), advance
+      if (segment && quizFiredForSegment.has(segment.segment_id)) {
+        advanceSegment();
+      }
+      // If quiz hasn't fired yet, processTimeUpdate's boundary check should have caught it.
+      // If the audio ended before hitting the boundary, fire the quiz now.
+      else if (segment) {
+        setTutorState('CHECKING_IN');
+        wsSendControl?.({ type: 'segment_complete' });
+        enterQuiz();
+      }
+    }
+  }
+
+  // D197: the real <audio> element's native `ended` event is the ONLY
+  // handleEnded() call site where a genuine race against processTimeUpdate
+  // is possible -- at a segment's natural end, the browser can fire a final
+  // `timeupdate` at/past end_ms (processTimeUpdate's own boundary check
+  // calls enterQuiz(), moving status to QUIZ/TEACH_BACK) BEFORE `ended`
+  // fires for that same boundary. Without this guard, handleEnded()'s
+  // "already quizzed" branches fire unconditionally: advanceSegment() moves
+  // past the segment whose quiz/teach-back is still open (and the NEXT
+  // segment is then skipped entirely once exitTeachBack() advances again),
+  // or on the last segment, endLesson() ends the lesson before its own
+  // quiz/teach-back ever runs.
+  //
+  // Deliberately NOT a guard inside handleEnded() itself: the virtual clock
+  // (S2-33, no real <audio> element) calls handleEnded() directly, in the
+  // same tick as its own processTimeUpdate() call, specifically to finalize
+  // an already-quizzed segment regardless of a transient status change
+  // processTimeUpdate's slide-transition-pause side effect may have just
+  // made in that same tick — that call is deliberate and already correct;
+  // narrowing the guard to only this DOM event avoids breaking it.
+  function handleAudioEnded() {
+    if (usePlayerStore.getState().status !== 'PLAYING') return;
+    handleEnded();
+  }
+
   // Status drives audio — audio never drives status (S1-01 invariant).
   // Also re-runs on currentSegmentIndex: replaying a previously-quizzed segment
   // (seek backward, let it reach its natural end) advances the segment via
@@ -570,46 +634,6 @@ export function AudioTimeline() {
     usePlayerStore.getState().setAudioError(true);
   }
 
-  function handleEnded() {
-    const {
-      lesson: l,
-      currentSegmentIndex: idx,
-      quizFiredForSegment,
-      endLesson,
-      advanceSegment,
-      setTutorState,
-      wsSendControl,
-      enterQuiz,
-    } = usePlayerStore.getState();
-    if (!l) return;
-    const segment = l.segments[idx];
-    const isLast = idx >= l.segments.length - 1;
-
-    if (isLast) {
-      // Last segment: end the lesson (quiz boundary detection handles quiz first if not yet fired)
-      if (segment && !quizFiredForSegment.has(segment.segment_id)) {
-        setTutorState('CHECKING_IN');
-        wsSendControl?.({ type: 'segment_complete' });
-        enterQuiz(); // audio ended before quiz fired (very short audio or tight timing)
-      } else {
-        wsSendControl?.({ type: 'lesson_complete' });
-        endLesson();
-      }
-    } else {
-      // Non-last segment: if quiz already fired (student sought back and replayed), advance
-      if (segment && quizFiredForSegment.has(segment.segment_id)) {
-        advanceSegment();
-      }
-      // If quiz hasn't fired yet, processTimeUpdate's boundary check should have caught it.
-      // If the audio ended before hitting the boundary, fire the quiz now.
-      else if (segment) {
-        setTutorState('CHECKING_IN');
-        wsSendControl?.({ type: 'segment_complete' });
-        enterQuiz();
-      }
-    }
-  }
-
   if (!segment) return null;
 
   return (
@@ -626,7 +650,7 @@ export function AudioTimeline() {
       preload="metadata"
       onLoadedMetadata={handleLoadedMetadata}
       onTimeUpdate={handleTimeUpdate}
-      onEnded={handleEnded}
+      onEnded={handleAudioEnded}
       onWaiting={handleWaiting}
       onPlaying={handlePlaying}
       onCanPlay={handleCanPlay}
