@@ -101,8 +101,19 @@ export function Sidebar() {
             isCollapsed ? "w-20" : "w-68"
         )}>
 
-            {/* Logo Area */}
-            <div className="pt-10 pb-8 px-5 relative z-10 flex items-center justify-between">
+            {/* Logo Area.
+                Collapsed: the toggle used to be pushed outside the sidebar's
+                right edge (`absolute -right-3`) to avoid squeezing the ~40px
+                of content width left after px-5 padding on an 80px (w-20)
+                rail -- but the <aside> itself is `overflow-hidden`, which
+                silently clipped it, leaving no visible way to expand again.
+                Stacking the toggle below the logo instead keeps it fully
+                inside the clipped bounds, at the cost of a slightly taller
+                header only in the collapsed state. */}
+            <div className={cn(
+                "pt-10 pb-8 relative z-10",
+                isCollapsed ? "px-3 flex flex-col items-center gap-3" : "px-5 flex items-center justify-between"
+            )}>
                 <Link href="/" className="flex items-center gap-3 inline-block group min-w-0">
                     <Image src="/logo.jpeg" alt="HIE Logo" width={32} height={32} className="rounded-lg shrink-0 transition-transform duration-300 group-hover:scale-105 object-contain" />
                     {!isCollapsed && (
@@ -117,10 +128,7 @@ export function Sidebar() {
                     onClick={toggleCollapsed}
                     aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                     aria-pressed={isCollapsed}
-                    className={cn(
-                        "flex items-center justify-center w-7 h-7 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-black/5 transition-colors shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]",
-                        isCollapsed && "absolute -right-3 top-11 bg-white border border-[var(--accent-primary)]/10 shadow-[0_2px_10px_rgb(0,0,0,0.08)] hover:bg-neutral-50"
-                    )}
+                    className="flex items-center justify-center w-7 h-7 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-black/5 transition-colors shrink-0 focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
                 >
                     {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
                 </button>

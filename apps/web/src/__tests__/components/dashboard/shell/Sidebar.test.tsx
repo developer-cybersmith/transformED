@@ -118,4 +118,20 @@ describe('Sidebar — collapse toggle', () => {
     // also match the toggle's "Collapse/Expand sidebar" label.
     expect(screen.getAllByRole('button', { name: /account/i })).toHaveLength(1);
   });
+
+  it('keeps the expand toggle in-flow when collapsed, not floated outside the clipped sidebar bounds', async () => {
+    // Regression: the toggle was previously `absolute -right-3` while its
+    // <aside> ancestor is `overflow-hidden` -- CSS clipped it, leaving no
+    // visible way to expand again. jsdom doesn't compute real layout/clipping,
+    // so the meaningful guard is structural: the button must never carry
+    // `absolute` positioning that pushes it outside the sidebar's own edge.
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    await user.click(screen.getByRole('button', { name: /collapse sidebar/i }));
+
+    const expandButton = screen.getByRole('button', { name: /expand sidebar/i });
+    expect(expandButton.className).not.toMatch(/\babsolute\b/);
+    expect(expandButton.className).not.toMatch(/-right-/);
+  });
 });
