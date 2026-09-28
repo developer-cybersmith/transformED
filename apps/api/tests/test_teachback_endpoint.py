@@ -970,7 +970,7 @@ def test_response_text_single_char_accepted(monkeypatch) -> None:
 
 @pytest.mark.unit
 async def test_score_teachback_exception_returns_fallback(mock_to_thread) -> None:
-    """AC 2: score_teachback raises RuntimeError â†’ grade_teachback raises HTTP 502."""
+    """AC 2: score_teachback raises RuntimeError → grade_teachback returns fallback TeachbackResult (score_source=’fallback’), not HTTP 502."""
 
     async def _raise_error(**kwargs):
         raise RuntimeError("OpenAI connection refused")
@@ -995,7 +995,7 @@ async def test_score_teachback_exception_returns_fallback(mock_to_thread) -> Non
 
 @pytest.mark.unit
 async def test_score_teachback_returns_none_gives_fallback(mock_to_thread) -> None:
-    """AC 3: score_teachback returns None â†’ grade_teachback raises HTTP 502."""
+    """AC 3: score_teachback returns None → grade_teachback returns fallback TeachbackResult (score_source=’fallback’), not HTTP 502."""
 
     async def _return_none(**kwargs):
         return None

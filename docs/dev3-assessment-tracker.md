@@ -1028,7 +1028,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Fixed bug in `check_profile()`: DPDP disclaimer stripped before banned-term scan — "clinical" in disclaimer no longer triggers FAIL on criterion 2
   - Removed dead `suspicious` variable (F841); ruff I001 import order fixed; unused `Client` import removed (F401)
   - 20/20 unit tests GREEN in `apps/api/tests/test_s4_36_dna_quality_check.py` (2.73s, zero Supabase calls)
-  - BMAD 6-layer review complete (2026-09-07): 0 patch findings, 1 defer finding (D166 registered)
+  - BMAD 6-layer review complete (2026-09-07): 0 patch findings, 1 defer finding (D200 registered)
   - Branch: `sprint4/s4-36-dna-checker-ci-tests` | Story: `docs/stories/4-36-dna-checker-ci-tests.md`
 
 - [x] **Learner Mode tier label verify (Story F2-3)** — ✓ 2026-09-04

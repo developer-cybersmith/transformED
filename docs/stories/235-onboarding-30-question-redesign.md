@@ -1,4 +1,4 @@
----
+﻿---
 title: "Story 235 — Onboarding Form: Replace 20-Question Form with 30-Question Redesign"
 status: review
 owners: [Dev 2]
@@ -345,7 +345,7 @@ failure mode, same recovery path, just a different (cheaper, deterministic) inpu
 level idempotency (`user:{id}:onboarding_done` Redis SET NX) and the reassessment bypass are
 **unchanged** — both are format-agnostic.
 
-**Registered as D173** (`docs/DEFECT-REGISTER.md`), **later FIXED in this story's own implementation
+**Registered as D204** (`docs/DEFECT-REGISTER.md`), **later FIXED in this story's own implementation
 (2026-09-22)**, following the `/bmad-code-review` of PR #239. Re-reading `process_onboarding()`'s
 current (pre-fix) insert path confirmed it used a plain `.insert()`, not an upsert, for
 `onboarding_responses`/`onboarding_answers_v2` — meaning a reassessment resubmission hit the
@@ -364,7 +364,7 @@ error is now a genuine 500, since duplicate *submission attempts* are already ga
 `test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint`
 (`tests/unit/test_reassessment_blend.py`), which enforces the real `UNIQUE(user_id, question_id)`
 constraint itself via an in-memory fake table (rather than a self-agreeing mock) and drives
-`process_onboarding` through a genuine first-time-then-reassessment sequence. See D173's updated
+`process_onboarding` through a genuine first-time-then-reassessment sequence. See D204's updated
 register entry for the full fix/guard writeup.
 
 ### 6. Wire all 5 Tier A fields into the tutor's existing learner-context prompt path
@@ -642,13 +642,13 @@ changes and the `learner_dna` Penta-Intelligence columns).
     previous 20-question form has no rows in the new table, and the tutor's learner-context path
     (`_read_onboarding_headline_answers`) will treat them as not-yet-onboarded until they complete the
     new 30-question form. Acceptable pre-launch (zero real students have completed even one session
-    as of this writing, per D173's own register entry) — revisit if any internal/preview user
+    as of this writing, per D204's own register entry) — revisit if any internal/preview user
     completes the old form before this PR merges.
   - **Rollback-on-failure logic removed** from both the Step 6 (LLM failure) and Step 7 (`learner_dna`
     upsert failure) exception handlers. That rollback (delete the just-written `onboarding_answers_v2`
     rows so a retry could re-insert) was only ever needed because Step 5 used to be a plain `.insert()`
     — a retry would otherwise hit the `UNIQUE(user_id, question_id)` constraint. Step 5 is now
-    `.upsert()` (D173), which is idempotent: a retry re-upserts the same 30 rows cleanly with no
+    `.upsert()` (D204), which is idempotent: a retry re-upserts the same 30 rows cleanly with no
     rollback required. Worse, the stale rollback was actively harmful on a reassessment specifically —
     Step 5's upsert had already overwritten the student's *prior* answers by the time a Step 6/7
     failure fired, so the rollback-delete left `onboarding_answers_v2` empty instead of merely

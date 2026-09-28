@@ -1,4 +1,4 @@
-"""Guard: chapter_context wiring contract in the content-generation pipeline.
+﻿"""Guard: chapter_context wiring contract in the content-generation pipeline.
 
 Why this file exists
 --------------------
@@ -77,7 +77,7 @@ def test_fan_out_state_keys_includes_chapter_context_truncated() -> None:
     assert "chapter_context_truncated" in _FAN_OUT_STATE_KEYS, (
         "'chapter_context_truncated' is missing from _FAN_OUT_STATE_KEYS.\n"
         "narration_generator_node's truncation-warning suppression guard becomes\n"
-        "dead code without this key (same failure class as D192 for book_context_truncated).\n"
+        "dead code without this key (same failure class as D206 for book_context_truncated).\n"
         "Story 249 AC 8."
     )
 

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Assessment service layer — quiz grading, teach-back scoring, and session report business logic.
 """
 
@@ -1740,7 +1740,7 @@ async def process_onboarding(
        no LLM call).
     4. Compute Penta badge labels (scores >= 70).
     5. Upsert (not insert) 30 rows to onboarding_answers_v2, keyed on
-       (user_id, question_id) — D173: a plain insert would collide with a prior
+       (user_id, question_id) — D204: a plain insert would collide with a prior
        submission's rows on every reassessment resubmission, since the 30
        question_ids are identical across attempts for a given user. Upserting
        makes a legitimate reassessment resubmission (router.py's Redis
@@ -1768,7 +1768,7 @@ async def process_onboarding(
             match the known 30-question spec.
         HTTPException 500: onboarding_answers_v2 or learner_dna write failure. A
             (user_id, question_id) conflict on onboarding_answers_v2 no longer errors —
-            Step 5 upserts through it by design (D173) — duplicate *submission attempts*
+            Step 5 upserts through it by design (D204) — duplicate *submission attempts*
             are gated upstream by router.py's Redis SET NX, not by a DB-level 409 here.
     """
     # Step 1 — validate before any DB call (degrade-not-fabricate guard on client input)
@@ -1786,7 +1786,7 @@ async def process_onboarding(
     # Step 4 — compute Penta badge labels
     badge_labels = _compute_penta_badge_labels(scores)
 
-    # Step 5 — upsert onboarding_answers_v2 rows (D173 fix: was a plain insert, which
+    # Step 5 — upsert onboarding_answers_v2 rows (D204 fix: was a plain insert, which
     # collided with a prior submission's rows on every reassessment resubmission since
     # the 30 question_ids repeat across attempts — see docstring Step 5).
     rows = [
@@ -1827,7 +1827,7 @@ async def process_onboarding(
     # so the router's `except HTTPException` cleanup fires and releases the Redis lock.
     # No rollback of the Step 5 rows here (PR #239 review, Dev 3): that rollback was only
     # ever needed because Step 5 used to be a plain .insert() — a retry would otherwise hit
-    # the UNIQUE(user_id, question_id) constraint. Step 5 is now .upsert() (D173), which is
+    # the UNIQUE(user_id, question_id) constraint. Step 5 is now .upsert() (D204), which is
     # idempotent: a retry re-upserts the same 30 rows cleanly with no rollback required.
     # Deleting here would additionally be actively harmful on a reassessment: Step 5 has
     # already overwritten the student's PRIOR answers by the time this exception fires, so
@@ -1870,7 +1870,7 @@ async def process_onboarding(
             safe_upsert_err,
         )
         # No rollback of the Step 5 rows here — see the identical note above Step 6's
-        # exception handler: Step 5's upsert (D173) is idempotent, so a retry re-upserts
+        # exception handler: Step 5's upsert (D204) is idempotent, so a retry re-upserts
         # cleanly without needing the rows deleted first, and deleting them on a
         # reassessment would destroy the student's just-overwritten answers outright.
         raise HTTPException(

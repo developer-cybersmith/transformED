@@ -1,4 +1,4 @@
-# Story S5-4 — Duration-Driven Lessons (enforced 15/30/45 min seat time)
+﻿# Story S5-4 — Duration-Driven Lessons (enforced 15/30/45 min seat time)
 
 **Sprint:** 5
 **Story:** S5-4
@@ -509,8 +509,8 @@ behaviour rather than just resolving text:
    `lesson_jobs.node_outputs` keeps both `duration_report` and
    `book_context_truncated` — siblings, not alternatives.
 
-**Register IDs were renumbered twice** (D173-D176 → D180-D183 → D184-D187):
-Story 232 had claimed D168-D179 and PR #246 then took D180. Worth a process
+**Register IDs were renumbered twice** (D204-D176 → D180-D183 → D184-D187):
+Story 232 had claimed D201-D179 and PR #246 then took D180. Worth a process
 note for the next long-lived branch — a `D-nn` claimed when an entry is written
 is not still free when the branch merges, which is precisely the collision the
 register's own banner describes.

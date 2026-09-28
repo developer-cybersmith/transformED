@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tests for Story 249 (issue #249): book_context/chapter_context wiring parity.
 
 Tests cover:
@@ -196,7 +196,7 @@ def test_fan_out_state_keys_includes_chapter_context():
 
 @pytest.mark.unit
 def test_fan_out_state_keys_includes_both_truncated_flags():
-    """D192. Without these two keys, the Send() payload built from
+    """D206. Without these two keys, the Send() payload built from
     _FAN_OUT_STATE_KEYS never carries book_context_truncated/
     chapter_context_truncated, so narration_generator_node's own
     `state.get(...)` suppression check (below) was always falsy inside the
@@ -399,7 +399,7 @@ async def test_narration_generator_node_return_dict_excludes_both_truncated_flag
 async def test_narration_generator_node_suppresses_the_repeat_warning_when_flag_is_present(
     caplog,
 ) -> None:
-    """D192. The suppression check only works if the dispatched node's own
+    """D206. The suppression check only works if the dispatched node's own
     `state` actually carries `chapter_context_truncated` -- which requires
     `_FAN_OUT_STATE_KEYS` to include it (see the fan-out test above). This
     proves the CONSUMER side: given a state shaped exactly like the FIXED
@@ -423,7 +423,7 @@ async def test_narration_generator_node_suppresses_the_repeat_warning_when_flag_
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_narration_generator_node_logs_the_warning_when_flag_is_absent(caplog) -> None:
-    """D192's regression case: this is exactly what every dispatched section
+    """D206's regression case: this is exactly what every dispatched section
     saw BEFORE the fan-out-keys fix -- the flag never reaches this node's
     own `state`, so the guard's `not state.get(...)` is always True and the
     warning fires on every one of N dispatched sections instead of zero
