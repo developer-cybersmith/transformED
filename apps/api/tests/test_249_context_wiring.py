@@ -633,10 +633,11 @@ async def test_lesson_planner_node_returns_chapter_context_on_cache_hit_path() -
     assert result["lesson_plan"] == cached_plan
     assert result["chapter_context"] == "UNIQUE_CACHE_HIT_CHAPTER_CTX_MARKER"
     # D191 FIXED (Story 5-16): cache-hit path now recomputes and returns all
-    # three *_truncated flags. Both are False here because the mocked contexts
-    # are well under their respective MAX_CHARS budgets.
-    assert result["chapter_context_truncated"] is False
+    # three *_truncated flags. All False here — mocked contexts are well under
+    # their respective MAX_CHARS budgets.
     assert result["book_context_truncated"] is False
+    assert result["chapter_context_truncated"] is False
+    assert "onboarding_context_truncated" in result
 
 
 async def _lesson_planner_node_with_partial_chapter_ids(*, chapter_id: str, user_id: str) -> dict:
