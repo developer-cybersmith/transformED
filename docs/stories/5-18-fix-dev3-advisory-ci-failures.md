@@ -120,6 +120,12 @@ All existing guard tests for Dev 3 modules still pass after this story:
 ### AC9 — ruff format + check clean
 All modified Python files pass `ruff format --check` and `ruff check` with zero errors.
 
+### AC10 — CLAUDE.md CES formula synced to calibrated defaults
+`CLAUDE.md` §11 CES formula updated from PRD placeholder weights (0.35/0.20/0.12/0.08) to
+post-calibration defaults (0.40/0.15/0.13/0.07). Redistributed without-teachback formula
+recalculated (0.533/0.200/0.173/0.093). Note added explaining the PRD values were pre-calibration
+placeholders; `config.py` and `.env.example` are now the single source of truth.
+
 ---
 
 ## Scale & Load
