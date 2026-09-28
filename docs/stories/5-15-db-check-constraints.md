@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 baseline_commit: fedc47d
 ---
 
@@ -117,13 +117,20 @@ check-then-act application pattern.
 - [x] **T6 — Update DEFECT-REGISTER.md**
   - [x] T6.1 — D178 marked `FIXED-GUARDED`; D190 marked `FIXED-GUARDED`
 
+### Review Findings
+
+- [x] [Review][Patch] Multi-line docstrings in guard test violate CLAUDE.md one-line max rule [`apps/api/tests/unit/test_context_check_constraints.py`] — **FIXED**: trimmed module docstring to 1 line; per-test docstrings to 1 line each; section comment blocks removed. 6 tests still pass.
+- [x] [Review][Defer] AC5 references `test_chapter_context_wiring_guard` which lives on unmerged branch `sprint5/s5-14` [`docs/stories/5-15-db-check-constraints.md:114`] — deferred, pre-existing — test is on a sibling branch not yet merged to main; not caused by this change; completion notes already acknowledge.
+- [x] [Review][Dismiss] `char_length()` counts Unicode codepoints, not bytes — Informational (not exploitable; Pydantic also counts codepoints; consistent across layers)
+
 ## Dev Agent Record
 
 ### Change Log
 
-| Date       | Change                 | Author         |
-|------------|------------------------|----------------|
-| 2026-09-28 | Story file created     | Dev 3 / Claude |
+| Date       | Change                                           | Author         |
+|------------|--------------------------------------------------|----------------|
+| 2026-09-28 | Story file created                               | Dev 3 / Claude |
+| 2026-09-28 | Review patch: trimmed multi-line docstrings       | Dev 3 / Claude |
 
 ### Completion Notes
 
