@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 baseline_commit: 5abaed6
 ---
 
@@ -132,39 +132,55 @@ non-reducers (last-write-wins), and this fix writes the same values
   - [x] T1.2 — `git commit -m "docs(story-first): Story 5-16 — resurface truncation flags on cache-hit (D191)"`
   - [x] T1.3 — Push story-only commit to remote
 
-- [ ] **T2 — Fix `lesson_planner_node` cache-hit (AC1)**
-  - [ ] T2.1 — Add `book_context_truncated`, `chapter_context_truncated`,
+- [x] **T2 — Fix `lesson_planner_node` cache-hit (AC1)**
+  - [x] T2.1 — Add `book_context_truncated`, `chapter_context_truncated`,
     `onboarding_context_truncated` to the cache-hit return dict
-  - [ ] T2.2 — Remove D191 comment block (AC3), add one-line story reference
+  - [x] T2.2 — Remove D191 comment block (AC3), replaced with one-line story reference
 
-- [ ] **T3 — Fix `slide_generator_node` cache-hit (AC2)**
-  - [ ] T3.1 — Add three truncation flag keys to the cache-hit return dict,
-    reading context strings from state
+- [x] **T3 — Fix `slide_generator_node` cache-hit (AC2)**
+  - [x] T3.1 — Added three truncation flag keys to the cache-hit return dict,
+    reading context strings from state via `state.get("*_context") or ""`
 
-- [ ] **T4 — Guard tests (AC4, AC5)**
-  - [ ] T4.1 — Add/extend `test_lesson_planner_node.py` or create
-    `test_d191_truncation_flags_cache_hit.py`; assert truncated=True on
-    cache-hit when context > MAX_CHARS (all three flags, for both nodes)
+- [x] **T4 — Guard tests (AC4, AC5)**
+  - [x] T4.1 — Created `tests/unit/test_d191_truncation_flags_cache_hit.py` (6 tests,
+    source-scan of graph.py cache-hit blocks for both nodes)
 
-- [ ] **T5 — Run tests (AC6)**
-  - [ ] T5.1 — `pytest tests/unit/test_d191_truncation_flags_cache_hit.py -v`
-  - [ ] T5.2 — `pytest tests/unit/test_node_return_shape.py
-    tests/unit/test_unbounded_queries.py tests/unit/test_fan_out_state_keys.py -v`
+- [x] **T5 — Run tests (AC6)**
+  - [x] T5.1 — `pytest tests/unit/test_d191_truncation_flags_cache_hit.py -v` — **6 passed**
+  - [x] T5.2 — `pytest tests/unit/test_node_return_shape.py tests/unit/test_unbounded_queries.py
+    tests/unit/test_fan_out_state_keys.py -v` — 41 passed, 1 pre-existing `tinytag`
+    ModuleNotFoundError (confirmed baseline — not introduced here)
 
-- [ ] **T6 — Update DEFECT-REGISTER.md (AC7)**
-  - [ ] T6.1 — D191 → `FIXED-GUARDED`, reference Story 5-16 and guard test
+- [x] **T6 — Update DEFECT-REGISTER.md (AC7)**
+  - [x] T6.1 — D191 → `FIXED-GUARDED`, reference Story 5-16 and `test_d191_truncation_flags_cache_hit.py`
 
 ## Dev Agent Record
 
 ### Change Log
 
-| Date       | Change             | Author         |
-|------------|--------------------|----------------|
-| 2026-09-28 | Story file created | Dev 3 / Claude |
+| Date       | Change                                    | Author         |
+|------------|-------------------------------------------|----------------|
+| 2026-09-28 | Story file created                        | Dev 3 / Claude |
+| 2026-09-28 | Implementation: fix both cache-hit paths  | Dev 3 / Claude |
 
 ### Completion Notes
 
-_To be filled in on completion._
+`lesson_planner_node` cache-hit (graph.py): added `book_context_truncated`,
+`chapter_context_truncated`, `onboarding_context_truncated` — computed as
+`len(ctx) > _MAX_CHARS` from the already-fetched context strings.
+
+`slide_generator_node` cache-hit (graph.py): same three flags, reading context
+strings from `state.get("*_context") or ""`.
+
+D191 comment block (lines 2430–2434) removed; replaced with 2-line story reference.
+
+Guard test `tests/unit/test_d191_truncation_flags_cache_hit.py` (6 source-scan
+tests, gating bucket) verified RED before fix, GREEN after.
+
+D191 marked FIXED-GUARDED in DEFECT-REGISTER.md.
+
+Pre-existing `tinytag` ModuleNotFoundError on `test_tts_node_returns_only_its_own_keys`
+confirmed pre-existing baseline — not introduced here.
 
 ### Debug Log
 
