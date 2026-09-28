@@ -2355,8 +2355,7 @@ async def get_onboarding_lesson_context(user_id: str) -> OnboardingLessonContext
         dna_row = single_row(dna_resp)
     except Exception:
         logger.warning(
-            "onboarding: could not read lesson-context data for content generation "
-            "(user_id=%s)",
+            "onboarding: could not read lesson-context data for content generation (user_id=%s)",
             user_id,
             exc_info=True,
         )
