@@ -1,24 +1,25 @@
 """
 Shared prompt-merge helpers for per-lesson context injection
-(Story S5-1/Issue #231 — book_context; Story 249/Issue #249 — chapter_context).
+(Story S5-1/Issue #231 — book_context; Story 249/Issue #249 —
+chapter_context; docs handoff 2026-09-28 — onboarding_context).
 
-All prompt sites call `merge_book_context`/`merge_chapter_context` rather than
-doing ad-hoc string concatenation independently. Both enforce their own
-character budget with explicit, surfaced degradation — silent truncation is
-never acceptable (CLAUDE.md binding rule). They share one truncation
-algorithm (`_merge_context_block`) so the two budgets can never silently
-drift apart in behavior, only in their (independently-derived) size.
+All prompt sites call `merge_onboarding_context`/`merge_book_context`/
+`merge_chapter_context` rather than doing ad-hoc string concatenation
+independently. All three enforce their own character budget with explicit,
+surfaced degradation — silent truncation is never acceptable (CLAUDE.md
+binding rule). They share one truncation algorithm (`_merge_context_block`)
+so the three budgets can never silently drift apart in behavior, only in
+their (independently-derived) size.
 
 Precedence slot per AI_Learning_Product_Final_Strategy.pdf §5:
   accuracy & safety → source content → system teaching rules → duration →
-  user profile (onboarding) → **book context** ← here → **chapter
+  **user profile (onboarding)** ← here → **book context** ← here → **chapter
   instructions** ← here → user prompt → past performance
 
-Book context is appended AFTER any onboarding/user-profile block and BEFORE
-any chapter-level instructions; chapter context is appended after book
-context. When no onboarding context is in the prompt today (it isn't — that
-injection is a separate story), book context is simply the first
-personalization layer.
+Onboarding context is appended first (the user-profile personalization
+layer), then book context, then chapter context — matching this precedence
+order exactly at all three call sites that merge more than one of them
+(`_planner_system_prompt`, `slide_generator_node`, `narration_generator_node`).
 """
 
 from __future__ import annotations
@@ -78,6 +79,41 @@ def _merge_context_block(
         len(truncated),
     )
     return base_prompt + "\n\n" + truncated + truncation_marker, True
+
+
+# 5,500-character hard cap on the onboarding-context block in the merged
+# prompt (docs handoff 2026-09-28). Derivation, independent of book_context's
+# 2,000 and chapter_context's 1,300 (CLAUDE.md: re-derive every inherited
+# cap): OnboardingAnswer.response_text is Pydantic-capped at 1,000 chars for
+# EVERY format including 'mcq' (unlike book_context's MCQ fields, which are
+# closed Python Literal enums with no possible length growth, onboarding's
+# response_text has no matching-known-option-text validation at the DB/API
+# layer — see content/context_onboarding.py's own comment). 5 fields × 1,000
+# chars + 5 field labels (~70 chars total) + newlines (~5) + a badges line
+# (5 fixed backend-owned badge strings, ~121 chars worst case) + the
+# "[Onboarding Context]" header (~21 chars) ≈ 5,217 measured worst case.
+# 5,500 leaves ~5.4% headroom, in line with book_context's ~2.6% and
+# chapter_context's ~6.6% margins.
+_ONBOARDING_CONTEXT_MAX_CHARS: int = 5_500
+
+# Distinct from book/chapter's own markers so an admin reading a truncated
+# prompt can tell which context was cut.
+_ONBOARDING_TRUNCATION_MARKER: str = "\n[Onboarding context truncated]"
+
+
+def merge_onboarding_context(base_prompt: str, onboarding_context: str) -> tuple[str, bool]:
+    """Append `onboarding_context` to `base_prompt`, enforcing its own
+    5,500-char budget.
+
+    See `_merge_context_block`'s own docstring for the shared algorithm/contract.
+    """
+    return _merge_context_block(
+        base_prompt,
+        onboarding_context,
+        max_chars=_ONBOARDING_CONTEXT_MAX_CHARS,
+        truncation_marker=_ONBOARDING_TRUNCATION_MARKER,
+        log_label="merge_onboarding_context",
+    )
 
 
 # 2,000-character hard cap on the book-context block in the merged prompt.

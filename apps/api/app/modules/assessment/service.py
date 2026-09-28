@@ -41,6 +41,7 @@ from app.modules.assessment.schemas import (
     LearnerContextDNA,
     LearnerContextSession,
     OnboardingAnswer,
+    OnboardingLessonContext,
     OnboardingResult,
     QuizAnswer,
     QuizResult,
@@ -2313,6 +2314,67 @@ async def _read_onboarding_headline_answers(*, user_id: str, supabase: Client) -
         for r in found
         if r.get("question_id") in _HEADLINE_FIELD_BY_QUESTION and r.get("response_text")
     }
+
+
+async def get_onboarding_lesson_context(user_id: str) -> OnboardingLessonContext:
+    """Public service-layer entry point for the CONTENT module's lesson-
+    generation pipeline (docs handoff, 2026-09-28). The sole caller is
+    `content/context_onboarding.py` — CLAUDE.md's one-discipline rule means
+    the content module may not query `onboarding_answers_v2`/`learner_dna`
+    directly (both are assessment-owned tables), so this function is the
+    sanctioned crossing point.
+
+    Reuses the same two data sources `get_learner_context` already reads
+    (`_read_onboarding_headline_answers` for Q1-Q5, `learner_dna.badge_labels`
+    for Penta), but requires only `user_id` — no session ownership check,
+    since this runs from an ARQ worker with no request-scoped JWT, exactly
+    like `get_book_context_prompt_context`/`get_chapter_context_prompt_block`.
+
+    Never raises. Returns an empty `OnboardingLessonContext()` on any error,
+    missing user, or no onboarding data at all — content generation must
+    never fail because this fetch failed.
+    """
+    empty = OnboardingLessonContext()
+    if not user_id:
+        return empty
+
+    from app.core.db import get_supabase
+
+    try:
+        supabase = get_supabase()
+        headline = await _read_onboarding_headline_answers(user_id=user_id, supabase=supabase)
+        dna_resp = await asyncio.to_thread(
+            lambda: (
+                supabase.table("learner_dna")
+                .select("badge_labels")  # BOUNDED: maybe_single() on unique user_id column
+                .eq("user_id", user_id)
+                .maybe_single()
+                .execute()
+            )
+        )
+        dna_row = single_row(dna_resp)
+    except Exception:
+        logger.warning(
+            "onboarding: could not read lesson-context data for content generation (user_id=%s)",
+            user_id,
+            exc_info=True,
+        )
+        return empty
+
+    raw_badges = (dna_row or {}).get("badge_labels") or []
+    # Only the 5 Penta-dimension badges — the 9 behavioral-dimension badges in
+    # this same array are session-behavior-derived (dna_fusion.py), not
+    # onboarding-form answers, and out of scope for this bridge.
+    penta_badges = [b for b in raw_badges if b in PENTA_BADGE_THRESHOLDS.values()]
+
+    return OnboardingLessonContext(
+        stated_goal=headline.get("stated_goal"),
+        current_level=headline.get("current_level"),
+        schooling_level=headline.get("schooling_level"),
+        preferred_language=headline.get("preferred_language"),
+        preferred_tone=headline.get("preferred_tone"),
+        penta_badge_labels=penta_badges,
+    )
 
 
 async def get_learner_context(
