@@ -152,17 +152,63 @@ implementation, push, open PR clearly flagged as a frozen-contract change.
 ## Dev Agent Record
 
 ### Implementation Plan
-_(filled during implementation)_
+Followed the exact test-pattern precedent `test_lesson_schema.py` already established for
+`LessonPackage`'s avatar fields (`test_lesson_package_avatar_fields_*`): default-to-None,
+accepts-real-values, omitting-still-validates-against-raw-JSON-schema, round-trips-through-schema.
+Wrote all 14 new tests against the CURRENT (pre-implementation) schema first (RED — confirmed via
+`ImportError: cannot import name 'SplitScreenSide'`), then implemented the 3-file mirror.
 
 ### Debug Log
-_(filled during implementation)_
+No deviations from the story-file plan. `SlideType` used a bare `Literal[...]` (not a `StrEnum`),
+matching every other closed-string-set type already in `lesson.py` (`QuizType`, `ComplexityLevel`,
+`AudioProvider`) rather than introducing a new convention. `SplitScreenSide.bullets` deliberately
+carries no Pydantic-level character cap, explicitly matching `Slide.bullets`' own existing
+precedent (the real bound is prompt-level, `_MAX_SLIDE_BULLET_CHARS`) — noted in both the model's
+own docstring and the story's Scale & Load §1, so Piece 2 doesn't have to rediscover it.
 
 ### Completion Notes
-_(filled during implementation)_
+All 10 ACs implemented and verified:
+- AC1-4: `Slide` gains 5 new optional/nullable fields; `SlideType` (7-value `Literal`) and
+  `SplitScreenSide` (`_STRICT` config, matching every other model in the file) added; mirrored
+  identically across `apps/api/app/schemas/lesson.py`, `packages/shared/lesson_package.schema.json`,
+  `packages/shared/types/lesson.ts`. None of the 5 new fields added to either `required` array.
+- AC5/AC6: `test_slide_omitting_new_fields_validates_against_raw_json_schema` and
+  `test_slide_new_fields_round_trip_through_json_schema` both pass — reusing `MINIMAL_PACKAGE_DICT`
+  unchanged for the first (proving zero regression for every existing fixture/lesson record).
+- AC7: pre-existing `test_slide_extra_fields_forbidden` passes unmodified.
+- AC8: `test_slide_generator_node.py` (32 tests) + `test_package_builder_node.py` (46 tests) all
+  pass unmodified — confirms zero behavior change to what the real node produces.
+- AC9: mandatory guard tests (`test_ces.py`, `test_node_return_shape.py`,
+  `test_unbounded_queries.py`) green, 48/48.
+- AC10: this session's 6-layer-BMAD-substitute process note stated plainly in the story header;
+  formal external review not yet run — see Change Log for what's still open before a real PR merge.
+- Frontend: `npm run type-check` (`tsc --noEmit`) run directly — zero `lesson.ts`/`Slide`-related
+  errors. Pre-existing, unrelated errors confirmed separately (missing `posthog-js` in
+  `node_modules`, stale `.next` build-artifact references to removed pages) — not caused by this
+  change, verified by grepping the type-check output for "lesson"/"slide" (zero matches) and
+  confirming `posthog-js` is genuinely absent from `node_modules` independent of any edit here.
+- Full regression: 1998 passed (`tests/unit` + `tests/integration -m "not postgres"`), 1
+  pre-existing unrelated failure (`test_effective_wpm_is_not_the_raw_rate`, same failure seen on
+  every full-suite run this session, unrelated to lesson schema). `ruff check`/`format`: clean.
+  `mypy` on both touched app files: clean, zero errors (unlike prior stories this session, this
+  piece touches neither of the files with the known pre-existing httpx/httpx2 OpenAI-client typing
+  errors, so there's nothing to distinguish from a regression here).
 
 ### File List
-_(filled during implementation)_
+- `apps/api/app/schemas/lesson.py` — new `SlideType` (`Literal`, 7 values), new `SplitScreenSide`
+  model, `Slide` gains 5 new optional fields.
+- `apps/api/app/schemas/__init__.py` — export `SplitScreenSide`.
+- `packages/shared/lesson_package.schema.json` — new `SplitScreenSide` definition, `Slide`
+  definition gains 5 new optional properties (none added to `required`).
+- `packages/shared/types/lesson.ts` — new `SlideType` union type, new `SplitScreenSide` interface,
+  `Slide` interface gains 5 new optional fields.
+- `apps/api/tests/unit/test_lesson_schema.py` — 14 new tests (import of `SplitScreenSide` added).
 
 ### Change Log
 - 2026-09-28: Story file created (story-first commit), branch `feature/233-slide-schema-contract`,
   based on `main` at `fedc47d6`.
+- 2026-09-28: RED phase (14 new tests, confirmed failing for the right reason — `ImportError`) then
+  GREEN phase (3-file schema mirror implemented) — see Dev Agent Record above. Full regression
+  green, zero regressions. Not yet opened as a PR — this session's own Process Note (frozen-contract
+  review substitute) means the next step is explicit user confirmation before requesting merge, not
+  a silent PR-and-wait.
