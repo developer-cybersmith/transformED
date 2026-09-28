@@ -1,0 +1,133 @@
+---
+status: in-progress
+baseline_commit: fedc47d
+---
+
+# Story 5-15 — DB CHECK Constraints on Text Context Fields (D178 + D190)
+
+## Story
+
+**As** the database,
+**I want** `CHECK (char_length(col) <= 500)` constraints on every free-text context
+column whose Pydantic validator already enforces 500 characters at the API boundary,
+**so that** a bug in the API layer (a bypass, a direct DB write, or a future refactor
+that removes the validator) cannot persist a value that silently violates the
+contract the product assumes.
+
+## Background
+
+`BookContextRequest` and `ChapterContextRequest` declare `max_length=500` on their
+free-text fields (`motivation`, `end_goal`, `feared_section`, `specific_doubt`,
+`goal_and_skip`). The Pydantic validators enforce this at the HTTP boundary, but
+nothing in the database schema enforces the same limit — a direct Supabase client
+write, a migration backfill, or a future refactor dropping the validator can persist
+values longer than 500 characters with no error.
+
+Two registered defects track this gap:
+- **D178** — `book_context` table: `motivation`, `end_goal`, `feared_section`
+- **D190** — `chapter_context` table: `specific_doubt`, `goal_and_skip`
+
+The fix is a single new migration adding `CHECK (char_length(col) <= 500)` to all
+five columns. This is purely additive — it rejects inserts/updates that would already
+be rejected by Pydantic at the API layer — so it carries zero risk of breaking
+existing data (the Pydantic validators have been live since the tables were created).
+
+**What this story does NOT do:**
+- Does not change Pydantic validators — they stay at `max_length=500`
+- Does not change any application code
+- Does not modify the two existing frozen migrations
+
+## Acceptance Criteria
+
+1. **AC1** — A new migration file
+   `supabase/migrations/20260928000000_text_field_check_constraints.sql` exists and
+   adds `CHECK (char_length(col) <= 500)` constraints on all five columns across both
+   tables:
+   - `book_context.motivation`, `.end_goal`, `.feared_section` (D178)
+   - `chapter_context.specific_doubt`, `.goal_and_skip` (D190)
+
+2. **AC2** — The migration is applied to the live Supabase project with no errors
+   (via `mcp__supabase__apply_migration`).
+
+3. **AC3** — A guard test `tests/unit/test_context_check_constraints.py` exists and
+   passes in the gating CI bucket. It verifies (source-scan of the new migration
+   file) that each of the five constraints is present with the correct column name
+   and limit value.
+
+4. **AC4** — Constraint names follow the convention
+   `{table}_{column}_len` (e.g. `book_context_motivation_len`) so they are
+   identifiable in Postgres error messages without consulting the migration.
+
+5. **AC5** — Existing gating guard tests (`test_node_return_shape`,
+   `test_unbounded_queries`, `test_chapter_context_wiring_guard`) still pass with
+   zero regressions.
+
+6. **AC6** — D178 and D190 entries in `docs/DEFECT-REGISTER.md` are updated to
+   `FIXED-GUARDED` with a reference to this story and the migration filename.
+
+## Scale & Load
+
+**S1 — Unit of work:** Five `ALTER TABLE ... ADD CONSTRAINT` DDL statements in one
+migration. Each is instantaneous on tables that start empty (no existing rows to
+validate). Typical table size at launch: < 1,000 rows.
+
+**S2 — Fixed budgets vs. variable input:** The constraints reject values > 500
+characters — the same threshold Pydantic already enforces. No existing row can
+violate this (Pydantic has been live since table creation). N/A for the migration
+itself.
+
+**S3 — Scope of every limit:** Per-deployment (migration runs once). The 500-char
+limit is per-row, enforced at insert/update time by Postgres.
+
+**S4 — Unbounded reads/writes:** None. The migration adds constraints; it does not
+read or write data rows.
+
+**S5 — Inherited caps re-derived:** The 500-char limit is derived directly from
+the Pydantic `max_length=500` on `BookContextRequest` and `ChapterContextRequest`
+in `schemas.py`. Re-derivation: `specific_doubt` and `goal_and_skip` fields are
+free-text where a student describes a doubt or topic to skip — 500 chars is ~4
+sentences, sufficient for the use case. `motivation`, `end_goal`, `feared_section`
+are the same: short free-text, 500 chars = ~4 sentences.
+
+**S6 — Check-then-act under concurrency:** N/A — this is a DDL migration, not a
+check-then-act application pattern.
+
+## Tasks
+
+- [x] **T1 — Story-first commit (BMAD gate)**
+  - [x] T1.1 — Write this file
+  - [x] T1.2 — `git commit -m "docs(story-first): Story 5-15 — DB CHECK constraints on text context fields (D178 + D190)"`
+  - [x] T1.3 — Push story-only commit to remote
+
+- [ ] **T2 — Write migration**
+  - [ ] T2.1 — Create `supabase/migrations/20260928000000_text_field_check_constraints.sql`
+  - [ ] T2.2 — Five constraints with `{table}_{column}_len` names
+
+- [ ] **T3 — Apply migration via Supabase MCP**
+  - [ ] T3.1 — `mcp__supabase__apply_migration` with the new SQL
+
+- [ ] **T4 — Write guard test**
+  - [ ] T4.1 — `tests/unit/test_context_check_constraints.py` (source-scan of migration file)
+
+- [ ] **T5 — Run tests**
+  - [ ] T5.1 — `pytest tests/unit/test_context_check_constraints.py -v`
+  - [ ] T5.2 — `pytest tests/unit/test_node_return_shape.py tests/unit/test_unbounded_queries.py tests/unit/test_chapter_context_wiring_guard.py -v`
+
+- [ ] **T6 — Update DEFECT-REGISTER.md**
+  - [ ] T6.1 — Mark D178 and D190 `FIXED-GUARDED`
+
+## Dev Agent Record
+
+### Change Log
+
+| Date       | Change                 | Author         |
+|------------|------------------------|----------------|
+| 2026-09-28 | Story file created     | Dev 3 / Claude |
+
+### Completion Notes
+
+_To be filled in._
+
+### Debug Log
+
+_To be filled in if needed._
