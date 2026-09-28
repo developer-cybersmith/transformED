@@ -4,15 +4,28 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 _WEB = Path(__file__).resolve().parents[4] / "apps" / "web" / "src"
 
-_SERVICE = (_WEB / "services" / "books.service.ts").read_text(encoding="utf-8")
-_FORM = (_WEB / "components" / "dashboard" / "books" / "ChapterContextForm.tsx").read_text(
-    encoding="utf-8"
-)
-_CONTROL = (_WEB / "components" / "dashboard" / "books" / "ChapterGenerateControl.tsx").read_text(
-    encoding="utf-8"
-)
+_LOAD_ERROR: str | None = None
+try:
+    _SERVICE = (_WEB / "services" / "books.service.ts").read_text(encoding="utf-8")
+    _FORM = (_WEB / "components" / "dashboard" / "books" / "ChapterContextForm.tsx").read_text(
+        encoding="utf-8"
+    )
+    _CONTROL = (
+        _WEB / "components" / "dashboard" / "books" / "ChapterGenerateControl.tsx"
+    ).read_text(encoding="utf-8")
+except FileNotFoundError as _exc:
+    _SERVICE = _FORM = _CONTROL = ""
+    _LOAD_ERROR = str(_exc)
+
+
+@pytest.fixture(autouse=True)
+def _require_frontend_sources() -> None:
+    if _LOAD_ERROR is not None:
+        pytest.fail(f"D187 guard: frontend source file not found — {_LOAD_ERROR}")
 
 
 def test_generate_lesson_request_has_force_field():

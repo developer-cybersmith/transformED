@@ -970,7 +970,9 @@ def test_response_text_single_char_accepted(monkeypatch) -> None:
 
 @pytest.mark.unit
 async def test_score_teachback_exception_returns_fallback(mock_to_thread) -> None:
-    """AC 2: score_teachback raises RuntimeError → grade_teachback returns fallback TeachbackResult (score_source=’fallback’), not HTTP 502."""
+    """AC 2: score_teachback raises RuntimeError → grade_teachback returns
+    fallback TeachbackResult (score_source=’fallback’), not HTTP 502.
+    """
 
     async def _raise_error(**kwargs):
         raise RuntimeError("OpenAI connection refused")
@@ -991,11 +993,15 @@ async def test_score_teachback_exception_returns_fallback(mock_to_thread) -> Non
 
     assert isinstance(result, TeachbackResult), "Expected TeachbackResult, not exception"
     assert result.score_source == "fallback"
+    assert result.overall_score == 0.0
+    assert "unavailable" in result.feedback.lower()
 
 
 @pytest.mark.unit
 async def test_score_teachback_returns_none_gives_fallback(mock_to_thread) -> None:
-    """AC 3: score_teachback returns None → grade_teachback returns fallback TeachbackResult (score_source=’fallback’), not HTTP 502."""
+    """AC 3: score_teachback returns None → grade_teachback returns
+    fallback TeachbackResult (score_source=’fallback’), not HTTP 502.
+    """
 
     async def _return_none(**kwargs):
         return None
@@ -1016,6 +1022,47 @@ async def test_score_teachback_returns_none_gives_fallback(mock_to_thread) -> No
 
     assert isinstance(result, TeachbackResult), "Expected TeachbackResult, not exception"
     assert result.score_source == "fallback"
+    assert result.overall_score == 0.0
+    assert "unavailable" in result.feedback.lower()
+
+
+@pytest.mark.unit
+async def test_grade_teachback_skip_records_to_db(mock_to_thread) -> None:
+    """AC 6 (F2-2): is_skip=True must persist a 'skipped' row and return score_source='skipped'."""
+    session_mock = MagicMock()
+    session_ex = session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
+    session_ex.return_value.data = _SESSION_ROW
+
+    count_mock = MagicMock()
+    count_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
+
+    insert_mock = MagicMock()
+    insert_mock.insert.return_value.execute.return_value.data = []
+    insert_mock.insert.return_value.execute.return_value.error = None
+
+    supabase = MagicMock()
+    supabase.table.side_effect = [session_mock, count_mock, insert_mock]
+
+    result = await grade_teachback(
+        session_id="sess-001",
+        lesson_id="lesson-001",
+        segment_id="seg-001",
+        response_text="",
+        user_id="user-001",
+        supabase=supabase,
+        is_skip=True,
+    )
+
+    assert isinstance(result, TeachbackResult)
+    assert result.score_source == "skipped"
+    assert result.overall_score == 0.0
+    assert insert_mock.insert.call_count == 1, (
+        "skip path must persist one row to teachback_attempts"
+    )
+    inserted_row = insert_mock.insert.call_args[0][0]
+    assert inserted_row["score_source"] == "skipped"
+    assert inserted_row["score"] is None
+    assert inserted_row["response_text"] == ""
 
 
 # AC 6 / AC 11: Session wrong-owner now 404 (SEC-006)

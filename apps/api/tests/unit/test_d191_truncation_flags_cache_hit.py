@@ -74,7 +74,7 @@ def test_lesson_planner_cache_hit_returns_book_context_truncated() -> None:
     """D191/AC1: lesson_planner_node cache-hit block must set book_context_truncated."""
     block = _extract_cache_hit_block("lesson_planner")
     assert block, "lesson_planner cache-hit block not found in graph.py"
-    assert "book_context_truncated" in block, (
+    assert '"book_context_truncated"' in block, (
         "lesson_planner_node cache-hit return is missing 'book_context_truncated'.\n"
         "D191 / Story 5-16 AC1."
     )
@@ -85,7 +85,7 @@ def test_lesson_planner_cache_hit_returns_chapter_context_truncated() -> None:
     """D191/AC1: lesson_planner_node cache-hit block must set chapter_context_truncated."""
     block = _extract_cache_hit_block("lesson_planner")
     assert block, "lesson_planner cache-hit block not found in graph.py"
-    assert "chapter_context_truncated" in block, (
+    assert '"chapter_context_truncated"' in block, (
         "lesson_planner_node cache-hit return is missing 'chapter_context_truncated'.\n"
         "D191 / Story 5-16 AC1."
     )
@@ -96,7 +96,7 @@ def test_lesson_planner_cache_hit_returns_onboarding_context_truncated() -> None
     """D191/AC1: lesson_planner_node cache-hit block must set onboarding_context_truncated."""
     block = _extract_cache_hit_block("lesson_planner")
     assert block, "lesson_planner cache-hit block not found in graph.py"
-    assert "onboarding_context_truncated" in block, (
+    assert '"onboarding_context_truncated"' in block, (
         "lesson_planner_node cache-hit return is missing 'onboarding_context_truncated'.\n"
         "D191 / Story 5-16 AC1."
     )
@@ -107,7 +107,7 @@ def test_slide_generator_cache_hit_returns_book_context_truncated() -> None:
     """D191/AC2: slide_generator_node cache-hit block must set book_context_truncated."""
     block = _extract_cache_hit_block("slide_generator")
     assert block, "slide_generator cache-hit block not found in graph.py"
-    assert "book_context_truncated" in block, (
+    assert '"book_context_truncated"' in block, (
         "slide_generator_node cache-hit return is missing 'book_context_truncated'.\n"
         "D191 / Story 5-16 AC2."
     )
@@ -118,7 +118,7 @@ def test_slide_generator_cache_hit_returns_chapter_context_truncated() -> None:
     """D191/AC2: slide_generator_node cache-hit block must set chapter_context_truncated."""
     block = _extract_cache_hit_block("slide_generator")
     assert block, "slide_generator cache-hit block not found in graph.py"
-    assert "chapter_context_truncated" in block, (
+    assert '"chapter_context_truncated"' in block, (
         "slide_generator_node cache-hit return is missing 'chapter_context_truncated'.\n"
         "D191 / Story 5-16 AC2."
     )
@@ -129,7 +129,7 @@ def test_slide_generator_cache_hit_returns_onboarding_context_truncated() -> Non
     """D191/AC2: slide_generator_node cache-hit block must set onboarding_context_truncated."""
     block = _extract_cache_hit_block("slide_generator")
     assert block, "slide_generator cache-hit block not found in graph.py"
-    assert "onboarding_context_truncated" in block, (
+    assert '"onboarding_context_truncated"' in block, (
         "slide_generator_node cache-hit return is missing 'onboarding_context_truncated'.\n"
         "D191 / Story 5-16 AC2."
     )
