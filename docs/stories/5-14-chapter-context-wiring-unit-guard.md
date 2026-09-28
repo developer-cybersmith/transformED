@@ -92,22 +92,27 @@ the files' actual sizes, which are static.
 
 ## Tasks
 
-- [ ] **T1 — Story-first commit (BMAD gate)**
-  - [ ] T1.1 — Write this file
-  - [ ] T1.2 — `git commit -m "docs(story-first): Story 5-14 — chapter context wiring CI gate"`
-  - [ ] T1.3 — Push story-only commit to remote
+- [x] **T1 — Story-first commit (BMAD gate)**
+  - [x] T1.1 — Write this file
+  - [x] T1.2 — `git commit -m "docs(story-first): Story 5-14 — chapter context wiring CI gate"`
+  - [x] T1.3 — Push story-only commit to remote
 
-- [ ] **T2 — Implement guard test**
-  - [ ] T2.1 — Write `tests/unit/test_chapter_context_wiring_guard.py`
-    - [ ] T2.1a — `_FAN_OUT_STATE_KEYS` membership guards (AC2 + AC3)
-    - [ ] T2.1b — `PipelineState` field guards (AC4)
-    - [ ] T2.1c — `_CHAPTER_CONTEXT_MAX_CHARS` constant guard (AC5)
-    - [ ] T2.1d — `merge_chapter_context` callable guard (AC6)
-    - [ ] T2.1e — `graph.py` source-scan call-count guard (AC7)
+- [x] **T2 — Implement guard test**
+  - [x] T2.1 — Write `tests/unit/test_chapter_context_wiring_guard.py`
+    - [x] T2.1a — `_FAN_OUT_STATE_KEYS` membership guards (AC2 + AC3)
+    - [x] T2.1b — `PipelineState` field guards (AC4)
+    - [x] T2.1c — `_CHAPTER_CONTEXT_MAX_CHARS` constant guard (AC5)
+    - [x] T2.1d — `merge_chapter_context` callable guard (AC6)
+    - [x] T2.1e — `graph.py` source-scan call-count guard (AC7)
 
-- [ ] **T3 — Run guard tests**
-  - [ ] T3.1 — `pytest tests/unit/test_chapter_context_wiring_guard.py -v` — all pass
-  - [ ] T3.2 — `pytest tests/unit/test_node_return_shape.py tests/unit/test_unbounded_queries.py tests/unit/test_defect_register_no_duplicate_ids.py -v` — no regressions
+- [x] **T3 — Run guard tests**
+  - [x] T3.1 — `pytest tests/unit/test_chapter_context_wiring_guard.py -v` — **7 passed**
+  - [x] T3.2 — `pytest tests/unit/test_node_return_shape.py tests/unit/test_unbounded_queries.py -v`
+    — 21 passed, 1 pre-existing `tinytag` ModuleNotFoundError on
+    `test_tts_node_returns_only_its_own_keys` (confirmed pre-existing, not introduced here —
+    same baseline as Story 5-13 completion notes).
+    `test_defect_register_no_duplicate_ids.py` lives on the S5-13 branch (not yet merged to
+    main); its absence on this branch is not a regression introduced here.
 
 ## Dev Agent Record
 
@@ -116,10 +121,22 @@ the files' actual sizes, which are static.
 | Date       | Change                        | Author         |
 |------------|-------------------------------|----------------|
 | 2026-09-28 | Story file created            | Dev 3 / Claude |
+| 2026-09-28 | Guard test implemented        | Dev 3 / Claude |
 
 ### Completion Notes
 
-_To be filled in on completion._
+7 new gating guard tests added to `tests/unit/test_chapter_context_wiring_guard.py`.
+All 7 pass. The tests use import-level assertions (for `_FAN_OUT_STATE_KEYS`,
+`PipelineState` type hints, `merge_chapter_context` callable, `_CHAPTER_CONTEXT_MAX_CHARS`
+value) and a source-text regex scan (for the `graph.py` call-count invariant).
+No async node execution — runs in under 4 seconds.
+
+Pre-existing `tinytag` ModuleNotFoundError on `test_tts_node_returns_only_its_own_keys`
+confirmed pre-existing (same as Story 5-13 completion notes) — not introduced here.
+
+`test_defect_register_no_duplicate_ids.py` is on the S5-13 branch (open PR, not yet
+merged to main) — not a regression introduced here; will appear in gating CI once
+S5-13 merges.
 
 ### Debug Log
 
