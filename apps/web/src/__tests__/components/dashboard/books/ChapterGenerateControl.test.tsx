@@ -358,3 +358,66 @@ describe('ChapterGenerateControl — a failed-only chapter offers Generate (AC7)
         expect(onGenerated).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('ChapterGenerateControl — Generate Now sends force: true, Skip does not (D187)', () => {
+    it('Generate Now path includes force: true in the POST body', async () => {
+        let seenBody: unknown = null;
+        server.use(
+            http.post(
+                `${API_BASE}/content/books/:bookId/chapters/:chapterId/lessons`,
+                async ({ request }) => {
+                    seenBody = await request.json();
+                    return HttpResponse.json(
+                        {
+                            lesson_id: 'l-force-1',
+                            chapter_id: CHAPTER_NO_LESSON.chapter_id,
+                            tier: 'T2',
+                            status: 'queued',
+                            job_id: 'j-force-1',
+                            truncation_expected: false,
+                        },
+                        { status: 202 }
+                    );
+                }
+            )
+        );
+        const { user } = renderRow(CHAPTER_NO_LESSON);
+
+        await user.click(screen.getByRole('button', { name: /generate|retry|try again/i }));
+        await user.click(screen.getByRole('button', { name: /Balanced/i }));
+
+        // Wait for ChapterContextForm to finish loading, then click Generate Now.
+        const generateNowBtn = await screen.findByRole('button', { name: /generate now/i });
+        await user.click(generateNowBtn);
+
+        await waitFor(() => expect(seenBody).toEqual({ tier: 'T2', force: true }));
+    });
+
+    it('Skip path omits force from the POST body (AC2)', async () => {
+        let seenBody: unknown = null;
+        server.use(
+            http.post(
+                `${API_BASE}/content/books/:bookId/chapters/:chapterId/lessons`,
+                async ({ request }) => {
+                    seenBody = await request.json();
+                    return HttpResponse.json(
+                        {
+                            lesson_id: 'l-skip-1',
+                            chapter_id: CHAPTER_NO_LESSON.chapter_id,
+                            tier: 'T2',
+                            status: 'queued',
+                            job_id: 'j-skip-1',
+                            truncation_expected: false,
+                        },
+                        { status: 202 }
+                    );
+                }
+            )
+        );
+        const { user } = renderRow(CHAPTER_NO_LESSON);
+
+        await chooseTier(user, 'Balanced');
+
+        await waitFor(() => expect(seenBody).toEqual({ tier: 'T2' }));
+    });
+});
