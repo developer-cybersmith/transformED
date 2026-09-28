@@ -191,6 +191,34 @@ story, now given a concrete implementation): *"...user profile (onboarding)
    module's perspective; nothing here writes them or performs any
    check-then-act sequence. N/A, with reason.
 
+## Completion notes
+
+Implemented exactly as designed. `_ONBOARDING_CONTEXT_MAX_CHARS` landed at
+**5,500** (measured worst case ≈5,217 chars, ~5.4% headroom) — pinned exactly
+in `TestMergeOnboardingContext::test_budget_is_independently_derived_...`.
+
+Amended two existing Defect Register entries rather than opening near-
+duplicates, since onboarding_context extends an already-accepted decision to
+a third parallel mechanism: **D189** (Phase-1 nodes never see any of the
+three contexts) and **D191** (the lesson_planner_node cache-hit path doesn't
+recompute a context's own truncated flag) both now note onboarding_context
+joins the same accepted gap, for the identical structural reason. Opened one
+new entry, **D199**, for the onboarding-specific scope decision (only Q1-Q5 +
+Penta badges wired; the other 25 questions have no consumer logic yet).
+
+Verified: new `tests/unit/test_onboarding_context_wiring.py` (30 tests) +
+every existing test file this touches or mirrors — `test_249_context_wiring.py`,
+`test_s5_1_book_context.py`, `test_fan_out_state_keys.py`,
+`test_node_return_shape.py`, `test_unbounded_queries.py`,
+`test_package_builder_node.py`, `test_f2_1_learner_context.py`,
+`test_phase1_economy_nodes.py` — 247/247 passed. Full backend suite: 52
+failures, confirmed pre-existing via `git stash` comparison against the
+story-first commit alone (identical failures with or without this story's
+code) — all environment-dependent (missing local Redis/tesseract, real
+OpenAI network calls, an unrelated flaky test-order case already
+independently confirmed to pass in isolation), none touching any file this
+story modifies. `ruff check` and `mypy` both clean on all touched/new files.
+
 ## Out of scope
 
 - The remaining 25 onboarding questions (Q6-Q15, Q21-Q30) — no scoring/

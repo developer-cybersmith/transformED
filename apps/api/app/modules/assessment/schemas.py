@@ -300,6 +300,32 @@ class LearnerContextDNA(BaseModel):
     preferred_tone: str | None = None
 
 
+class OnboardingLessonContext(BaseModel):
+    """Onboarding-derived data for the CONTENT module's lesson-generation
+    pipeline (docs handoff, 2026-09-28) — deliberately narrower than
+    `LearnerContextDNA`: only Q1-Q5 headline answers plus Penta-Intelligence
+    badge labels, the onboarding-time, well-defined subset. The remaining 25
+    onboarding questions have no scoring/consumer logic yet (registered as
+    D199, `docs/DEFECT-REGISTER.md`) and are not included here.
+
+    Returned by `service.get_onboarding_lesson_context`, the sole sanctioned
+    service-layer crossing point `content/context_onboarding.py` uses —
+    CLAUDE.md's one-discipline rule forbids the content module reading
+    `onboarding_answers_v2`/`learner_dna` directly, since both are owned by
+    this (assessment) module.
+    """
+
+    stated_goal: str | None = None
+    current_level: str | None = None
+    schooling_level: str | None = None
+    preferred_language: str | None = None
+    preferred_tone: str | None = None
+    # Only the 5 Penta-dimension badges (PENTA_BADGE_THRESHOLDS.values()) —
+    # never the 9 behavioral-dimension badges, which are derived from session
+    # behavior over time (dna_fusion.py), not from onboarding-form answers.
+    penta_badge_labels: list[str] = []
+
+
 class LearnerContextSession(BaseModel):
     """Current session engagement signals.
 
