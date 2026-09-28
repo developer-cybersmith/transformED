@@ -178,6 +178,37 @@ class SegmentComplexity(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Story 233 Piece 1 (issue #233) — the 7 slide roles the mandatory 15/30/45-min
+# structures require (docs/proposals/2026-09-28-slide-strategy-15-30-45-alignment.md).
+# `None` (the default on every existing Slide) means "no type assigned" —
+# today's uniform slide-generator output, unchanged until Piece 2.
+SlideType = Literal[
+    "overview",
+    "contents",
+    "topic_teaching",
+    "split_screen",
+    "qa",
+    "broader_picture",
+    "mind_map",
+]
+
+
+class SplitScreenSide(BaseModel):
+    """One half of a Story 233 split-screen slide (left=technical,
+    right=relatable-reference — which side a given instance is depends on
+    which Slide field it's assigned to, not on anything in this model
+    itself). `bullets` follows Slide.bullets' own convention: no Pydantic-
+    level character cap here either — the real bound is enforced at the
+    prompt level (_MAX_SLIDE_BULLET_CHARS, graph.py) once Piece 2 actually
+    generates split-screen content, not at the schema layer.
+    """
+
+    model_config = _STRICT
+
+    heading: str
+    bullets: list[str]
+
+
 class Slide(BaseModel):
     model_config = _STRICT
 
@@ -193,6 +224,14 @@ class Slide(BaseModel):
     # Narration.audio_url's existing plain-str type below.
     image_url: str | None
     fallback_image_url: str | None
+    # Story 233 Piece 1 — additive, all default None, zero behavior change
+    # until Piece 2 actually sets them. See prompt_context/slide-strategy
+    # proposal doc for the full spec this shape is built to hold.
+    slide_type: SlideType | None = None
+    topic_index: int | None = None
+    target_duration_sec: int | None = None
+    left_content: SplitScreenSide | None = None
+    right_content: SplitScreenSide | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -112,6 +112,18 @@
         }
       }
     },
+    "SplitScreenSide": {
+      "type": "object",
+      "required": ["heading", "bullets"],
+      "additionalProperties": false,
+      "properties": {
+        "heading": { "type": "string" },
+        "bullets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "Slide": {
       "type": "object",
       "required": ["slide_id", "title", "bullets", "image_url", "fallback_image_url"],
@@ -128,6 +140,35 @@
         },
         "fallback_image_url": {
           "oneOf": [{ "type": "string" }, { "type": "null" }]
+        },
+        "slide_type": {
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": [
+                "overview",
+                "contents",
+                "topic_teaching",
+                "split_screen",
+                "qa",
+                "broader_picture",
+                "mind_map"
+              ]
+            },
+            { "type": "null" }
+          ]
+        },
+        "topic_index": {
+          "oneOf": [{ "type": "integer" }, { "type": "null" }]
+        },
+        "target_duration_sec": {
+          "oneOf": [{ "type": "integer" }, { "type": "null" }]
+        },
+        "left_content": {
+          "oneOf": [{ "$ref": "#/definitions/SplitScreenSide" }, { "type": "null" }]
+        },
+        "right_content": {
+          "oneOf": [{ "$ref": "#/definitions/SplitScreenSide" }, { "type": "null" }]
         }
       }
     },

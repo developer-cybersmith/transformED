@@ -33,12 +33,40 @@ export interface SegmentComplexity {
   intervention_sensitivity: number; // 0–1
 }
 
+// Story 233 Piece 1 (issue #233) — the 7 slide roles the mandatory 15/30/45-min
+// structures require. `undefined`/omitted (every existing Slide) means "no
+// type assigned" — today's uniform slide-generator output, unchanged until
+// Piece 2.
+export type SlideType =
+  | 'overview'
+  | 'contents'
+  | 'topic_teaching'
+  | 'split_screen'
+  | 'qa'
+  | 'broader_picture'
+  | 'mind_map';
+
+// One half of a split-screen slide (left=technical, right=relatable-reference
+// — which side depends on which Slide field it's assigned to, not on
+// anything in this type itself).
+export interface SplitScreenSide {
+  heading: string;
+  bullets: string[];
+}
+
 export interface Slide {
   slide_id: string;
   title: string;
   bullets: string[];
   image_url: string | null;
   fallback_image_url: string | null;
+  // Story 233 Piece 1 — additive, all optional, zero behavior change until
+  // Piece 2 actually sets them.
+  slide_type?: SlideType | null;
+  topic_index?: number | null;
+  target_duration_sec?: number | null;
+  left_content?: SplitScreenSide | null;
+  right_content?: SplitScreenSide | null;
 }
 
 export interface NarrationTimestamp {

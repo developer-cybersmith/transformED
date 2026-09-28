@@ -26,6 +26,7 @@ from app.schemas import (
     SegmentComplexity,
     SegmentInterventions,
     Slide,
+    SplitScreenSide,
 )
 
 SCHEMA_PATH = Path(__file__).parents[4] / "packages/shared/lesson_package.schema.json"
@@ -341,6 +342,140 @@ def test_slide_extra_fields_forbidden() -> None:
             fallback_image_url=None,
             unknown="x",
         )
+
+
+# ---------------------------------------------------------------------------
+# Slide — Story 233 Piece 1: slide_type / topic_index / target_duration_sec /
+# left_content / right_content. Mirrors the exact test pattern the
+# LessonPackage avatar-fields story (below) already established for a
+# frozen-contract additive/nullable field set: default-to-None,
+# accepts-real-values, omitting-still-validates-against-raw-schema, and
+# round-trips-through-JSON-schema.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_slide_new_fields_default_to_none() -> None:
+    s = Slide(slide_id="s1", title="T", bullets=[], image_url=None, fallback_image_url=None)
+    assert s.slide_type is None
+    assert s.topic_index is None
+    assert s.target_duration_sec is None
+    assert s.left_content is None
+    assert s.right_content is None
+
+
+@pytest.mark.unit
+def test_slide_new_fields_accept_real_values() -> None:
+    s = Slide(
+        slide_id="s1",
+        title="T",
+        bullets=[],
+        image_url=None,
+        fallback_image_url=None,
+        slide_type="split_screen",
+        topic_index=1,
+        target_duration_sec=300,
+        left_content=SplitScreenSide(heading="Technical", bullets=["Definition", "Formula"]),
+        right_content=SplitScreenSide(heading="Relatable", bullets=["Movie reference"]),
+    )
+    assert s.slide_type == "split_screen"
+    assert s.topic_index == 1
+    assert s.target_duration_sec == 300
+    assert s.left_content is not None
+    assert s.left_content.heading == "Technical"
+    assert s.left_content.bullets == ["Definition", "Formula"]
+    assert s.right_content is not None
+    assert s.right_content.heading == "Relatable"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "value",
+    [
+        "overview",
+        "contents",
+        "topic_teaching",
+        "split_screen",
+        "qa",
+        "broader_picture",
+        "mind_map",
+    ],
+)
+def test_slide_type_accepts_all_seven_values(value: str) -> None:
+    s = Slide(
+        slide_id="s1",
+        title="T",
+        bullets=[],
+        image_url=None,
+        fallback_image_url=None,
+        slide_type=value,
+    )
+    assert s.slide_type == value
+
+
+@pytest.mark.unit
+def test_slide_type_rejects_invalid_value() -> None:
+    with pytest.raises(ValidationError):
+        Slide(
+            slide_id="s1",
+            title="T",
+            bullets=[],
+            image_url=None,
+            fallback_image_url=None,
+            slide_type="not_a_real_type",
+        )
+
+
+@pytest.mark.unit
+def test_split_screen_side_extra_fields_forbidden() -> None:
+    with pytest.raises(ValidationError):
+        SplitScreenSide(heading="H", bullets=[], unknown="x")
+
+
+@pytest.mark.unit
+def test_slide_omitting_new_fields_validates_against_raw_json_schema() -> None:
+    """AC 5: a slide dict with none of the 5 new fields present -- exactly
+    every existing lesson record and every existing test fixture, including
+    MINIMAL_PACKAGE_DICT itself, unchanged -- must still validate against the
+    updated JSON schema. These 5 fields must never be added to Slide's
+    `required` array in the schema for this reason."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    slide_dict = MINIMAL_PACKAGE_DICT["segments"][0]["slides"][0]
+    for new_field in (
+        "slide_type",
+        "topic_index",
+        "target_duration_sec",
+        "left_content",
+        "right_content",
+    ):
+        assert new_field not in slide_dict
+    jsonschema.validate(instance=MINIMAL_PACKAGE_DICT, schema=schema)
+
+
+@pytest.mark.unit
+def test_slide_new_fields_round_trip_through_json_schema() -> None:
+    """AC 6: a slide with all 5 new fields populated, including a fully
+    populated SplitScreenSide on both sides, round-trips through
+    Slide.model_validate() -> model_dump(mode="json") -> the raw JSON schema
+    validator."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    d = json.loads(json.dumps(MINIMAL_PACKAGE_DICT))
+    d["segments"][0]["slides"][0].update(
+        {
+            "slide_type": "split_screen",
+            "topic_index": 2,
+            "target_duration_sec": 210,
+            "left_content": {"heading": "Technical", "bullets": ["Step 1", "Step 2"]},
+            "right_content": {"heading": "Relatable", "bullets": ["Cricket analogy"]},
+        }
+    )
+    package = LessonPackage.model_validate(d)
+    dumped = json.loads(package.model_dump_json())
+    jsonschema.validate(instance=dumped, schema=schema)
+    round_tripped_slide = dumped["segments"][0]["slides"][0]
+    assert round_tripped_slide["slide_type"] == "split_screen"
+    assert round_tripped_slide["left_content"]["heading"] == "Technical"
+    assert round_tripped_slide["right_content"]["bullets"] == ["Cricket analogy"]
 
 
 # ---------------------------------------------------------------------------

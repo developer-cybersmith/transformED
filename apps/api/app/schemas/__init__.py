@@ -20,6 +20,7 @@ from app.schemas.lesson import (
     SegmentComplexity,
     SegmentInterventions,
     Slide,
+    SplitScreenSide,
 )
 
 
@@ -56,4 +57,5 @@ __all__ = [
     "SegmentInterventions",
     "SectionBoundary",
     "Slide",
+    "SplitScreenSide",
 ]
