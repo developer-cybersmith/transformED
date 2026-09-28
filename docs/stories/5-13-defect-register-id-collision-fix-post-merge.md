@@ -159,6 +159,17 @@ All 7 genuine collisions renumbered. D64's intentional dual-entry left intact.
 Pre-existing `tinytag` ModuleNotFoundError on `test_tts_node_returns_only_its_own_keys` is unrelated
 (local dev env missing the package) and confirmed pre-existing before this branch.
 
+**Internal D192 labels in `graph.py` — intentionally left unchanged:**
+`graph.py` lines 7808, 7933, and 8089 carry `# D192 (2026-09-25)` comments that are
+Story-249 internal development labels for a finding (narration_generator_node's truncation-warning
+suppression was dead code until `book_context_truncated`/`chapter_context_truncated` were added
+to `_FAN_OUT_STATE_KEYS`) that was fixed entirely within Story 249 and has no register entry.
+These are the same category as the three `test_249_context_wiring.py` internal labels
+already noted in the story — both files were written during Story 249's development using
+the same informal `D192` tag for this internal finding. Neither refers to the canonical
+register D192 (Sidebar expand toggle, frontend) nor to D206 (S5-4 headline-number reading,
+now renamed from the interloper D192). All three graph.py comments correctly remain D192.
+
 ### Debug Log
 
 _To be filled in if needed._
