@@ -2,6 +2,10 @@
 
 Items deferred out of a code review — real issues, not caused by the change under review, not actionable in that same pass. Each entry cites the review that surfaced it and why it was deferred.
 
+## Deferred from: code review of 5-18-fix-dev3-advisory-ci-failures (2026-09-28)
+
+- **Skip-path coverage: `_build_supabase_tb(is_skip=True)` helper defined but never called in any test** — `test_teachback_endpoint.py` added `is_skip` parameter to the mock builder so the skip path (sessions → count → insert, no lesson load) is correctly mocked, but zero test functions pass `is_skip=True` or call `grade_teachback(..., is_skip=True)`. Pre-existing gap — skip-path tests were never written for `grade_teachback`. Not introduced by Story 5-18. [`apps/api/tests/test_teachback_endpoint.py`]
+
 ## Deferred from: code review of 4-37-player-slide-75-25-layout (2026-09-11)
 
 - **No URL scheme validation on `img src` in `SlideImage`** — `slide.image_url` and `slide.fallback_image_url` flow directly into `<img src>` without a `https://` or allowlist check. React 17+ refuses `javascript:` URIs but this is unverified for all paths through the error-fallback chain. Pre-existing gap; not introduced by S4-37 (which only changed CSS classes). The S4-37 split layout gives the image 75% of the viewport, widening the blast radius if a malicious URL ever reached the component — but the root cause is upstream. [`apps/web/src/components/player/SlideRenderer.tsx`]
