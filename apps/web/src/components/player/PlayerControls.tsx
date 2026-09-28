@@ -1,8 +1,21 @@
 'use client';
 
-import { usePlayerStore } from '@/stores/player.machine';
+import { usePlayerStore, DEFAULT_PLAYBACK_RATE } from '@/stores/player.machine';
 
-const SPEED_OPTIONS = [0.75, 1.0, 1.25, 1.5, 2.0];
+// Product decision (2026-09-28): the real <audio>/SpeechSynthesis playback
+// rate is scaled down by DEFAULT_PLAYBACK_RATE (0.8) so the tutor's default
+// pace is comfortable, while the labels students already recognize
+// (0.75x/1x/1.25x/1.5x/2x) stay exactly as before -- only the real rate each
+// one maps to shifts down by the same factor. `rate` and `label` are stored
+// as an explicit pair rather than derived from each other (e.g. rate / 0.8)
+// to avoid floating-point display artifacts like "1.4999999999999998x".
+const SPEED_OPTIONS: { rate: number; label: string }[] = [
+  { rate: 0.75 * DEFAULT_PLAYBACK_RATE, label: '0.75' },
+  { rate: 1.0 * DEFAULT_PLAYBACK_RATE, label: '1' },
+  { rate: 1.25 * DEFAULT_PLAYBACK_RATE, label: '1.25' },
+  { rate: 1.5 * DEFAULT_PLAYBACK_RATE, label: '1.5' },
+  { rate: 2.0 * DEFAULT_PLAYBACK_RATE, label: '2' },
+];
 
 function formatMs(ms: number): string {
   const totalSec = Math.floor(ms / 1000);
@@ -104,10 +117,13 @@ export function PlayerControls() {
   }
 
   function cycleSpeed() {
-    const idx = SPEED_OPTIONS.indexOf(playbackRate);
+    const idx = SPEED_OPTIONS.findIndex((o) => o.rate === playbackRate);
     const next = SPEED_OPTIONS[(idx + 1) % SPEED_OPTIONS.length];
-    setPlaybackRate(next);
+    setPlaybackRate(next.rate);
   }
+
+  const currentSpeedLabel =
+    SPEED_OPTIONS.find((o) => o.rate === playbackRate)?.label ?? SPEED_OPTIONS[1].label;
 
   return (
     <div className="shrink-0 bg-white border-t border-neutral-200">
@@ -203,10 +219,10 @@ export function PlayerControls() {
         <div className="flex items-center gap-3 w-20 justify-end shrink-0">
           <button
             onClick={cycleSpeed}
-            aria-label={`Playback speed ${playbackRate}×`}
+            aria-label={`Playback speed ${currentSpeedLabel}×`}
             className="text-neutral-500 hover:text-neutral-900 text-xs font-medium tabular-nums w-8 text-center transition-colors"
           >
-            {playbackRate === 1.0 ? '1×' : `${playbackRate}×`}
+            {currentSpeedLabel}×
           </button>
           <span className="text-neutral-500 text-xs tabular-nums">
             {formatMs(audioPositionMs)}

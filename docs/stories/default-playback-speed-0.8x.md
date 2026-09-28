@@ -83,3 +83,34 @@ No change to the TTS provider chain, narration WPM budget, or the separate backe
 gap (Dev 1's ~163 wpm vs. 150 wpm budget concern, noted in D197's story as explicitly out of scope
 there too) — this story only changes the player's own real-time playback multiplier and its display
 mapping, a purely client-side lever independent of how the narration audio was generated.
+
+## Completion notes
+
+Implemented exactly as designed:
+- `player.machine.ts`: added `export const DEFAULT_PLAYBACK_RATE = 0.8`, replacing the two literal
+  `1.0` defaults (initial state and `loadLesson()`'s reset).
+- `PlayerControls.tsx`: `SPEED_OPTIONS` is now `{ rate, label }[]`, with each `rate` computed as
+  `originalLiteral * DEFAULT_PLAYBACK_RATE` and each `label` kept as the original literal string —
+  the label is never derived from the rate at render time, avoiding floating-point display
+  artifacts. `cycleSpeed()` looks up by `rate` (`findIndex`) instead of the old `indexOf` on a raw
+  number array; the same `(idx + 1) % length` wrap-around and "not found -> first option" fallback
+  are unchanged.
+
+**Review finding during verification (not part of the original design, found while running the
+full suite):** two pre-existing S2-33 virtual-clock tests
+(`'ticks processTimeUpdate every 100ms while PLAYING, eventually firing the quiz at the real
+segment boundary'` and `'never calls handleEnded-driven advanceSegment/endLesson from the clock
+itself...'`) computed their expected `audioPositionMs` from wall-clock time advanced via
+`vi.advanceTimersByTime`, implicitly assuming a 1:1 real-time rate — they never set `playbackRate`
+explicitly, relying on the (previous) default of `1.0`. Changing the default to `0.8` broke their
+arithmetic (93000ms of wall-clock time now only advances virtual position by 74400ms, short of the
+92000ms segment boundary). Fixed by pinning `playbackRate: 1.0` explicitly in both tests' `setState`
+calls, since their actual intent (quiz-firing/boundary-detection logic) is independent of playback
+speed — matching this story's own AC6 intent, just extended to two tests that turned out to depend
+on the default implicitly rather than "explicitly set a specific value," which is how AC6 was
+originally worded. Two other tests in the same describe block were checked and found NOT to need
+this (one only asserts `> 0` / exact-freeze, not a boundary crossing; one already sets
+`audioPositionMs` directly to the boundary itself, so any positive rate still satisfies `>=`).
+
+Verified: `player.machine.test.ts` + full `components/player/` suite 564/564, full web suite
+1317/1317 (96 files), `eslint` clean, `tsc --noEmit` clean.
