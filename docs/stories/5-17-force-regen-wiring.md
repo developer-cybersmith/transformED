@@ -1,6 +1,6 @@
 ---
-status: in-progress
-baseline_commit: ""
+status: done
+baseline_commit: "8f54e33"
 ---
 
 # Story 5-17 — Wire `force: true` on chapter-context re-generate (D187)
@@ -48,17 +48,17 @@ which the backend idempotency logic should handle normally.
 ## Tasks
 
 - [x] Write this story file and create story-first commit
-- [ ] Add `force?: boolean` to `GenerateLessonRequest` in `books.service.ts` and thread it through
+- [x] Add `force?: boolean` to `GenerateLessonRequest` in `books.service.ts` and thread it through
       `generateLesson(bookId, chapterId, tier, force?)`
-- [ ] Update `ChapterContextFormProps.onGenerate` to `(force: boolean) => void`; call
+- [x] Update `ChapterContextFormProps.onGenerate` to `(force: boolean) => void`; call
       `onGenerate(true)` in `handleGenerateNow()`
-- [ ] Update `ChapterGenerateControl`: `handleGenerate(tier, force = false)`,
+- [x] Update `ChapterGenerateControl`: `handleGenerate(tier, force = false)`,
       `onGenerate={(force) => handleGenerate(phase.tier, force)}`
-- [ ] Add AC7 test in `ChapterGenerateControl.test.tsx` for the Generate Now → `force: true` path
-- [ ] Run existing tests — confirm all pass (AC6)
-- [ ] Write source-scan guard `tests/unit/test_d187_force_wiring_guard.py` (AC1/AC4/AC5)
-- [ ] Run guard test locally
-- [ ] Update D187 in `docs/DEFECT-REGISTER.md` to FIXED-GUARDED
+- [x] Add AC7 test in `ChapterGenerateControl.test.tsx` for the Generate Now → `force: true` path
+- [x] Run existing tests — confirm all pass (AC6) — 21/21 ✓
+- [x] Write source-scan guard `tests/unit/test_d187_force_wiring_guard.py` (AC1/AC4/AC5)
+- [x] Run guard test locally — 6/6 ✓
+- [x] Update D187 in `docs/DEFECT-REGISTER.md` to FIXED-GUARDED
 
 ## Scale & Load
 
@@ -84,8 +84,14 @@ Three files change, in dependency order:
 
 The Python guard test scans these TypeScript files as text — no compile, no runtime.
 
+## Review Findings
+
+- [x] [Review][Patch] Weak guard assertion — changed to `assert "force ? { force }" in _SERVICE` (pins the conditional-spread expression, not just the word "force") [apps/api/tests/unit/test_d187_force_wiring_guard.py] — FIXED
+- [x] [Review][Patch] Stale comment at `router.py:102` — updated to reference Story 5-17 wiring `force=true` into the UI [apps/api/app/modules/content/router.py:102] — FIXED
+
 ## Change Log
 
 | Date | Change |
 |------|--------|
 | 2026-09-28 | Story created |
+| 2026-09-28 | Implementation complete — 21 web tests + 6 guard tests pass |
