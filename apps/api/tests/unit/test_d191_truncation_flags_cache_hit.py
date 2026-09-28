@@ -13,7 +13,6 @@ mocks, no imports of application code.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
@@ -48,11 +47,9 @@ def _extract_cache_hit_block(node_key: str) -> str:
     start = _GRAPH_SRC.find(marker)
     if start == -1:
         return ""
-    block_start = start
     # Find indent level of the if-line
     line_start = _GRAPH_SRC.rfind("\n", 0, start) + 1
     indent = start - line_start
-    indent_str = " " * indent
 
     # Walk forward line by line until we hit an unindented (same or less) line
     # that is not blank and not the if-line itself.
