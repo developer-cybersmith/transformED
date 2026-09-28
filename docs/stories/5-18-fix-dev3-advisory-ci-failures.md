@@ -4,7 +4,7 @@
 **Owner:** Dev 3  
 **Branch:** sprint5/dev3-sprint5-batch (PR #267)  
 **Created:** 2026-09-28  
-**Status:** In Progress
+**Status:** Review Complete — Approved for Merge
 
 ---
 
@@ -26,9 +26,10 @@ Root causes fall into six clusters:
 | `test_s3_42_ces_breakdown_accuracy.py` | 1 | Hardcoded absolute Windows path `D:/intern/…/router.py`; fails on Linux CI |
 | `test_s2_48_teachback_detail.py` | 1 | Source-scan asserts `.limit(50)` but `get_session_report` was deliberately widened to `.limit(200)` after F2-2 added skip/fallback rows |
 
-**Total: 30 failures addressed in this story.** The remaining 7 advisory failures belong to Dev 4
-(`test_tutor_graph.py` fatigue guard) and Dev 1 (`test_lesson_ready_pubsub.py` real-Supabase,
-`test_llm_provider_smoke.py` no-API-key).
+**Total: 30 failures addressed in this story.** The remaining 8 advisory failures belong to Dev 4
+(`test_tutor_graph.py` 3 — fatigue guard broken; `test_lesson_ready_pubsub.py` 3 — real-Supabase
+called, Dev 4 owns pubsub per CLAUDE.md §21) and Dev 1 (`test_llm_provider_smoke.py` 2 — no API
+key on CI runner, Dev 1 owns LLM provider infra).
 
 ---
 
