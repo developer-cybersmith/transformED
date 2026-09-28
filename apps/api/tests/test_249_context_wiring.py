@@ -588,17 +588,11 @@ async def test_lesson_planner_node_returns_chapter_context_on_cache_hit_path() -
     narration_generator_node, dispatched after this node via
     _FAN_OUT_STATE_KEYS, regardless of which branch ran).
 
-    Round 2 review finding: this test previously claimed in its own docstring
-    that the cache-hit branch "must still return chapter_context_truncated"
-    too, but never actually asserted on it — and on inspection, the real
-    cache-hit return dict does NOT include either book_context_truncated or
-    chapter_context_truncated at all (only the raw context strings). This is
-    a real, pre-existing gap (inherited from book_context's own identical
-    cache-hit behavior, not introduced here) — registered as D191 in
-    docs/DEFECT-REGISTER.md, not silently fixed in this story. This test
-    now pins the REAL current behavior explicitly, so a future change in
-    either direction (silently starting to return the flag, or continuing not
-    to) is caught rather than assumed."""
+    D191 FIXED (Story 5-16): the cache-hit return now also recomputes and
+    returns all three *_truncated flags (book_context_truncated,
+    chapter_context_truncated, onboarding_context_truncated) from the
+    already-fetched context strings, so package_builder_node records accurate
+    truncation state on retry attempts."""
     from unittest.mock import AsyncMock, patch
 
     from app.modules.content.pipeline.graph import lesson_planner_node
@@ -638,10 +632,11 @@ async def test_lesson_planner_node_returns_chapter_context_on_cache_hit_path() -
 
     assert result["lesson_plan"] == cached_plan
     assert result["chapter_context"] == "UNIQUE_CACHE_HIT_CHAPTER_CTX_MARKER"
-    # D191: pinning today's real (gap-carrying) behavior — neither truncated
-    # flag is returned on this branch. NOT the desired end state; see D191.
-    assert "chapter_context_truncated" not in result
-    assert "book_context_truncated" not in result
+    # D191 FIXED (Story 5-16): cache-hit path now recomputes and returns all
+    # three *_truncated flags. Both are False here because the mocked contexts
+    # are well under their respective MAX_CHARS budgets.
+    assert result["chapter_context_truncated"] is False
+    assert result["book_context_truncated"] is False
 
 
 async def _lesson_planner_node_with_partial_chapter_ids(*, chapter_id: str, user_id: str) -> dict:
