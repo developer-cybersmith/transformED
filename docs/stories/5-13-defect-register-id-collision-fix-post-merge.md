@@ -107,42 +107,42 @@ branch, merged via PR.
 
 ## Tasks
 
-- [ ] **T1 — Create story file and commit (BMAD gate)**
-  - [ ] T1.1 — Write this file at `docs/stories/5-13-defect-register-id-collision-fix-post-merge.md`
-  - [ ] T1.2 — Commit as story-first commit: `git commit -m "docs(story-first): Story 5-13 — Defect Register ID collision fix (post-big-merge)"`
-  - [ ] T1.3 — Push story-only commit to remote
+- [x] **T1 — Create story file and commit (BMAD gate)**
+  - [x] T1.1 — Write this file at `docs/stories/5-13-defect-register-id-collision-fix-post-merge.md`
+  - [x] T1.2 — Commit as story-first commit: `git commit -m "docs(story-first): Story 5-13 — Defect Register ID collision fix (post-big-merge)"`
+  - [x] T1.3 — Push story-only commit to remote
 
-- [ ] **T2 — Write failing test (RED phase)**
-  - [ ] T2.1 — Write `tests/unit/test_defect_register_no_duplicate_ids.py` that:
+- [x] **T2 — Write failing test (RED phase)**
+  - [x] T2.1 — Write `tests/unit/test_defect_register_no_duplicate_ids.py` that:
     - Parses `docs/DEFECT-REGISTER.md` for all `## Dxxx` and `| **Dxxx** |` patterns
     - Asserts each D-number appears at most once (with explicit D64 exception per existing convention)
-    - Confirms the test FAILS on current main (pre-fix)
+    - Confirms the test FAILS on current main (pre-fix) — confirmed: 7 collisions detected
 
-- [ ] **T3 — Fix DEFECT-REGISTER.md (GREEN phase)**
-  - [ ] T3.1 — Rename interloper D166→D200 (line ~1247)
-  - [ ] T3.2 — Rename interloper D168→D201 (line ~1248)
-  - [ ] T3.3 — Rename interloper D169→D202 (line ~1249)
-  - [ ] T3.4 — Rename interloper D170→D203 (line ~1250)
-  - [ ] T3.5 — Rename interloper D173→D204 (line ~1251)
-  - [ ] T3.6 — Rename interloper D174→D205 (line ~1252)
-  - [ ] T3.7 — Rename interloper D192→D206 (line ~1261)
-  - [ ] T3.8 — Add ⚠️ fifth-occurrence banner note at file header
+- [x] **T3 — Fix DEFECT-REGISTER.md (GREEN phase)**
+  - [x] T3.1 — Rename interloper D166→D200 (line ~1247)
+  - [x] T3.2 — Rename interloper D168→D201 (line ~1248)
+  - [x] T3.3 — Rename interloper D169→D202 (line ~1249)
+  - [x] T3.4 — Rename interloper D170→D203 (line ~1250)
+  - [x] T3.5 — Rename interloper D173→D204 (line ~1251)
+  - [x] T3.6 — Rename interloper D174→D205 (line ~1252)
+  - [x] T3.7 — Rename interloper D192→D206 (line ~1261)
+  - [x] T3.8 — Add ⚠️ fifth-occurrence banner note at file header
 
-- [ ] **T4 — Update cross-references in source files**
-  - [ ] T4.1 — `sixtydb.py` L35: `D168` → `D201`
-  - [ ] T4.2 — `sixtydb.py` L75: `D168` → `D201`
-  - [ ] T4.3 — `sixtydb.py` L88: `D173` → `D204`
-  - [ ] T4.4 — `sixtydb.py` L~208: `D168/D169` → `D201/D202`
-  - [ ] T4.5 — `sixtydb.py` L~351: `D174` → `D205`
-  - [ ] T4.6 — `schemas/lesson.py` L68: `D192` → `D206`
+- [x] **T4 — Update cross-references in source files**
+  - [x] T4.1 — `sixtydb.py` L35: `D168` → `D201`
+  - [x] T4.2 — `sixtydb.py` L75: `D168` → `D201`
+  - [x] T4.3 — `sixtydb.py` L88: `D173` → `D204`
+  - [x] T4.4 — `sixtydb.py` L~208: `D168/D169` → `D201/D202`
+  - [x] T4.5 — `sixtydb.py` L~351: `D174` → `D205`
+  - [x] T4.6 — `schemas/lesson.py` L68: `D192` → `D206`
 
-- [ ] **T5 — Update register header**
-  - [ ] T5.1 — Change `Last updated: 2026-09-03` → `Last updated: 2026-09-28`
+- [x] **T5 — Update register header**
+  - [x] T5.1 — Change `Last updated: 2026-09-03` → `Last updated: 2026-09-28`
 
-- [ ] **T6 — Run guard tests**
-  - [ ] T6.1 — Run `pytest tests/unit/test_defect_register_no_duplicate_ids.py -v` — must pass
-  - [ ] T6.2 — Run `pytest tests/unit/test_node_return_shape.py tests/unit/test_unbounded_queries.py -v` — must pass (no regressions)
-  - [ ] T6.3 — Run `ruff check apps/api/app/providers/tts/sixtydb.py apps/api/app/schemas/lesson.py`
+- [x] **T6 — Run guard tests**
+  - [x] T6.1 — `pytest tests/unit/test_defect_register_no_duplicate_ids.py -v` — 3 passed
+  - [x] T6.2 — `pytest tests/unit/test_node_return_shape.py tests/unit/test_unbounded_queries.py -v` — 21 passed, 1 pre-existing `tinytag` ModuleNotFoundError (confirmed pre-existing, not introduced here)
+  - [x] T6.3 — `ruff check sixtydb.py schemas/lesson.py` — All checks passed
 
 ## Dev Agent Record
 
@@ -154,7 +154,10 @@ branch, merged via PR.
 
 ### Completion Notes
 
-_To be filled in on completion._
+All 7 genuine collisions renumbered. D64's intentional dual-entry left intact.
+`test_defect_register_no_duplicate_ids.py` added to `tests/unit/` — will gate CI on future collisions.
+Pre-existing `tinytag` ModuleNotFoundError on `test_tts_node_returns_only_its_own_keys` is unrelated
+(local dev env missing the package) and confirmed pre-existing before this branch.
 
 ### Debug Log
 
