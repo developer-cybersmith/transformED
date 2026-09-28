@@ -2422,16 +2422,17 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
+        # Story 5-16 (D191): recompute *_truncated flags from the already-fetched
+        # context strings so package_builder_node writes accurate values on retry.
         return {
             "lesson_plan": cached,
             "progress_pct": 38.0,
             "book_context": book_context,
+            "book_context_truncated": len(book_context) > _BOOK_CONTEXT_MAX_CHARS,
             "chapter_context": chapter_ctx_block,
-            # docs handoff (2026-09-28): same D191-accepted gap as
-            # book_context/chapter_context above — the context string is
-            # returned on cache-hit, but its own _truncated flag is not
-            # recomputed here (see D191 amendment, DEFECT-REGISTER.md).
+            "chapter_context_truncated": len(chapter_ctx_block) > _CHAPTER_CONTEXT_MAX_CHARS,
             "onboarding_context": onboarding_context,
+            "onboarding_context_truncated": len(onboarding_context) > _ONBOARDING_CONTEXT_MAX_CHARS,
         }
 
     from app.core.cost_tracker import check_ceiling
@@ -2972,7 +2973,19 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["slide_generator"]
         logger.info("[%s] slide_generator_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 48.0, "slide_generator")
-        return {"slides": cached, "progress_pct": 48.0}
+        # Story 5-16 (D191): recompute *_truncated flags from state so
+        # package_builder_node writes accurate values when both planner and
+        # slide_generator cache-hit on an ARQ retry.
+        _sg_book_ctx = state.get("book_context") or ""
+        _sg_chapter_ctx = state.get("chapter_context") or ""
+        _sg_onboarding_ctx = state.get("onboarding_context") or ""
+        return {
+            "slides": cached,
+            "progress_pct": 48.0,
+            "book_context_truncated": len(_sg_book_ctx) > _BOOK_CONTEXT_MAX_CHARS,
+            "chapter_context_truncated": len(_sg_chapter_ctx) > _CHAPTER_CONTEXT_MAX_CHARS,
+            "onboarding_context_truncated": len(_sg_onboarding_ctx) > _ONBOARDING_CONTEXT_MAX_CHARS,
+        }
 
     from app.core.cost_tracker import check_ceiling
 
