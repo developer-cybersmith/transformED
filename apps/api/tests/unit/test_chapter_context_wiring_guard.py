@@ -1,4 +1,4 @@
-﻿"""Guard: chapter_context wiring contract in the content-generation pipeline.
+"""Guard: chapter_context wiring contract in the content-generation pipeline.
 
 Why this file exists
 --------------------

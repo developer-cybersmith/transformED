@@ -1,4 +1,4 @@
-﻿"""
+"""
 Story 3-54 — D71/D72 tests.
 
 Tests for:

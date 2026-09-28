@@ -1,4 +1,4 @@
-﻿"""
+"""
 Content pipeline LangGraph graph.
 
 Node order (17 nodes) — corrected 2026-09-25, Story 233 piece 1 (issue #233):

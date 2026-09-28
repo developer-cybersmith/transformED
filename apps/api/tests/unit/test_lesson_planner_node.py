@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unit tests for Story 2-6 (S2-7): lesson_planner_node real generation.
 
 Covers docs/stories/2-6-lesson-planner-node.md's ACs:

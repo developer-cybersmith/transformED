@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests for Story 249 (issue #249): book_context/chapter_context wiring parity.
 
 Tests cover:

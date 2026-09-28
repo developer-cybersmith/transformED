@@ -1,4 +1,4 @@
-﻿"""Unit tests for PostHog event instrumentation across assessment actions (Story 3-22).
+"""Unit tests for PostHog event instrumentation across assessment actions (Story 3-22).
 
 Test count: 11
 Coverage:

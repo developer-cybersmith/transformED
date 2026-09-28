@@ -61,7 +61,7 @@ SARVAM_PACE = 0.85
 CHARS_PER_WORD = _IMPL_CHARS_PER_WORD or 6.0
 NARRATION_WORDS_PER_SEGMENT = 900  # mirrors settings.narration_words_per_segment
 TIER_SEAT_MINUTES = {"T1": 45, "T2": 30, "T3": 15}
-# S5-5/D206: the tier figure is the MINIMUM NARRATION duration, not 65% of
+# S5-5/D213: the tier figure is the MINIMUM NARRATION duration, not 65% of
 # a seat-time budget. 45 means 45 minutes of speech.
 NARRATION_SHARE = 1.0
 
@@ -295,7 +295,7 @@ def main() -> None:
         print(f"  requested            : {seat} min seat time (tier {tier})")
         print(
             f"  narration target     : {target_narration:.2f} min "
-            f"(= the tier MINIMUM narration under S5-5/D206)"
+            f"(= the tier MINIMUM narration under S5-5/D213)"
         )
         print(f"  source chars needed  : ~{need_chars:,.0f}")
         if body_lengths:

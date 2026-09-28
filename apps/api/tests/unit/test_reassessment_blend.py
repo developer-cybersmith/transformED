@@ -1,4 +1,4 @@
-﻿"""Unit tests for reassessment behavior in process_onboarding() (Story 235 rewrite).
+"""Unit tests for reassessment behavior in process_onboarding() (Story 235 rewrite).
 
 Story 235 removed the D137 EMA-blend-with-existing-scores logic for the 9
 behavioral dimensions (that scoring path was removed from onboarding entirely —

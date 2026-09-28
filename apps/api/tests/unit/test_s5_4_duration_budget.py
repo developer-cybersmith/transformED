@@ -1,4 +1,4 @@
-﻿"""Story S5-4 — duration-driven lessons (enforced 15/30/45 min seat time).
+"""Story S5-4 — duration-driven lessons (enforced 15/30/45 min seat time).
 
 RED before implementation, GREEN after. Covers the pure/arithmetic ACs and the
 planner-prompt shape. The node-level wiring ACs are covered where the behaviour

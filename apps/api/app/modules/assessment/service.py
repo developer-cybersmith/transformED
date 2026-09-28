@@ -1,4 +1,4 @@
-﻿"""
+"""
 Assessment service layer — quiz grading, teach-back scoring, and session report business logic.
 """
 

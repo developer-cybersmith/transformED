@@ -1,4 +1,4 @@
-﻿"""
+"""
 Unit tests for onboarding assessment (Story 235 — 30-question redesign):
   - POST /api/assessment/onboarding/submit endpoint (HTTP layer)
   - process_onboarding() service function

@@ -1,4 +1,4 @@
-﻿"""
+"""
 T18 Demo — Learner DNA profile generation with real onboarding data (Story 235 rewrite).
 
 Validates the full onboarding pipeline with real question_ids (q1-q30, 3 formats):
