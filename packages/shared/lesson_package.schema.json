@@ -159,10 +159,10 @@
           ]
         },
         "topic_index": {
-          "oneOf": [{ "type": "integer" }, { "type": "null" }]
+          "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "null" }]
         },
         "target_duration_sec": {
-          "oneOf": [{ "type": "integer" }, { "type": "null" }]
+          "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }]
         },
         "left_content": {
           "oneOf": [{ "$ref": "#/definitions/SplitScreenSide" }, { "type": "null" }]

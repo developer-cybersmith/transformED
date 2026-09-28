@@ -63,8 +63,8 @@ export interface Slide {
   // Story 233 Piece 1 — additive, all optional, zero behavior change until
   // Piece 2 actually sets them.
   slide_type?: SlideType | null;
-  topic_index?: number | null;
-  target_duration_sec?: number | null;
+  topic_index?: number | null; // >= 1 (Python/JSON schema enforce this)
+  target_duration_sec?: number | null; // >= 0 (Python/JSON schema enforce this)
   left_content?: SplitScreenSide | null;
   right_content?: SplitScreenSide | null;
 }

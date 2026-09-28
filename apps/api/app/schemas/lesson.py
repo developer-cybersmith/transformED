@@ -225,11 +225,23 @@ class Slide(BaseModel):
     image_url: str | None
     fallback_image_url: str | None
     # Story 233 Piece 1 — additive, all default None, zero behavior change
-    # until Piece 2 actually sets them. See prompt_context/slide-strategy
-    # proposal doc for the full spec this shape is built to hold.
+    # until Piece 2 actually sets them. See
+    # docs/proposals/2026-09-28-slide-strategy-15-30-45-alignment.md §7 for
+    # the full spec this shape is built to hold.
+    #
+    # Round 1 review finding (Scale & Load): `topic_index` and
+    # `target_duration_sec` are NOT fresh names in this codebase —
+    # `target_duration_sec` already exists as an unrelated per-narration-
+    # section pacing key in narration_generator_node (graph.py), and
+    # `topic_index` already exists as an unrelated segment_expansion_node
+    # loop/dict key (graph.py, segment_expansion.py). Whichever piece wires
+    # these Slide fields must source values explicitly, not accidentally
+    # reuse a same-named variable from either of those — they are a
+    # different unit of work (per-slide display duration / per-slide topic
+    # ordinal), not the same value.
     slide_type: SlideType | None = None
-    topic_index: int | None = None
-    target_duration_sec: int | None = None
+    topic_index: Annotated[int, Field(ge=1)] | None = None
+    target_duration_sec: Annotated[int, Field(ge=0)] | None = None
     left_content: SplitScreenSide | None = None
     right_content: SplitScreenSide | None = None
 

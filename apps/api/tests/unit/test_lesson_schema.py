@@ -433,6 +433,105 @@ def test_split_screen_side_extra_fields_forbidden() -> None:
 
 
 @pytest.mark.unit
+def test_split_screen_side_requires_heading_and_bullets() -> None:
+    """Round 1 review finding (Test Coverage, HIGH, reproduced by mutating
+    SplitScreenSide to make both fields optional and confirming the full
+    suite stayed green): SplitScreenSide's `required` shape (both `heading`
+    and `bullets`, per lesson_package.schema.json) was never independently
+    asserted at the Pydantic layer. A future edit accidentally adding a
+    `= None` default to either field would silently violate the frozen JSON
+    schema's `"required": ["heading", "bullets"]` with no test catching it."""
+    with pytest.raises(ValidationError):
+        SplitScreenSide(bullets=["x"])  # type: ignore[call-arg]  # missing heading
+    with pytest.raises(ValidationError):
+        SplitScreenSide(heading="H")  # type: ignore[call-arg]  # missing bullets
+
+
+@pytest.mark.unit
+def test_slide_left_content_rejects_malformed_object_via_json_schema() -> None:
+    """Round 1 review finding (Test Coverage, HIGH, reproduced by weakening
+    left_content's schema `$ref` to a permissive `{"type": "object"}` and
+    confirming the full suite stayed green): every existing JSON-schema-facing
+    test only exercises the ACCEPT path for left_content/right_content.
+    Proves the reject path too -- a left_content object missing `bullets`
+    (violating SplitScreenSide's own `required`) must fail jsonschema
+    validation, confirming the `$ref` to #/definitions/SplitScreenSide is
+    real and enforced, not silently weakened to an unconstrained object."""
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    d = json.loads(json.dumps(MINIMAL_PACKAGE_DICT))
+    d["segments"][0]["slides"][0]["left_content"] = {"heading": "Technical"}  # missing bullets
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=d, schema=schema)
+
+
+@pytest.mark.unit
+def test_slide_left_and_right_content_independently_settable() -> None:
+    """Round 1 review finding (Test Coverage, MEDIUM): every existing test
+    sets left_content/right_content together or both-None -- never the
+    realistic partial-population shape. Proves each side is genuinely
+    independent, not silently coupled."""
+    s = Slide(
+        slide_id="s1",
+        title="T",
+        bullets=[],
+        image_url=None,
+        fallback_image_url=None,
+        left_content=SplitScreenSide(heading="Technical", bullets=["Only side set"]),
+    )
+    assert s.left_content is not None
+    assert s.right_content is None
+
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8-sig"))
+    d = json.loads(json.dumps(MINIMAL_PACKAGE_DICT))
+    d["segments"][0]["slides"][0]["right_content"] = {"heading": "Relatable", "bullets": ["x"]}
+    jsonschema.validate(instance=d, schema=schema)
+
+
+@pytest.mark.unit
+def test_slide_topic_index_and_duration_reject_out_of_range_values() -> None:
+    """Round 1 review finding (Blind Hunter, LOW): unlike every other
+    numeric field in this file (NarrationTimestamp.start_ms/end_ms,
+    LessonMetadata.total_segments, SegmentComplexity.intervention_sensitivity),
+    topic_index/target_duration_sec originally had no lower bound. Fixed via
+    Field(ge=1)/Field(ge=0)."""
+    with pytest.raises(ValidationError):
+        Slide(
+            slide_id="s1",
+            title="T",
+            bullets=[],
+            image_url=None,
+            fallback_image_url=None,
+            topic_index=0,  # topics are 1 or 2 per the slide-strategy spec, never 0
+        )
+    with pytest.raises(ValidationError):
+        Slide(
+            slide_id="s1",
+            title="T",
+            bullets=[],
+            image_url=None,
+            fallback_image_url=None,
+            target_duration_sec=-1,
+        )
+
+
+@pytest.mark.unit
+def test_split_screen_side_in_schemas_dunder_all() -> None:
+    """Round 1 review finding (Story Quality, MEDIUM): AC9 originally named
+    test_node_return_shape.py/test_unbounded_queries.py as this story's
+    guard tests, but neither actually covers a schemas/__init__.py __all__
+    addition -- test_node_return_shape.py AST-scans only pipeline/tutor node
+    returns, and test_unbounded_queries.py explicitly scopes to router.py/
+    service.py. The real, already-precedented guard for this exact situation
+    is test_f2_1_learner_context.py's own __all__ membership assertion --
+    mirrored here."""
+    from app import schemas
+
+    assert "SplitScreenSide" in schemas.__all__, (
+        "SplitScreenSide missing from schemas.__all__ — add it so imports work across modules"
+    )
+
+
+@pytest.mark.unit
 def test_slide_omitting_new_fields_validates_against_raw_json_schema() -> None:
     """AC 5: a slide dict with none of the 5 new fields present -- exactly
     every existing lesson record and every existing test fixture, including

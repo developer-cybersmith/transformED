@@ -148,6 +148,16 @@ async def test_happy_path_produces_nested_slide_entries_matching_segments() -> N
     assert slides[0]["data"]["bullets"] == ["Point A", "Point B"]
     assert slides[0]["data"]["image_url"] is None
     assert slides[0]["data"]["fallback_image_url"] is None
+    # Story 233 Piece 1 review finding (AC Completeness, AC8): the real
+    # node's output must carry the 5 new Slide fields as null/absent today
+    # (zero behavior change) -- previously only inferred from reading
+    # Slide.model_validate()'s defaulting behavior, never asserted against
+    # the node's actual returned dict.
+    assert slides[0]["data"]["slide_type"] is None
+    assert slides[0]["data"]["topic_index"] is None
+    assert slides[0]["data"]["target_duration_sec"] is None
+    assert slides[0]["data"]["left_content"] is None
+    assert slides[0]["data"]["right_content"] is None
     # sec_1 has 2 slides in this fixture
     assert slides[1]["segment_id"] == "sec_1"
     assert slides[1]["data"]["slide_id"] == "slide_sec_1_0"
