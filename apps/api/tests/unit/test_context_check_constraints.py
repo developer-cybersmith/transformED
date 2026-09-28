@@ -13,7 +13,19 @@ _MIGRATION_FILE = (
     / "migrations"
     / "20260928000000_text_field_check_constraints.sql"
 )
-_MIGRATION_SRC: str = _MIGRATION_FILE.read_text(encoding="utf-8")
+
+_LOAD_ERROR: str | None = None
+try:
+    _MIGRATION_SRC: str = _MIGRATION_FILE.read_text(encoding="utf-8")
+except FileNotFoundError as _exc:
+    _MIGRATION_SRC = ""
+    _LOAD_ERROR = str(_exc)
+
+
+@pytest.fixture(autouse=True)
+def _require_migration_file() -> None:
+    if _LOAD_ERROR is not None:
+        pytest.fail(f"S5-15 guard: migration file not found — {_LOAD_ERROR}")
 
 
 def _has_constraint(constraint_name: str, column: str, limit: int = 500) -> bool:
