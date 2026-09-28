@@ -82,6 +82,7 @@ from app.core.retry import with_retry
 from app.modules.content.pipeline.prompt_context import (
     _BOOK_CONTEXT_MAX_CHARS,
     _CHAPTER_CONTEXT_MAX_CHARS,
+    _ONBOARDING_CONTEXT_MAX_CHARS,
 )
 
 # Single source of truth for the Learner Mode tier default (also used by
@@ -168,6 +169,15 @@ class PipelineState(TypedDict, total=False):
     # context for this chapter.
     chapter_context: str
 
+    # docs handoff (2026-09-28): onboarding-form personalization context
+    # (Q1-Q5 headline answers + Penta-Intelligence badges only — see
+    # content/context_onboarding.py), mirroring book_context/chapter_context's
+    # own fetch-once-propagate-via-fan-out shape exactly. Fetched once in
+    # lesson_planner_node, keyed by user_id alone (not book_id/chapter_id — it
+    # doesn't change per lesson-generation run). Empty string when the
+    # student has no onboarding data on file.
+    onboarding_context: str
+
     # Node 6: slide_generator
     slides: list[
         dict[str, Any]
@@ -252,6 +262,13 @@ class PipelineState(TypedDict, total=False):
     # truncate; narration_generator_node merges chapter_context but never
     # returns this key, for the identical Send()-concurrency reason.
     chapter_context_truncated: bool
+
+    # docs handoff (2026-09-28): same convention as book_context_truncated/
+    # chapter_context_truncated — set by lesson_planner_node or
+    # slide_generator_node only when merge_onboarding_context() had to
+    # truncate; narration_generator_node merges onboarding_context but never
+    # returns this key, for the identical Send()-concurrency reason.
+    onboarding_context_truncated: bool
 
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
@@ -2082,23 +2099,31 @@ def _classify_duration_outcome(
 
 
 def _planner_system_prompt(
-    narration_budget_min: float, chapter_context: str = "", book_context: str = ""
+    narration_budget_min: float,
+    chapter_context: str = "",
+    book_context: str = "",
+    onboarding_context: str = "",
 ) -> tuple[str, bool]:
     """The lesson_planner system prompt, shared by the single-call and batched
     paths (Story 2-16 RC-3) so both issue an identical instruction.
 
     Returns ``(system_prompt, was_book_context_truncated)`` — book_context's
-    truncation status only; chapter_context's own is computed separately by
-    the caller (`lesson_planner_node`) the same direct-recomputation way
-    `book_context`'s already is, not threaded through this return (Story 249
-    review: threading a 3rd tuple element through this function's only 2
-    call sites for a value the caller can already compute from its own
-    `chapter_context` string was judged not worth the signature churn).
+    truncation status only; chapter_context's and onboarding_context's own
+    are computed separately by the caller (`lesson_planner_node`) the same
+    direct-recomputation way `book_context`'s already is, not threaded
+    through this return (Story 249 review: threading a 3rd tuple element
+    through this function's only 2 call sites for a value the caller can
+    already compute from its own `chapter_context` string was judged not
+    worth the signature churn — the same judgment applies to a 4th element
+    for `onboarding_context`).
 
     S5-3: `chapter_context` merged via merge_chapter_context (own 1,300-char
     budget, Story 249/issue #249) at the 'chapter instructions' precedence
     slot (§5 strategy doc). Empty string is safe.
     S5-1 (Issue #231): `book_context` merged via merge_book_context (2,000-char budget).
+    docs handoff (2026-09-28): `onboarding_context` merged via
+    merge_onboarding_context (own 5,500-char budget) at the 'user profile
+    (onboarding)' precedence slot — BEFORE book_context, per §5's order.
 
     S5-4: takes the lesson's narration budget in place of the old `tier_framing`
     depth wording. The planner is the ONLY node that sees every segment at once,
@@ -2114,6 +2139,7 @@ def _planner_system_prompt(
     from app.modules.content.pipeline.prompt_context import (
         merge_book_context,
         merge_chapter_context,
+        merge_onboarding_context,
     )
 
     base = (
@@ -2158,6 +2184,7 @@ def _planner_system_prompt(
     # guarantee. Its own truncation return value is intentionally discarded
     # here (see docstring) — the caller recomputes truncation independently.
     base = base + _UNTRUSTED_CONTENT_GUARD
+    base, _ = merge_onboarding_context(base, onboarding_context)
     base, was_book_context_truncated = merge_book_context(base, book_context)
     base, _ = merge_chapter_context(base, chapter_context)
     return base, was_book_context_truncated
@@ -2174,6 +2201,7 @@ async def _run_planner_batch(
     lesson_id: str,
     chapter_context: str = "",
     book_context: str = "",
+    onboarding_context: str = "",
 ) -> _LessonPlanLLM:
     """Run one lesson_planner LLM completion over a batch of segment summaries.
 
@@ -2211,7 +2239,7 @@ async def _run_planner_batch(
         f"- segment_id={s['segment_id']}: {_single_line(s['summary'])}" for s in batch
     )
     _planner_prompt, _planner_ctx_truncated = _planner_system_prompt(
-        narration_budget_min, chapter_context, book_context
+        narration_budget_min, chapter_context, book_context, onboarding_context
     )
     if _planner_ctx_truncated:
         logger.warning(
@@ -2316,6 +2344,20 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             chapter_id_for_ctx, user_id_for_ctx
         )
 
+    # docs handoff (2026-09-28): fetch onboarding context BEFORE the
+    # idempotency cache check too, same rationale as book_context/
+    # chapter_context above — even on a cache hit, slide_generator and
+    # narration_generator (dispatched after this node) need it from
+    # state["onboarding_context"] via _FAN_OUT_STATE_KEYS. Keyed by user_id
+    # alone (no book_id/chapter_id — onboarding data doesn't change per
+    # lesson-generation run). Graceful on DB error/missing user:
+    # get_onboarding_context_prompt_context never raises, returns "".
+    onboarding_context = ""
+    if user_id_for_ctx:
+        from app.modules.content.context_onboarding import get_onboarding_context_prompt_context
+
+        onboarding_context = await get_onboarding_context_prompt_context(user_id_for_ctx)
+
     segment_summaries = state.get("segment_summaries", [])
     logger.info(
         "[%s] lesson_planner_node: generating lesson plan from %d segment summaries",
@@ -2385,6 +2427,11 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             "progress_pct": 38.0,
             "book_context": book_context,
             "chapter_context": chapter_ctx_block,
+            # docs handoff (2026-09-28): same D191-accepted gap as
+            # book_context/chapter_context above — the context string is
+            # returned on cache-hit, but its own _truncated flag is not
+            # recomputed here (see D191 amendment, DEFECT-REGISTER.md).
+            "onboarding_context": onboarding_context,
         }
 
     from app.core.cost_tracker import check_ceiling
@@ -2542,6 +2589,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             lesson_id,
             chapter_context=chapter_ctx_block,
             book_context=book_context,
+            onboarding_context=onboarding_context,
         )
     else:
         batches = [
@@ -2574,6 +2622,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 lesson_id,
                 chapter_context=chapter_ctx_block,
                 book_context=book_context,
+                onboarding_context=onboarding_context,
             )
             if plan_head is None:
                 plan_head = batch_response
@@ -2780,6 +2829,17 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
             lesson_id,
             _CHAPTER_CONTEXT_MAX_CHARS,
         )
+    # docs handoff (2026-09-28): same direct-recomputation pattern as
+    # book_context/chapter_context immediately above, for onboarding_context's
+    # own (independently-derived) budget.
+    _lp_onboarding_ctx_truncated = len(onboarding_context) > _ONBOARDING_CONTEXT_MAX_CHARS
+    if _lp_onboarding_ctx_truncated:
+        logger.warning(
+            "[%s] lesson_planner_node: onboarding_context exceeded %d chars — "
+            "truncation occurred; setting onboarding_context_truncated=True in state",
+            lesson_id,
+            _ONBOARDING_CONTEXT_MAX_CHARS,
+        )
     return {
         "lesson_plan": lesson_plan,
         "progress_pct": 38.0,
@@ -2787,6 +2847,8 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         "book_context_truncated": _lp_ctx_truncated,
         "chapter_context": chapter_ctx_block,
         "chapter_context_truncated": _lp_chapter_ctx_truncated,
+        "onboarding_context": onboarding_context,
+        "onboarding_context_truncated": _lp_onboarding_ctx_truncated,
     }
 
 
@@ -2979,11 +3041,16 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
     # Story 249 (issue #249): chapter context, same site, merged after book
     # context (matching the §5 precedence order: book context → chapter
     # instructions), via its own shared merge helper.
+    # docs handoff (2026-09-28): onboarding context, same site, merged BEFORE
+    # book context (§5 precedence order: user profile (onboarding) → book
+    # context → chapter instructions).
     from app.modules.content.pipeline.prompt_context import (
         merge_book_context,
         merge_chapter_context,
+        merge_onboarding_context,
     )
 
+    _slide_onboarding_context = state.get("onboarding_context") or ""
     _slide_book_context = state.get("book_context") or ""
     _slide_chapter_context = state.get("chapter_context") or ""
     _slide_base_prompt = (
@@ -2998,12 +3065,22 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         "UNCHANGED — do not invent, merge, split, omit, or reorder "
         "segment_ids." + _UNTRUSTED_CONTENT_GUARD
     )
+    _slide_system_prompt, _slide_onboarding_ctx_truncated = merge_onboarding_context(
+        _slide_base_prompt, _slide_onboarding_context
+    )
     _slide_system_prompt, _slide_ctx_truncated = merge_book_context(
-        _slide_base_prompt, _slide_book_context
+        _slide_system_prompt, _slide_book_context
     )
     _slide_system_prompt, _slide_chapter_ctx_truncated = merge_chapter_context(
         _slide_system_prompt, _slide_chapter_context
     )
+    if _slide_onboarding_ctx_truncated:
+        logger.warning(
+            "[%s] slide_generator_node: onboarding_context truncated to %d chars — "
+            "slides will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+            _ONBOARDING_CONTEXT_MAX_CHARS,
+        )
     if _slide_ctx_truncated:
         logger.warning(
             "[%s] slide_generator_node: book_context truncated to 2000 chars — "
@@ -3211,6 +3288,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         "progress_pct": 48.0,
         "book_context_truncated": _slide_ctx_truncated,
         "chapter_context_truncated": _slide_chapter_ctx_truncated,
+        "onboarding_context_truncated": _slide_onboarding_ctx_truncated,
     }
 
 
@@ -5000,11 +5078,18 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # receive it without re-querying the DB on every section dispatch.
     # Story 249 (issue #249): chapter context, same site/route, merged after
     # book context (§5 precedence order).
+    # docs handoff (2026-09-28): onboarding context, same site/route, merged
+    # BEFORE book context (§5 precedence order), also arriving via
+    # _FAN_OUT_STATE_KEYS.
     from app.modules.content.pipeline.prompt_context import merge_book_context as _merge_bc
     from app.modules.content.pipeline.prompt_context import (
         merge_chapter_context as _merge_cc,
     )
+    from app.modules.content.pipeline.prompt_context import (
+        merge_onboarding_context as _merge_oc,
+    )
 
+    _narration_onboarding_context = state.get("onboarding_context") or ""
     _narration_book_context = state.get("book_context") or ""
     _narration_chapter_context = state.get("chapter_context") or ""
     _narration_base_prompt = (
@@ -5018,12 +5103,24 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
         f"{length_instruction}"
         f"{_UNTRUSTED_CONTENT_GUARD}"
     )
+    _narration_system_prompt, _narration_onboarding_ctx_truncated = _merge_oc(
+        _narration_base_prompt, _narration_onboarding_context
+    )
     _narration_system_prompt, _narration_ctx_truncated = _merge_bc(
-        _narration_base_prompt, _narration_book_context
+        _narration_system_prompt, _narration_book_context
     )
     _narration_system_prompt, _narration_chapter_ctx_truncated = _merge_cc(
         _narration_system_prompt, _narration_chapter_context
     )
+    # Same suppression as book/chapter below — lesson_planner_node already
+    # logged this warning once with the same onboarding_context string.
+    if _narration_onboarding_ctx_truncated and not state.get("onboarding_context_truncated"):
+        logger.warning(
+            "[%s] narration_generator_node: onboarding_context truncated to %d chars — "
+            "narration will use partial context; admin: check lesson_jobs.node_outputs",
+            lesson_id,
+            _ONBOARDING_CONTEXT_MAX_CHARS,
+        )
     # lesson_planner_node (Phase 2, sequential, runs before this fan-out) already
     # logged the truncation warning with the same book_context string. Suppress
     # the per-section repeat to avoid N identical warnings for N dispatched sections.
@@ -7662,6 +7759,9 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # already is," and a transient state key nobody ever
                 # persists is not surfaced, it is silent (CLAUDE.md).
                 "chapter_context_truncated": state.get("chapter_context_truncated", False),
+                # docs handoff (2026-09-28): same convention, onboarding_context's
+                # own 5,500-char budget.
+                "onboarding_context_truncated": state.get("onboarding_context_truncated", False),
             },
         }
     ).eq("lesson_id", lesson_id).execute()
@@ -7700,6 +7800,11 @@ _FAN_OUT_STATE_KEYS: tuple[str, ...] = (
     "tier",
     "book_context",
     "chapter_context",
+    # docs handoff (2026-09-28): "onboarding_context" added the same way as
+    # book_context/chapter_context above — same str/last-write-wins shape,
+    # same single fetch already done in lesson_planner_node, now also
+    # reaching narration_generator_node.
+    "onboarding_context",
     # D192 (2026-09-25): narration_generator_node's own truncation-warning
     # suppression (`if ... and not state.get("book_context_truncated")`)
     # was dead code without these two keys -- the Send() payload built from
@@ -7711,6 +7816,9 @@ _FAN_OUT_STATE_KEYS: tuple[str, ...] = (
     # -- harmless there, since Phase-1 nodes don't read either flag.
     "book_context_truncated",
     "chapter_context_truncated",
+    # docs handoff (2026-09-28): same convention, onboarding_context's own
+    # truncation flag.
+    "onboarding_context_truncated",
 )
 
 # Review finding (2026-07-14, blind-hunter): AC-7's cost-ceiling check runs
@@ -7818,6 +7926,10 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     # docs/DEFECT-REGISTER.md) — kept for payload-shape consistency with
     # book_context, not because any Phase-1 node reads it.
     base.setdefault("chapter_context", "")
+    # docs handoff (2026-09-28): onboarding_context, same payload-shape-
+    # consistency reasoning — Phase-1 runs before lesson_planner_node's
+    # fetch, kept for shape consistency, not because any Phase-1 node reads it.
+    base.setdefault("onboarding_context", "")
     # D192: same payload-shape-consistency reasoning as book_context/
     # chapter_context above — lesson_planner_node hasn't set either
     # *_truncated flag yet at Phase-1 dispatch time, so `if k in state` alone
@@ -7826,6 +7938,7 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     # key appearing in every dispatch, Phase-1 included).
     base.setdefault("book_context_truncated", False)
     base.setdefault("chapter_context_truncated", False)
+    base.setdefault("onboarding_context_truncated", False)
     # _total_sections lets each dispatch's progress-counter log (Story 2-1b
     # AC-4) report "X/Y" — cheap (one int), unlike spreading full state.
     # Uses _PHASE1_INSTRUMENTED_NODES (all 5 as of issue #236 — narration_generator
@@ -7970,6 +8083,9 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
     # now actually merges this one (unlike the Phase-1 fan-out's own
     # setdefault above, which is payload-shape-only per D189).
     base.setdefault("chapter_context", "")
+    # docs handoff (2026-09-28): onboarding_context, same reasoning —
+    # narration_generator_node actually merges this one too.
+    base.setdefault("onboarding_context", "")
     # D192: lesson_planner_node (which runs before this dispatch) normally
     # already sets both *_truncated flags in state, so these setdefaults are
     # a safety net rather than the common path -- but guaranteeing presence
@@ -7979,6 +8095,7 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
     # member, unconditionally.
     base.setdefault("book_context_truncated", False)
     base.setdefault("chapter_context_truncated", False)
+    base.setdefault("onboarding_context_truncated", False)
     base["_total_sections"] = len(plan_segments) * len(_POST_PLANNER_FAN_OUT_NODES)
 
     sends: list[Send] = []
