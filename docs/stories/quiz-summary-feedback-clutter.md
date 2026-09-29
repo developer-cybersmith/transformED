@@ -58,6 +58,22 @@ N/A — a pure client-side rendering change (removing one `.map()` over an alrea
 small (`<= number of quiz questions in one segment`, single-digit) array). No new data, no new I/O,
 no new budget or limit of any kind.
 
+## Completion notes
+
+Implemented exactly as designed: removed the `result.feedback.map(...)` explanation dump from
+the score-summary block, keeping only the aggregate `correct_count`/`total_count`/percentage line.
+
+Updated the two existing tests that asserted the old behavior:
+- Renamed/re-targeted `'shows the score summary feedback using the real backend field names...'`
+  to assert the aggregate `"2/2 correct"` line instead of a repeated explanation string.
+- Renamed `'styles score summary feedback by is_correct...'` to
+  `'does NOT repeat any question explanation inside the score summary...'` — now asserts the
+  mocked per-question explanation text (`'Correct feedback.'`/`'Incorrect feedback.'`) is absent
+  from the DOM entirely, alongside the aggregate `"1/2 correct"` line still rendering correctly.
+
+Verified: `QuizOverlay.test.tsx` 21/21, full player suite 462/462 (20 files), full web suite
+1312/1312 (96 files), `eslint` clean, `tsc --noEmit` clean.
+
 ## Out of scope
 
 No change to `submitQuiz`'s response shape, the backend grading logic, or the per-question
