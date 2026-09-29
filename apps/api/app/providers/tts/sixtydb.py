@@ -32,7 +32,7 @@ Responsibilities
   shape as sarvam.py/azure.py.
 - Cost: 60db publishes no per-character price (wallet-credit billing only).
   COST_PER_CHAR below is Sarvam's rate used as an explicit, documented,
-  UNCONFIRMED placeholder — registered as D208 in docs/DEFECT-REGISTER.md
+  UNCONFIRMED placeholder — registered as D168 in docs/DEFECT-REGISTER.md
   per CLAUDE.md binding rule 5.
 """
 
@@ -72,7 +72,7 @@ _SIXTYDB_SAMPLE_RATE_HZ = 48000
 _SIXTYDB_CHANNELS = 1
 _SIXTYDB_SAMPLE_WIDTH_BYTES = 2  # 16-bit LINEAR16
 
-# D208 (docs/DEFECT-REGISTER.md): unconfirmed placeholder, matches Sarvam's
+# D168 (docs/DEFECT-REGISTER.md): unconfirmed placeholder, matches Sarvam's
 # documented per-char rate — 60db publishes no per-character price.
 COST_PER_CHAR = 0.00002
 
@@ -85,7 +85,7 @@ def _chunk_text(text: str, max_chars: int = _SIXTYDB_MAX_CHARS_PER_REQUEST) -> l
     in practice than Sarvam's 500-char chunking does).
 
     Deliberately a separate copy, not a shared import from sarvam.py (review
-    finding, accepted not fixed — registered as D211 in DEFECT-REGISTER.md):
+    finding, accepted not fixed — registered as D173 in DEFECT-REGISTER.md):
     this story's stated scope explicitly keeps
     Sarvam's own provider file untouched, and every provider file in
     providers/tts/ is already independently self-contained by this
@@ -205,7 +205,7 @@ class SixtyDbPartialSpendError(RuntimeError):
     falls through to Sarvam, which (if it succeeds) is the only cost ever
     accumulated against the $3.00/lesson ceiling. 60db's real wallet spend
     for the successful chunks is silently dropped — the opposite-direction
-    gap from D208/D209's double-billing concern. Carries `partial_cost_usd`
+    gap from D168/D169's double-billing concern. Carries `partial_cost_usd`
     so the caller can record it before falling through, and `__cause__`
     (via `raise ... from exc`) preserves the real failure for logging.
     """
@@ -348,7 +348,7 @@ class SixtyDbTTSProvider(TTSProvider):
         chars_completed = 0
         try:
             pcm_chunks: list[bytes] = []
-            # D212 (DEFECT-REGISTER.md): this loop has no overall elapsed-time
+            # D174 (DEFECT-REGISTER.md): this loop has no overall elapsed-time
             # budget across all chunks — each `_post_chunk` call has its own
             # 30s timeout + up to 3 retries, but a segment needing many
             # chunks (up to 24 at the 120,000-char lesson-wide narration cap)

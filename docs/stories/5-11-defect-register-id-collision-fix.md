@@ -1,4 +1,4 @@
-﻿---
+---
 baseline_commit: ""
 ---
 
@@ -31,8 +31,8 @@ load-test cleanup, D156 = upload retry, D157 = flyctl secrets casing, D158 =
 Ask Tutor stub — none are the book-context defects our branch registers under
 those IDs).
 
-`main`'s highest ID is D172. PR #239 (unmerged) claims D204. The next six free
-IDs are D205–D179.
+`main`'s highest ID is D172. PR #239 (unmerged) claims D173. The next six free
+IDs are D174–D179.
 
 ---
 
@@ -42,7 +42,7 @@ IDs are D205–D179.
 
 | Old ID | Content | New ID |
 |--------|---------|--------|
-| D154   | Langfuse DPDP gap — book-context in traces | D205 |
+| D154   | Langfuse DPDP gap — book-context in traces | D174 |
 | D155   | No TestClient integration tests for book-context endpoints | D175 |
 | D156   | Branch stacked on S5-1 rather than `main` (process) | D176 |
 | D157   | No rate limiting on `PUT /books/{book_id}/context` | D177 |
@@ -52,7 +52,7 @@ IDs are D205–D179.
 After fix:
 - No heading `## D154`–`## D158` or `## D167` exists in the branch diff (those
   numbers are owned by `main`'s entries)
-- Six new headings `## D205`–`## D179` appear in the diff instead
+- Six new headings `## D174`–`## D179` appear in the diff instead
 
 ### AC2 — All cross-references updated
 
@@ -69,9 +69,9 @@ After fix:
 ### AC3 — No new collisions introduced
 
 After fix:
-- The six new IDs (D205–D179) do not exist anywhere in `main`'s
+- The six new IDs (D174–D179) do not exist anywhere in `main`'s
   DEFECT-REGISTER.md
-- D204 (claimed by PR #239) is not used
+- D173 (claimed by PR #239) is not used
 
 ---
 
@@ -89,7 +89,7 @@ After fix:
 ## Tasks
 
 - [x] T1: Create story file and commit story-first
-- [ ] T2: Rename D154→D205, D155→D175, D156→D176, D157→D177, D158→D178 in DEFECT-REGISTER.md
+- [ ] T2: Rename D154→D174, D155→D175, D156→D176, D157→D177, D158→D178 in DEFECT-REGISTER.md
 - [ ] T3: Rename D167→D179 in DEFECT-REGISTER.md and fix D179's internal D155→D175 reference
 - [ ] T4: Update S5-1 story F12 cross-reference from D167 to D179
 - [ ] T5: Verify no old IDs remain in the branch diff; push; add PR comment

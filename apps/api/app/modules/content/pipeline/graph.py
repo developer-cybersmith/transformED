@@ -2384,7 +2384,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
                 f"segment_id/summary: {s!r}"
             )
 
-    # D201 (review finding, 2026-09-21, PR #237, Round 2 correction):
+    # D168 (review finding, 2026-09-21, PR #237, Round 2 correction):
     # segment_summaries is Annotated[list, operator.add] — the SAME kind of
     # Send()-fan-in-with-no-cross-call-ordering-guarantee channel as
     # narration_scripts (which _apply_narration_char_cap already has to
@@ -2422,17 +2422,16 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["lesson_planner"]
         logger.info("[%s] lesson_planner_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 38.0, "lesson_planner")
-        # Story 5-16 (D191): recompute *_truncated flags from the already-fetched
-        # context strings so package_builder_node writes accurate values on retry.
         return {
             "lesson_plan": cached,
             "progress_pct": 38.0,
             "book_context": book_context,
-            "book_context_truncated": len(book_context) > _BOOK_CONTEXT_MAX_CHARS,
             "chapter_context": chapter_ctx_block,
-            "chapter_context_truncated": len(chapter_ctx_block) > _CHAPTER_CONTEXT_MAX_CHARS,
+            # docs handoff (2026-09-28): same D191-accepted gap as
+            # book_context/chapter_context above — the context string is
+            # returned on cache-hit, but its own _truncated flag is not
+            # recomputed here (see D191 amendment, DEFECT-REGISTER.md).
             "onboarding_context": onboarding_context,
-            "onboarding_context_truncated": len(onboarding_context) > _ONBOARDING_CONTEXT_MAX_CHARS,
         }
 
     from app.core.cost_tracker import check_ceiling
@@ -2712,7 +2711,7 @@ async def lesson_planner_node(state: PipelineState) -> PipelineState:
     # *set* of segment_ids matches 1:1 — a validly-shuffled response would
     # silently reorder the plan away from the chapter's actual section order.
     # segment_summaries was already re-sorted into true section order near
-    # the top of this function (D201) — before the batch split, not after —
+    # the top of this function (D168) — before the batch split, not after —
     # so this dict lookup + the resulting segments_out order are both correct.
     # Assemble by iterating segment_summaries (genuinely the authoritative
     # input order, re-sorted above), looking up each LLM segment by
@@ -2973,19 +2972,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         cached = node_outputs["slide_generator"]
         logger.info("[%s] slide_generator_node: cache hit, skipping LLM call", lesson_id)
         await _update_job_progress(lesson_id, 48.0, "slide_generator")
-        # Story 5-16 (D191): recompute *_truncated flags from state so
-        # package_builder_node writes accurate values when both planner and
-        # slide_generator cache-hit on an ARQ retry.
-        _sg_book_ctx = state.get("book_context") or ""
-        _sg_chapter_ctx = state.get("chapter_context") or ""
-        _sg_onboarding_ctx = state.get("onboarding_context") or ""
-        return {
-            "slides": cached,
-            "progress_pct": 48.0,
-            "book_context_truncated": len(_sg_book_ctx) > _BOOK_CONTEXT_MAX_CHARS,
-            "chapter_context_truncated": len(_sg_chapter_ctx) > _CHAPTER_CONTEXT_MAX_CHARS,
-            "onboarding_context_truncated": len(_sg_onboarding_ctx) > _ONBOARDING_CONTEXT_MAX_CHARS,
-        }
+        return {"slides": cached, "progress_pct": 48.0}
 
     from app.core.cost_tracker import check_ceiling
 
@@ -5000,7 +4987,7 @@ async def narration_generator_node(state: PipelineState) -> PipelineState:
     # so there is nothing to downshift to, and aborting a single section over
     # a transient blip is a worse outcome than proceeding.
     #
-    # D202 (docs/DEFECT-REGISTER.md): this check is now also read
+    # D169 (docs/DEFECT-REGISTER.md): this check is now also read
     # CONCURRENTLY across up to N Send()-dispatched sections for the same
     # lesson (no budget reservation) — a lesson just under the ceiling can
     # overshoot by up to N x one narration call's cost. Registered, not
@@ -5537,7 +5524,7 @@ def _sort_by_segment_order(entries: list[dict[str, Any]]) -> list[dict[str, Any]
     Round-2 review finding (2026-09-21, PR #237): this exact
     `sorted(enumerate(entries), key=lambda pair: _segment_order_key(pair[1],
     pair[0]))` idiom was independently duplicated three times
-    (`lesson_planner_node`'s `segment_summaries` re-sort, D201;
+    (`lesson_planner_node`'s `segment_summaries` re-sort, D168;
     `_apply_narration_char_cap`'s `narration_scripts` re-sort;
     `narration_stitch_node`'s own `ordered_scripts` construction) — extracted
     here so a future change to the ordering rule only needs to happen once.
@@ -7818,7 +7805,7 @@ _FAN_OUT_STATE_KEYS: tuple[str, ...] = (
     # same single fetch already done in lesson_planner_node, now also
     # reaching narration_generator_node.
     "onboarding_context",
-    # D206 (2026-09-25): narration_generator_node's own truncation-warning
+    # D192 (2026-09-25): narration_generator_node's own truncation-warning
     # suppression (`if ... and not state.get("book_context_truncated")`)
     # was dead code without these two keys -- the Send() payload built from
     # this tuple never carried them, so `state.get(...)` inside the
@@ -7943,7 +7930,7 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     # consistency reasoning — Phase-1 runs before lesson_planner_node's
     # fetch, kept for shape consistency, not because any Phase-1 node reads it.
     base.setdefault("onboarding_context", "")
-    # D206: same payload-shape-consistency reasoning as book_context/
+    # D192: same payload-shape-consistency reasoning as book_context/
     # chapter_context above — lesson_planner_node hasn't set either
     # *_truncated flag yet at Phase-1 dispatch time, so `if k in state` alone
     # would omit them here (test_fan_out_state_keys.py's
@@ -8099,7 +8086,7 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
     # docs handoff (2026-09-28): onboarding_context, same reasoning —
     # narration_generator_node actually merges this one too.
     base.setdefault("onboarding_context", "")
-    # D206: lesson_planner_node (which runs before this dispatch) normally
+    # D192: lesson_planner_node (which runs before this dispatch) normally
     # already sets both *_truncated flags in state, so these setdefaults are
     # a safety net rather than the common path -- but guaranteeing presence
     # (default False) matches book_context/chapter_context's own idiom above

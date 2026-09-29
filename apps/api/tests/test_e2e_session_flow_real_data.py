@@ -265,11 +265,7 @@ def _build_supabase_teachback(
     lesson_data: dict | None = None,
     attempt_count: int = 0,
 ) -> MagicMock:
-    """4-call order: sessions → teachback_attempts(COUNT) → lessons → teachback_attempts(INSERT).
-
-    grade_teachback counts existing attempts (Step 2) before loading the lesson
-    JSONB (Step 3), so count_mock must precede lesson_mock in side_effect.
-    """
+    """4-call order: sessions → lessons → teachback_attempts(COUNT) → teachback_attempts(INSERT)."""
     if session_data is None:
         session_data = _SESSION_ROW
     if lesson_data is None:
@@ -281,19 +277,19 @@ def _build_supabase_teachback(
     session_chain = session_mock.select.return_value.eq.return_value.maybe_single.return_value
     session_chain.execute.return_value.data = session_data
 
-    count_mock = MagicMock()
-    count_chain = count_mock.select.return_value.eq.return_value.eq.return_value
-    count_chain.execute.return_value.count = attempt_count
-
     lesson_mock = MagicMock()
     lesson_chain = lesson_mock.select.return_value.eq.return_value.maybe_single.return_value
     lesson_chain.execute.return_value.data = lesson_data
+
+    count_mock = MagicMock()
+    count_chain = count_mock.select.return_value.eq.return_value.eq.return_value
+    count_chain.execute.return_value.count = attempt_count
 
     insert_mock = MagicMock()
     insert_mock.insert.return_value.execute.return_value.data = []
     insert_mock.insert.return_value.execute.return_value.error = None
 
-    mock.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    mock.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
     return mock
 
 

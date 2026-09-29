@@ -1,4 +1,4 @@
-﻿# Story: Sidebar's collapsed-state expand toggle is invisible (clipped by overflow-hidden)
+# Story: Sidebar's collapsed-state expand toggle is invisible (clipped by overflow-hidden)
 
 **Discovered:** 2026-09-25, direct user report immediately after PR #251's sidebar
 collapse/expand feature merged to `main`: "when the sidebar is collapsed, the arrow to
@@ -44,12 +44,12 @@ any kind. The six questions do not apply to a positioning bug in already-rendere
 Two follow-ups from independent review of PR #254 (`feature/249-context-wiring`, merged same
 day), bundled here at the user's direction rather than as separate PRs:
 
-1. **D189 renumbered to D206.** This story originally registered D189; PR #254 independently
+1. **D189 renumbered to D192.** This story originally registered D189; PR #254 independently
    claimed D189 (and D190/D191) for unrelated context-wiring defects and merged first. Both
    branches auto-merged cleanly with no textual conflict (different sections of
    `docs/DEFECT-REGISTER.md`), which would have left two silently different "D189" entries on
-   `main` — exactly the D200/168/169/170/173 collision class already on record. Renumbered
-   ours to D206 (next free number after PR #254's merge) rather than let the collision reach
+   `main` — exactly the D166/168/169/170/173 collision class already on record. Renumbered
+   ours to D192 (next free number after PR #254's merge) rather than let the collision reach
    `main`.
 2. **Fixed a dead-code bug found in the same review**: `narration_generator_node`'s
    `chapter_context_truncated`/`book_context_truncated` log-dedup suppression

@@ -145,7 +145,7 @@ def _build_onboarding_supabase(
 ) -> MagicMock:
     """Build mock Supabase client for process_onboarding call order:
     1st call: learner_dna SELECT (_fetch_existing_dna — session_count only)
-    2nd call: onboarding_answers_v2 UPSERT (D204: was INSERT — see service.py Step 5)
+    2nd call: onboarding_answers_v2 UPSERT (D173: was INSERT — see service.py Step 5)
     3rd call: learner_dna UPSERT
     """
     mock = MagicMock()
@@ -805,7 +805,7 @@ async def test_process_onboarding_9_behavioral_dims_absent_from_upsert(mock_to_t
 async def test_process_onboarding_writes_onboarding_answers_v2_via_upsert_on_conflict(
     mock_to_thread,
 ) -> None:
-    """D204 fix: a resubmission (reassessment) must not dead-end on the table's own
+    """D173 fix: a resubmission (reassessment) must not dead-end on the table's own
     UNIQUE(user_id, question_id) constraint. process_onboarding upserts on that exact
     conflict target instead of inserting, so a second submission for the same 30
     question_ids overwrites cleanly rather than raising a duplicate-key error."""
@@ -839,7 +839,7 @@ async def test_process_onboarding_write_error_returns_500(mock_to_thread) -> Non
     """Any onboarding_answers_v2 write failure — including a duplicate-key-shaped
     error string — now surfaces as 500, not 409. Duplicate *submission attempts* are
     gated upstream by router.py's Redis SET NX; a (user_id, question_id) conflict at
-    the DB layer is absorbed by Step 5's upsert (D204), so if an error reaches this
+    the DB layer is absorbed by Step 5's upsert (D173), so if an error reaches this
     branch at all it is a genuine write failure, never an expected duplicate."""
     from fastapi import HTTPException
 
@@ -932,7 +932,7 @@ async def test_process_onboarding_returns_onboarding_result(mock_to_thread) -> N
 @pytest.mark.unit
 async def test_process_onboarding_upsert_row_payload_mapping(mock_to_thread) -> None:
     """All 30 onboarding_answers_v2 rows must carry the right format-specific fields,
-    and the write must be an upsert keyed on (user_id, question_id) — D204: a plain
+    and the write must be an upsert keyed on (user_id, question_id) — D173: a plain
     insert dead-ends every reassessment resubmission on the table's own UNIQUE
     constraint, since the 30 question_ids repeat across attempts for a given user."""
     from app.modules.assessment.service import process_onboarding
