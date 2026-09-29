@@ -54,15 +54,64 @@ No other node, constant, or eval-harness threshold changes:
    continues to pass unmodified — the numeric limit is still stated in the prompt.
 5. **AC5**: a new test asserts the prompt text no longer discourages full sentences and does
    instruct a complete-sentence, one-to-two-line target.
+6. **AC6** (added 2026-09-29, review round): `slide_generator_node` persists an admin-visible
+   record of every bullet the D125 200-char guard had to truncate (`slide_bullet_truncations`,
+   surfaced via `package_builder_node` into `lesson_jobs.node_outputs`) — the existing truncation
+   guard itself and `_MAX_SLIDE_BULLET_CHARS` are unchanged (AC3 still holds); only its visibility
+   changes, from a `logger.warning` nobody reads to a persisted, queryable record.
 
 ## Scale & Load
 
-N/A — a pure prompt-wording change to an existing LLM call already made once per lesson generation
-(unchanged call count, unchanged model, unchanged max-token/char ceiling). No new I/O, no new
-budget, no new per-request cost beyond the existing slide-generation call this prompt already
-belongs to. Longer bullets (still capped at 200 chars) do not change LLM pricing meaningfully
-(same call, marginally more output tokens within the existing budget) and do not introduce any new
-unbounded read/write.
+**Revised 2026-09-29** after an independent PR reviewer (AkshayDev2905) correctly flagged the
+original "N/A ... marginally more output tokens" framing below as unsubstantiated. The six
+questions, answered with real numbers instead of an assumption:
+
+1. **Unit of work and its range**: one `slide_generator_node` call produces an entire chapter's
+   deck in a single structured-output request — 1 call regardless of chapter size, unchanged by
+   this story. Range: as few as 1 segment up to `max_narration_segments` = 24 (the platform's own
+   hard cap, D195/D196), each up to `_MAX_SLIDES_PER_SEGMENT` = 8 slides — worst case 192 slides
+   in one response.
+2. **Fixed budget vs. variable input**: `complete_structured` is called with no `max_tokens`, so
+   completion length is bounded only by the model's own output cap — this was already true before
+   this story. What changed: bullets now target 60-160 chars (~15-40 tokens) instead of the old
+   ~30-char (~8-10-token) fragments, roughly a 3-4x per-bullet growth. At the 192-slide worst case
+   and an estimated 3-5 bullets/slide (no hard per-slide bullet count exists), that is on the order
+   of 10,000-40,000 completion tokens for bullets alone — a range that can plausibly reach a
+   model's completion-token ceiling on the platform's largest targeted chapters. **Registered as
+   D200** (`docs/DEFECT-REGISTER.md`) rather than fixed here: batching segments across multiple
+   calls, or adding an explicit `max_tokens` + degradation strategy, is a structural change to
+   `slide_generator_node`'s single-call design, out of scope for a prompt-wording story (binding
+   rule 6). What happens today if the cap is hit: OpenAI's structured-output `parse()` helper
+   raises (`LengthFinishReasonError`), which propagates through `_complete_structured_inner`
+   (retried 3x by `@with_retry`) and fails the pipeline job loudly — visible in `lesson_jobs`
+   status and Sentry. This satisfies CLAUDE.md's "explicit error, not silent" requirement, but is a
+   new availability risk on large chapters, honestly recorded rather than hidden behind "N/A."
+3. **Scope of the limit**: `max_narration_segments` is a per-lesson (per-generation-attempt) cap,
+   set globally via `settings.max_narration_segments` — same scope as before this story, unaffected
+   by it.
+4. **Unbounded reads/writes**: none introduced. Same single LLM call, same `slide_generator_node`
+   Supabase write it already made.
+5. **Inherited caps re-derived**: `_MAX_SLIDE_BULLET_CHARS` = 200 (D125) was re-checked, not
+   re-derived — it remains a maximum-only ceiling and is unchanged by this story (AC3). The
+   *frequency* at which real generations approach it is now higher, which is exactly what D200
+   records.
+6. **Check-then-act under concurrency**: N/A — a single sequential LLM call per lesson generation,
+   no new concurrent access pattern.
+
+Separately, the existing per-bullet 200-char truncation guard (D125) was previously only a
+`logger.warning` — a silent-truncation gap CLAUDE.md explicitly forbids, sharpened by this same
+reviewer's finding #2 and now actually fixed (not merely registered): `slide_generator_node` now
+returns a `slide_bullet_truncations` list (`{segment_id, slide_title, original_chars}` per
+truncated bullet), persisted by `package_builder_node` into `lesson_jobs.node_outputs` for admin
+visibility, mirroring `section_truncations`' existing pattern (Story 3-39). The one remaining gap —
+this new field is not restored on `slide_generator_node`'s own ARQ-retry cache-hit path — is the
+same gap class already registered as D191 for a sibling node; registered here as **D201** rather
+than fixed opportunistically in this story.
+
+Original (superseded) reasoning, kept for the record: "a pure prompt-wording change ... marginally
+more output tokens within the existing budget." The reviewer's arithmetic above shows this
+significantly understated the change; superseded, not deleted, per this repo's own practice of
+recording a wrong initial read rather than silently overwriting it (see D192 for the precedent).
 
 ## Completion notes
 
