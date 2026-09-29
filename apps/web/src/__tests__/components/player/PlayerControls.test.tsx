@@ -86,3 +86,32 @@ describe('PlayerControls — Ask Tutor button (Story 2-57 AC11)', () => {
     expect((screen.getByRole('button', { name: 'Ask Tutor' }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe('PlayerControls — speed control (default-playback-speed-0.8x)', () => {
+  it('AC2: shows "1x" for the default real rate (0.8), not "0.8x"', () => {
+    // loadLesson() in beforeEach already resets playbackRate to the default.
+    render(<PlayerControls />);
+
+    expect(usePlayerStore.getState().playbackRate).toBe(0.8);
+    expect(screen.getByRole('button', { name: 'Playback speed 1×' })).not.toBeNull();
+  });
+
+  it('AC3: cycling speed steps through the real rates 0.8 -> 1.0 -> 1.2 -> 1.6 -> 0.6 -> 0.8, with labels 1x -> 1.25x -> 1.5x -> 2x -> 0.75x -> 1x', () => {
+    render(<PlayerControls />);
+    const button = screen.getByRole('button', { name: /Playback speed/ });
+
+    const expected: { rate: number; label: string }[] = [
+      { rate: 1.0, label: '1.25' },
+      { rate: 1.2, label: '1.5' },
+      { rate: 1.6, label: '2' },
+      { rate: 0.6, label: '0.75' },
+      { rate: 0.8, label: '1' }, // wraps back to the default
+    ];
+
+    for (const step of expected) {
+      fireEvent.click(button);
+      expect(usePlayerStore.getState().playbackRate).toBeCloseTo(step.rate, 10);
+      expect(screen.getByRole('button', { name: `Playback speed ${step.label}×` })).not.toBeNull();
+    }
+  });
+});

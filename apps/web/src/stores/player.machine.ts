@@ -7,6 +7,17 @@ import { binarySearchTimestamps } from '@/lib/binarySearch';
 const SAVE_THROTTLE_MS = 2000;
 const MAX_STORED_AGE_MS = 24 * 60 * 60 * 1000;
 
+// Product decision (2026-09-28): the tutor's narration at a real rate of 1.0
+// reads as too fast. The default REAL playback rate is 0.8, but the speed
+// control (PlayerControls.tsx) still labels this default "1x" -- so a
+// returning student sees the same familiar default label, not an unexplained
+// "0.8x". All of PlayerControls' other speed options are scaled by this same
+// factor too (see its own SPEED_OPTIONS), so the relative step between
+// buttons is unchanged from before -- only the whole scale shifted down.
+// Exported so PlayerControls' options table is derived from the same single
+// source rather than a second hardcoded 0.8.
+export const DEFAULT_PLAYBACK_RATE = 0.8;
+
 // Last actual localStorage write, per loaded lesson — reset in loadLesson() so
 // a stale timestamp from a previous, unrelated lesson session can never
 // suppress the very first save of a new one.
@@ -64,7 +75,7 @@ export interface PlayerStore {
   audioDurationMs: number;
   /** Non-null while a seek is pending; AudioTimeline applies it then clears it. */
   seekRequestMs: number | null;
-  /** Playback rate multiplier; default 1.0. */
+  /** Playback rate multiplier; default DEFAULT_PLAYBACK_RATE (0.8). */
   playbackRate: number;
   tutorState: TutorState;
   /** Most recent tutor_intervene payload; null when no intervention is active.
@@ -184,7 +195,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   audioPositionMs: 0,
   audioDurationMs: 0,
   seekRequestMs: null,
-  playbackRate: 1.0,
+  playbackRate: DEFAULT_PLAYBACK_RATE,
   tutorState: 'IDLE',
   activeIntervention: null,
   cesScore: null,
@@ -216,7 +227,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
       audioPositionMs: 0,
       audioDurationMs: 0,
       seekRequestMs: null,
-      playbackRate: 1.0,
+      playbackRate: DEFAULT_PLAYBACK_RATE,
       tutorState: 'IDLE',
       activeIntervention: null,
       cesScore: null,
