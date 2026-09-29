@@ -1,4 +1,4 @@
----
+﻿---
 id: "232"
 title: "TTS: add 60db.ai as new primary tier (60db → Sarvam → Azure → Browser)"
 status: "in-progress"
@@ -62,7 +62,7 @@ by input.
    `ELEVENLABS_*` entry.
 6. New cost-tracking placeholder: 60db publishes no per-character price (only a
    wallet-credit model) — `COST_PER_CHAR` uses Sarvam's rate ($0.00002/char) as
-   a conservative, explicitly-unconfirmed placeholder, registered as **D168**
+   a conservative, explicitly-unconfirmed placeholder, registered as **D201**
    (`docs/DEFECT-REGISTER.md`) per CLAUDE.md binding rule 5 (a documented
    limitation must carry a register ID).
 
@@ -141,7 +141,7 @@ today whenever it isn't (no key configured, API failure, or empty response).
   "deprecated, replaced by Sarvam" note — the var itself still exists in
   `config.py` as an inert optional field, only the `.env.example` line is
   stale/misleading and is what this AC fixes).
-- [x] **AC 10.** `docs/DEFECT-REGISTER.md` gains a **D168** entry for the
+- [x] **AC 10.** `docs/DEFECT-REGISTER.md` gains a **D201** entry for the
   unconfirmed 60db per-character cost rate (placeholder = Sarvam's rate).
 
 ### Tests
@@ -188,7 +188,7 @@ today whenever it isn't (no key configured, API failure, or empty response).
    as Sarvam's 500-char handling. (b) The $3.00/lesson cost ceiling — 60db's
    real per-character price is **not published** (wallet-credit billing only);
    this story uses Sarvam's rate as an explicit, documented, unconfirmed
-   placeholder (D168) rather than guessing a number with no traceable
+   placeholder (D201) rather than guessing a number with no traceable
    justification or silently treating 60db calls as free.
 3. **Scope of every limit.** Per-request (60db's char cap) and per-lesson (cost
    ceiling) — both unchanged in scope from the existing Sarvam/Azure tiers;
@@ -235,7 +235,7 @@ quiet-wrongness failure mode this codebase has already been burned by once
 - [x] 4.1 `_synthesize_with_fallback()` reorder (AC 7).
 - [x] 4.2 `AudioProvider` enum, 3 files (AC 8) — flag 4-dev review requirement.
 - [x] 4.3 `.env.example` fix (AC 9).
-- [x] 4.4 `docs/DEFECT-REGISTER.md` D168 entry (AC 10).
+- [x] 4.4 `docs/DEFECT-REGISTER.md` D201 entry (AC 10).
 
 ### Task 5 — GREEN: tests green, full regression
 - [x] 5.1 Confirm Task 2's tests pass (AC 11, 12).
@@ -284,7 +284,7 @@ Added `"sixtydb"` to the frozen `AudioProvider` enum in `schemas/lesson.py`,
 `packages/shared/types/lesson.ts`, `packages/shared/lesson_package.schema.json`
 — flagged for the required 4-developer review. Fixed `.env.example`'s
 pre-existing gap (missing Sarvam/Azure vars, stale ElevenLabs entry) in the
-same change. Registered **D168** for the unconfirmed 60db cost-per-char
+same change. Registered **D201** for the unconfirmed 60db cost-per-char
 placeholder.
 
 Full gating-scope regression (`tests/unit tests/integration -m "not postgres"`):
@@ -368,7 +368,7 @@ two different layers each, which is why they're rated HIGH.
    `guard_breaker` still records exactly one outcome per `synthesize()` call
    (Story 2-32 AC-3 preserved — nested retry does not change this). New test:
    `test_sixtydb_retry_on_second_chunk_does_not_resend_first_chunk`. Also
-   registered **D169**: the identical structural bug is pre-existing (not
+   registered **D202**: the identical structural bug is pre-existing (not
    introduced by this story) in `sarvam.py`, discovered as a byproduct of
    this review — out of this story's scope to fix (Sarvam's file is
    deliberately untouched), so registered for a future story instead of
@@ -406,8 +406,8 @@ two different layers each, which is why they're rated HIGH.
    the pre-existing `max_narration_chars_per_lesson` cap's 80%-of-ceiling
    headroom arithmetic (D78) was derived against Sarvam's real rate and never
    re-derived now that 60db (unconfirmed, different billing model) is the
-   first tier tried. Same root cause as D168, not a separate code change —
-   **D168's register entry was expanded** to name this explicitly and its
+   first tier tried. Same root cause as D201, not a separate code change —
+   **D201's register entry was expanded** to name this explicitly and its
    trigger now also covers re-deriving the 120,000-char cap once 60db's real
    rate is confirmed.
 8. **PLAUSIBLE, LOW, considered and reverted (Blind Hunter)** — flagged
@@ -459,7 +459,7 @@ flagged), Defect Register format, and the guard-test survey all independently
 re-verified against the real code/commits, not the story's prose.
 
 **AC Completeness: 11 COVERED, 3 PARTIAL, 0 MISSING.** AC 8 (frozen enum),
-AC 9 (`.env.example` contents), and AC 10 (D168 register entry) each have a
+AC 9 (`.env.example` contents), and AC 10 (D201 register entry) each have a
 real underlying artifact but no *explicit test assertion* — reasonable for
 AC 10 (a prose registry entry), but AC 8 and AC 9 were closeable with a
 trivial test. **Fixed:** added
@@ -502,15 +502,15 @@ from `config.py`'s real defaults, unrelated to anything this story touches.
 Not caught by CI because this test file lives in the advisory bucket
 (`continue-on-error: true`), exactly the trap CLAUDE.md warns about ("a green
 checkmark does NOT mean the advisory bucket is clean"). Registered as
-**D170**, per CLAUDE.md's own rule for a pre-existing-on-main failure ("note
+**D203**, per CLAUDE.md's own rule for a pre-existing-on-main failure ("note
 it... If yes [pre-existing], note it in the PR description") — not fixed
 here, since it's a CES calibration question with no relationship to TTS.
 
 Re-verification after Round 3 fixes: `test_lesson_schema.py` (35 tests, 1
 new), `test_tts_providers_sixtydb.py` (15 tests, assertions strengthened),
 `test_tts_node.py` (assertions strengthened), `test_env_example_consistency.py`
-(1 new test; the pre-existing D170 failure remains, correctly, since it's out
-of scope) — all pass except the pre-existing D170 case. `mypy app`
+(1 new test; the pre-existing D203 failure remains, correctly, since it's out
+of scope) — all pass except the pre-existing D203 case. `mypy app`
 (repo-wide, corrected scope): **4** pre-existing errors, zero new. Full
 gating-scope regression re-run — see Change Log.
 
@@ -561,11 +561,11 @@ amount of code review satisfies, and this PR itself says so.
    explicitly closed using "matches existing pattern in Sarvam" — the exact
    justification binding rule 6 names and forbids. Both are real: this
    story applied CLAUDE.md's rules inconsistently even while applying them
-   correctly elsewhere (D168-D170). **Fix:** registered **D173** (chunker
-   duplication) and **D174** (unbounded chunk count / no per-segment time
+   correctly elsewhere (D201-D203). **Fix:** registered **D204** (chunker
+   duplication) and **D205** (unbounded chunk count / no per-segment time
    budget, cross-referencing Sarvam's identical, worse, previously-unregistered
-   gap), and added inline `D173`/`D174` comment references at both code
-   sites, matching how D168 is already referenced in `COST_PER_CHAR`'s
+   gap), and added inline `D204`/`D205` comment references at both code
+   sites, matching how D201 is already referenced in `COST_PER_CHAR`'s
    comment.
 
 **Findings assessed and not acted on:** the reviewer's core organizational
@@ -595,7 +595,7 @@ notes. `apps/api/app/modules/content/pipeline/graph.py` auto-merged cleanly
 registered **D171**/**D172** for unrelated findings, colliding with this
 story's own D171/D172 (Round 2/3). Per the register's own established
 collision convention (the later-merging entries are renumbered), this
-story's two entries were renumbered to **D173**/**D174** everywhere — the
+story's two entries were renumbered to **D204**/**D205** everywhere — the
 register, this story file, and the two inline code comments in `sixtydb.py`.
 **Also found as a merge-quality issue (not a conflict, but silently wrong):**
 this story's own new tests still used the pre-236-rename `narration_scripts`
@@ -633,7 +633,7 @@ all confirmed real:**
    the successful chunks was never recorded anywhere — `_synthesize_with_fallback`
    falls through to Sarvam, whose cost is the only one ever accumulated
    against the $3.00/lesson ceiling. The opposite-direction gap from
-   D168/D169's double-billing concern (that one over-counts on retry; this
+   D201/D202's double-billing concern (that one over-counts on retry; this
    one under-counts on permanent failure). **Fix:** new
    `SixtyDbPartialSpendError(RuntimeError)` carrying `partial_cost_usd`,
    raised by `_synthesize_inner` when `chars_completed > 0` at the point of
@@ -689,12 +689,12 @@ after the merge: **1557 passed, 6 skipped, 86 deselected, zero failures**
 - `packages/shared/lesson_package.schema.json` — MODIFIED: same enum.
 - `.env.example` — MODIFIED: added Sarvam/Azure/60db vars, removed stale
   ElevenLabs entry.
-- `docs/DEFECT-REGISTER.md` — MODIFIED: **D168** entry (expanded in Round 2),
-  new **D169** (Sarvam's pre-existing analogous retry/cost bug), new **D170**
+- `docs/DEFECT-REGISTER.md` — MODIFIED: **D201** entry (expanded in Round 2),
+  new **D202** (Sarvam's pre-existing analogous retry/cost bug), new **D203**
   (pre-existing `.env.example`/`config.py` CES weight drift on `main`, found
-  as a Round 3 byproduct), new **D173** (unregistered chunker-duplication
-  finding), new **D174** (unregistered unbounded-chunk-count finding, closed
-  with a CLAUDE.md-forbidden justification) — both D173/D174 from Round 4.
+  as a Round 3 byproduct), new **D204** (unregistered chunker-duplication
+  finding), new **D205** (unregistered unbounded-chunk-count finding, closed
+  with a CLAUDE.md-forbidden justification) — both D204/D205 from Round 4.
 - `apps/api/tests/unit/test_lesson_schema.py` — MODIFIED: new
   `test_narration_audio_provider_accepts_sixtydb` (AC 8).
 - `apps/api/tests/test_env_example_consistency.py` — MODIFIED: new
@@ -715,7 +715,7 @@ per-piece PCM alignment check in `_post_chunk`), `graph.py` (narrowed
 except clause, partial-spend handling, 2 stale-docstring fixes),
 `config.py` (2 stale fallback-chain comments fixed), `test_tts_node.py`
 (+2 tests), `test_tts_providers_sixtydb.py` (+2 tests), `docs/DEFECT-REGISTER.md`
-(D171/D172 → D173/D174 renumbering, no new entries this round).
+(D171/D172 → D204/D205 renumbering, no new entries this round).
 
 ### Change Log
 - 2026-09-21: Story file created (story-first commit), branch
@@ -734,7 +734,7 @@ except clause, partial-spend handling, 2 stale-docstring fixes),
   findings triaged from the 4 layers that did run, 6 fixed (including a
   HIGH-severity cost-integrity bug confirmed independently by two layers), 1
   strengthened via the defect register, 2 considered and correctly left
-  as-is (see Review Round 2 above). New **D169** registered for an identical
+  as-is (see Review Round 2 above). New **D202** registered for an identical
   pre-existing bug discovered in Sarvam's own provider file, out of this
   story's scope to fix. Full gating-scope regression re-run after fixes:
   **1520 passed, 6 skipped, 86 deselected, zero failures**; `ruff
@@ -760,7 +760,7 @@ except clause, partial-spend handling, 2 stale-docstring fixes),
   fixed:** adding this round's tests to two shared pre-existing test files
   surfaced that `.env.example`'s `CES_WEIGHT_*` values already drift from
   `config.py`'s real defaults **on `main`**, unrelated to this story —
-  registered as **D170** per CLAUDE.md's rule for pre-existing-on-main
+  registered as **D203** per CLAUDE.md's rule for pre-existing-on-main
   failures. Full gating-scope regression re-run: **1521 passed, 6 skipped,
   86 deselected, zero failures** (up 1 from Round 2's 1520 — the new
   `test_narration_audio_provider_accepts_sixtydb`); repo-wide `mypy app`
@@ -775,14 +775,14 @@ except clause, partial-spend handling, 2 stale-docstring fixes),
   the expected "not configured" case), a stale fixture docstring, and 2
   review findings closed without the `D-nn` register ID CLAUDE.md's own
   binding rules 5/6 require (one of them closed using the exact
-  justification rule 6 explicitly forbids). All 3 fixed; **D173**/**D174**
+  justification rule 6 explicitly forbids). All 3 fixed; **D204**/**D205**
   registered. The reviewer's core point — 3 rounds of self-review by the
   same author is not a substitute for the mandated 4-developer sign-off —
   stands and is unchanged: still the one blocker only your team can clear.
   Full gating-scope regression re-run: **1522 passed, 0 failures.**
 - 2026-09-22: Merged `origin/main` (PR #238 landed) — one real conflict
   (`docs/dev1-tracker.md`, resolved), one real D-number collision found and
-  fixed (**D171/D172 renumbered to D173/D174** — PR #238's own Story S5-3
+  fixed (**D171/D172 renumbered to D204/D205** — PR #238's own Story S5-3
   independently claimed D171/D172 first), and one merge-quality bug found
   and fixed (this story's tests silently stopped overriding narration
   scripts correctly after story 236's key rename — no conflict marker, just
@@ -790,7 +790,7 @@ except clause, partial-spend handling, 2 stale-docstring fixes),
   (Developer-2-max) then left 5 findings on the PR — all 5 confirmed real,
   4 fixed (a `except ValueError` too-broad bug that could mislabel genuine
   response corruption as "not configured"; a partial-spend-never-recorded
-  cost-integrity gap, the mirror image of D168/D169's over-counting concern;
+  cost-integrity gap, the mirror image of D201/D202's over-counting concern;
   a frame-alignment check that could be defeated by two corrupted pieces
   cancelling out; two stale docstrings/comments), 1 acknowledged and not
   changed (branch naming — matches issue #236's own precedent, reasoned in

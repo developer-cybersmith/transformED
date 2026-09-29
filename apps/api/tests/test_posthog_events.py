@@ -241,7 +241,7 @@ def _build_teachback_supabase() -> MagicMock:
 
 
 def _build_onboarding_supabase() -> MagicMock:
-    """3-call mock: learner_dna SELECT → onboarding_answers_v2 UPSERT (D173: was
+    """3-call mock: learner_dna SELECT → onboarding_answers_v2 UPSERT (D204: was
     INSERT) → learner_dna UPSERT. D137 added _fetch_existing_dna() as first call
     in process_onboarding().
     """

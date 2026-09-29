@@ -639,7 +639,7 @@ async def test_segment_order_follows_input_not_llm_response_order() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_segment_summaries_out_of_order_fan_in_is_resorted_by_true_section_index() -> None:
-    """D168 (review finding, PR #237): segment_summaries is Annotated[list,
+    """D201 (review finding, PR #237): segment_summaries is Annotated[list,
     operator.add] — a Send()-fan-in channel with NO cross-call ordering
     guarantee, the same class of channel narration_scripts already needs
     _segment_order_key to re-sort (see test_narration_cap_reorders_out_of_
@@ -704,7 +704,7 @@ async def test_segment_summaries_out_of_order_fan_in_is_resorted_by_true_section
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_out_of_order_fan_in_is_resorted_before_the_batch_split_not_after() -> None:
-    """D168 Round 2 correction (review finding, PR #237, CONFIRMED): Round 1
+    """D201 Round 2 correction (review finding, PR #237, CONFIRMED): Round 1
     of this fix sorted segment_summaries too late — right before segments_out's
     final assembly, AFTER the batch-size split had already partitioned the
     RAW, unsorted arrival order. For a chapter over lesson_planner_batch_size,

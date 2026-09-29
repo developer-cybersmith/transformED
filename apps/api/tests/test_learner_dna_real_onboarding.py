@@ -80,7 +80,7 @@ def _build_supabase_process_onboarding(
 ) -> MagicMock:
     """Supabase mock for process_onboarding — 3-call order:
     1. learner_dna (select — _fetch_existing_dna)
-    2. onboarding_answers_v2 (upsert — D173: was insert, dead-ended reassessment resubmits)
+    2. onboarding_answers_v2 (upsert — D204: was insert, dead-ended reassessment resubmits)
     3. learner_dna (upsert)
     """
     mock = MagicMock()
