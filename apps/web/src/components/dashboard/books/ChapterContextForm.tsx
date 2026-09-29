@@ -115,8 +115,8 @@ const EMPTY_FORM: FormState = {
 interface ChapterContextFormProps {
     bookId: string;
     chapterId: string;
-    /** Called when the student clicks "Generate Now" — after saving context. */
-    onGenerate: () => void;
+    /** Called when the student clicks "Generate Now" — after saving context. force is always true. */
+    onGenerate: (force: boolean) => void;
     /** Called when the student clicks "Skip" — no save, just generate. */
     onSkip: () => void;
 }
@@ -192,7 +192,7 @@ export function ChapterContextForm({
             console.warn("[ChapterContextForm] putChapterContext failed — continuing with generate");
         }
         setSaving(false);
-        onGenerate();
+        onGenerate(true);
     }
 
     if (loading) {

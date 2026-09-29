@@ -182,6 +182,8 @@ export function isNotFoundError(error: unknown): boolean {
  */
 export interface GenerateLessonRequest {
     tier: LessonTier;
+    /** When true, bypasses the backend's Gate 5 idempotency check (D187). */
+    force?: boolean;
 }
 
 export interface LessonGenerationResponse {
@@ -410,9 +412,10 @@ export const booksService = {
     generateLesson: async (
         bookId: string,
         chapterId: string,
-        tier: LessonTier
+        tier: LessonTier,
+        force?: boolean
     ): Promise<GenerateLessonResult> => {
-        const body: GenerateLessonRequest = { tier };
+        const body: GenerateLessonRequest = { tier, ...(force ? { force } : {}) };
         const response = await api.post<LessonGenerationResponse>(
             `content/books/${bookId}/chapters/${chapterId}/lessons`,
             body
