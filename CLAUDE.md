@@ -160,17 +160,14 @@ Intervention messages are PRE-GENERATED at lesson build time (node 7). No GPT ca
 
 ## CES Formula (§11 — weights are env vars, tunable post-calibration)
 
-Calibrated defaults (post-Sprint 1 tuning, 2026-09-28). PRD §11 documented 0.35/0.20/0.12/0.08 —
-those were the pre-calibration placeholders; config.py and .env.example are authoritative.
-
 ```
-CES = quiz_accuracy×0.40 + teachback_score×0.25 + behavioral×0.15 + head_pose×0.13 + blink×0.07
+CES = quiz_accuracy×0.35 + teachback_score×0.25 + behavioral×0.20 + head_pose×0.12 + blink×0.08
 ```
 Trigger: CES < 50 for 2 consecutive 5s windows → intervention.
 
 When `teachback_score` is `None` (teach-back skipped — never gated, always allow Skip):
 ```
-CES = quiz_accuracy×0.533 + behavioral×0.200 + head_pose×0.173 + blink×0.093
+CES = quiz_accuracy×0.467 + behavioral×0.267 + head_pose×0.160 + blink×0.107
 ```
 (Redistribute 0.25 weight proportionally across remaining 4 signals: each new weight = original ÷ 0.75)
 
