@@ -74,6 +74,19 @@ describe('AudioTimeline — play/pause follows status', () => {
   });
 });
 
+describe('AudioTimeline — playback rate sync (default-playback-speed-0.8x)', () => {
+  it('AC4: the real <audio> element playbackRate defaults to 0.8, not 1.0', () => {
+    // beforeEach's loadLesson(mockLessonPackage) already resets playbackRate
+    // to DEFAULT_PLAYBACK_RATE -- no explicit playbackRate set here.
+    expect(usePlayerStore.getState().playbackRate).toBe(0.8);
+
+    const { container } = render(<AudioTimeline />);
+    const audio = container.querySelector('audio')!;
+
+    expect(audio.playbackRate).toBe(0.8);
+  });
+});
+
 describe('AudioTimeline — slide-transition pause auto-resume timer (Story 2-57 / BR-5)', () => {
   it('AC2: auto-resumes exactly DEFAULT_SLIDE_TRANSITION_PAUSE_MS after a slide-transition pause', () => {
     vi.useFakeTimers();
@@ -271,6 +284,10 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
         currentSegmentIndex: 0,
         quizFiredForSegment: new Set(),
         skipTransitionPauseForSegment: true,
+        // Pinned explicitly (default-playback-speed-0.8x review finding):
+        // this test's wall-clock-to-virtual-position arithmetic below assumes
+        // a 1:1 real-time rate; loadLesson()'s own default is no longer 1.0.
+        playbackRate: 1.0,
       });
 
       render(<AudioTimeline />);
@@ -420,6 +437,10 @@ describe('AudioTimeline — virtual playback clock (S2-33): no audio, but a reco
         currentSegmentIndex: 0,
         quizFiredForSegment: new Set(),
         skipTransitionPauseForSegment: true,
+        // Pinned explicitly (default-playback-speed-0.8x review finding):
+        // this test's wall-clock-to-virtual-position arithmetic below assumes
+        // a 1:1 real-time rate; loadLesson()'s own default is no longer 1.0.
+        playbackRate: 1.0,
       });
 
       render(<AudioTimeline />);
@@ -1297,6 +1318,20 @@ describe('AudioTimeline — SpeechSynthesis fallback (S2-34)', () => {
 
     const instance = utteranceCtor.mock.instances[0] as { rate: number };
     expect(instance.rate).toBe(1.5);
+  });
+
+  it('AC5 (default-playback-speed-0.8x): utterance.rate is 0.8 under the default playbackRate, not 1.0', () => {
+    installSpeechSynthesis();
+    const lesson = scriptOnlyLesson();
+    usePlayerStore.getState().loadLesson(lesson); // resets playbackRate to the default (0.8)
+    usePlayerStore.setState({ status: 'PLAYING', currentSegmentIndex: 0, quizFiredForSegment: new Set() });
+
+    render(<AudioTimeline />);
+    flushSpeakTimeout();
+
+    expect(usePlayerStore.getState().playbackRate).toBe(0.8);
+    const instance = utteranceCtor.mock.instances[0] as { rate: number };
+    expect(instance.rate).toBe(0.8);
   });
 
   it('attaches an onerror handler so an engine failure never throws or surfaces (review fix)', () => {
