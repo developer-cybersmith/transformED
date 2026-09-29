@@ -52,7 +52,7 @@ def _build_supabase(*, tb_rows: list, quiz_rows: list | None = None) -> MagicMoc
             _qlim = m.select.return_value.eq.return_value.limit.return_value
             _qlim.execute.return_value.data = quiz_rows
         elif n == 4:
-            # teachback_attempts: .select(...).eq(...).order(...).limit(200).execute()
+            # teachback_attempts: .select(...).eq(...).order(...).limit(50).execute()
             _tord = m.select.return_value.eq.return_value.order.return_value
             _tord.limit.return_value.execute.return_value.data = tb_rows
         elif n == 5:
@@ -206,7 +206,7 @@ def test_teachback_query_uses_order_and_limit_50():
 
     src = inspect.getsource(svc.get_session_report)
     assert '.order("created_at")' in src or ".order('created_at')" in src
-    assert ".limit(200)" in src
+    assert ".limit(50)" in src
 
 
 # ── AC-7: aggregate teachback_score unchanged ─────────────────────────────────

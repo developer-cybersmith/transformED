@@ -166,15 +166,14 @@ def _build_supabase_tb(
     lesson_data=None,
     attempt_count: int = 0,
     insert_error=None,
-    is_skip: bool = False,
 ) -> MagicMock:
     """Build a mock Supabase client for the grade_teachback call sequence.
 
-    Call order inside grade_teachback after the R2 fix (count before lesson load):
-      1. sessions           - session ownership check
-      2. teachback_attempts - count existing attempts (R2: moved before lesson load)
-      3. lessons            - load lesson JSONB (skipped for is_skip=True)
-      4. teachback_attempts - insert new row
+    Call order inside grade_teachback:
+      1. supabase.table("sessions")      â€” session ownership check
+      2. supabase.table("lessons")       â€” load lesson JSONB
+      3. supabase.table("teachback_attempts") â€” count existing attempts
+      4. supabase.table("teachback_attempts") â€” insert new row
     """
     if session_data is None and lesson_data is None:
         session_data = _SESSION_ROW
@@ -199,12 +198,7 @@ def _build_supabase_tb(
     insert_mock.insert.return_value.execute.return_value.data = []
     insert_mock.insert.return_value.execute.return_value.error = insert_error  # None = success
 
-    if is_skip:
-        # Skip path: sessions -> count -> insert (no lesson load)
-        mock.table.side_effect = [session_mock, count_mock, insert_mock]
-    else:
-        # Normal path: sessions -> count -> lessons -> insert
-        mock.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    mock.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
     return mock
 
 
@@ -632,7 +626,7 @@ async def test_response_text_written_to_db(mock_to_thread, mock_score_teachback)
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    supabase.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
 
     await grade_teachback(
         session_id="sess-001",
@@ -670,7 +664,7 @@ async def test_score_written_to_db(mock_to_thread, mock_score_teachback) -> None
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    supabase.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
 
     await grade_teachback(
         session_id="sess-001",
@@ -707,7 +701,7 @@ async def test_concepts_written_to_db(mock_to_thread, mock_score_teachback) -> N
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    supabase.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
 
     await grade_teachback(
         session_id="sess-001",
@@ -750,7 +744,7 @@ async def test_attempt_number_increments(mock_to_thread, mock_score_teachback) -
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    supabase.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
 
     await grade_teachback(
         session_id="sess-001",
@@ -969,10 +963,9 @@ def test_response_text_single_char_accepted(monkeypatch) -> None:
 
 
 @pytest.mark.unit
-async def test_score_teachback_exception_returns_fallback(mock_to_thread) -> None:
-    """AC 2: score_teachback raises RuntimeError → grade_teachback returns
-    fallback TeachbackResult (score_source=’fallback’), not HTTP 502.
-    """
+async def test_score_teachback_exception_returns_502(mock_to_thread) -> None:
+    """AC 2: score_teachback raises RuntimeError â†’ grade_teachback raises HTTP 502."""
+    from fastapi import HTTPException
 
     async def _raise_error(**kwargs):
         raise RuntimeError("OpenAI connection refused")
@@ -981,27 +974,27 @@ async def test_score_teachback_exception_returns_fallback(mock_to_thread) -> Non
 
     with _patch("app.modules.assessment.service.score_teachback", _raise_error):
         supabase = _default_supabase_tb()
-        result = await grade_teachback(
-            session_id="sess-001",
-            lesson_id="lesson-001",
-            segment_id="seg-001",
-            response_text="My explanation.",
-            user_id="user-001",
-            supabase=supabase,
-        )
-    from app.modules.assessment.schemas import TeachbackResult
-
-    assert isinstance(result, TeachbackResult), "Expected TeachbackResult, not exception"
-    assert result.score_source == "fallback"
-    assert result.overall_score == 0.0
-    assert "unavailable" in result.feedback.lower()
+        with pytest.raises(HTTPException) as exc_info:
+            await grade_teachback(
+                session_id="sess-001",
+                lesson_id="lesson-001",
+                segment_id="seg-001",
+                response_text="My explanation.",
+                user_id="user-001",
+                supabase=supabase,
+            )
+    assert exc_info.value.status_code == 502, (
+        f"Expected 502 when score_teachback raises, got {exc_info.value.status_code}"
+    )
+    assert "unavailable" in exc_info.value.detail.lower(), (
+        f"Expected unavailable in detail for exception, got: {exc_info.value.detail!r}"
+    )
 
 
 @pytest.mark.unit
-async def test_score_teachback_returns_none_gives_fallback(mock_to_thread) -> None:
-    """AC 3: score_teachback returns None → grade_teachback returns
-    fallback TeachbackResult (score_source=’fallback’), not HTTP 502.
-    """
+async def test_score_teachback_returns_none_gives_502(mock_to_thread) -> None:
+    """AC 3: score_teachback returns None â†’ grade_teachback raises HTTP 502."""
+    from fastapi import HTTPException
 
     async def _return_none(**kwargs):
         return None
@@ -1010,59 +1003,21 @@ async def test_score_teachback_returns_none_gives_fallback(mock_to_thread) -> No
 
     with _patch("app.modules.assessment.service.score_teachback", _return_none):
         supabase = _default_supabase_tb()
-        result = await grade_teachback(
-            session_id="sess-001",
-            lesson_id="lesson-001",
-            segment_id="seg-001",
-            response_text="My explanation.",
-            user_id="user-001",
-            supabase=supabase,
-        )
-    from app.modules.assessment.schemas import TeachbackResult
-
-    assert isinstance(result, TeachbackResult), "Expected TeachbackResult, not exception"
-    assert result.score_source == "fallback"
-    assert result.overall_score == 0.0
-    assert "unavailable" in result.feedback.lower()
-
-
-@pytest.mark.unit
-async def test_grade_teachback_skip_records_to_db(mock_to_thread) -> None:
-    """AC 6 (F2-2): is_skip=True must persist a 'skipped' row and return score_source='skipped'."""
-    session_mock = MagicMock()
-    session_ex = session_mock.select.return_value.eq.return_value.maybe_single.return_value.execute
-    session_ex.return_value.data = _SESSION_ROW
-
-    count_mock = MagicMock()
-    count_mock.select.return_value.eq.return_value.eq.return_value.execute.return_value.count = 0
-
-    insert_mock = MagicMock()
-    insert_mock.insert.return_value.execute.return_value.data = []
-    insert_mock.insert.return_value.execute.return_value.error = None
-
-    supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, count_mock, insert_mock]
-
-    result = await grade_teachback(
-        session_id="sess-001",
-        lesson_id="lesson-001",
-        segment_id="seg-001",
-        response_text="",
-        user_id="user-001",
-        supabase=supabase,
-        is_skip=True,
+        with pytest.raises(HTTPException) as exc_info:
+            await grade_teachback(
+                session_id="sess-001",
+                lesson_id="lesson-001",
+                segment_id="seg-001",
+                response_text="My explanation.",
+                user_id="user-001",
+                supabase=supabase,
+            )
+    assert exc_info.value.status_code == 502, (
+        f"Expected 502 when score_teachback returns None, got {exc_info.value.status_code}"
     )
-
-    assert isinstance(result, TeachbackResult)
-    assert result.score_source == "skipped"
-    assert result.overall_score == 0.0
-    assert insert_mock.insert.call_count == 1, (
-        "skip path must persist one row to teachback_attempts"
+    assert "unavailable" in exc_info.value.detail.lower(), (
+        f"Expected unavailable in detail for None result, got: {exc_info.value.detail!r}"
     )
-    inserted_row = insert_mock.insert.call_args[0][0]
-    assert inserted_row["score_source"] == "skipped"
-    assert inserted_row["score"] is None
-    assert inserted_row["response_text"] == ""
 
 
 # AC 6 / AC 11: Session wrong-owner now 404 (SEC-006)
@@ -1198,7 +1153,7 @@ async def test_comprehensive_db_write_all_fields(mock_to_thread, mock_score_teac
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    supabase.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
 
     await grade_teachback(
         session_id="sess-001",
@@ -1269,7 +1224,7 @@ async def test_attempt_number_count_none_defaults_to_1(
     insert_mock = MagicMock()
     insert_mock.insert.side_effect = _capture
     supabase = MagicMock()
-    supabase.table.side_effect = [session_mock, count_mock, lesson_mock, insert_mock]
+    supabase.table.side_effect = [session_mock, lesson_mock, count_mock, insert_mock]
 
     await grade_teachback(
         session_id="sess-001",

@@ -1,4 +1,4 @@
-﻿# Story: Wire onboarding-form answers into the content-generation pipeline
+# Story: Wire onboarding-form answers into the content-generation pipeline
 
 **Requested:** 2026-09-28. Follows two Dev 1 handoff reference docs (repo root,
 untracked, not stories): `2026-09-28-handoff-onboarding-form-30q.md` (the gap
@@ -100,7 +100,7 @@ story, now given a concrete implementation): *"...user profile (onboarding)
   persists `onboarding_context_truncated` into `lesson_jobs.node_outputs`;
   `_FAN_OUT_STATE_KEYS` gains `onboarding_context`/`onboarding_context_truncated`,
   with matching `setdefault(...)` calls at both fan-out sites (Phase-1 and
-  post-planner narration) — the exact pattern D206 already established for
+  post-planner narration) — the exact pattern D192 already established for
   book/chapter's own truncated flags.
 
 ## Acceptance Criteria

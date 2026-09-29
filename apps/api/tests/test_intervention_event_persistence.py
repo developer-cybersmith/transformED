@@ -372,10 +372,49 @@ def test_intervention_triggered_in_known_event_types():
     assert isinstance(KNOWN_EVENT_TYPES, frozenset)
 
 
-# AC7 -- _get_distraction_count removed (D63/S3-53)
-# The two AC7 tests that imported _get_distraction_count were deleted here.
-# D63: function was dead code and was removed by Story S3-53. The removal is
-# guarded by test_s3_53_ces_production_closure.py::test_get_distraction_count_removed.
+# ---------------------------------------------------------------------------
+# AC7 -- Redis cache-miss triggers DB reconstruction
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_redis_miss_triggers_db_count_reconstruction():
+    """AC7: when Redis returns None, _get_distraction_count falls back to DB count query."""
+    from app.modules.assessment.service import _get_distraction_count  # noqa: PLC0415
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value=None)  # cache miss
+
+    # MOCK-CONTRACT: real count query covered by tests/integration/
+    supabase = MagicMock()
+    count_resp = MagicMock()
+    count_resp.count = 2
+    (
+        supabase.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.execute.return_value
+    ) = count_resp
+
+    with patch("asyncio.to_thread", side_effect=lambda f, *a, **kw: f()):
+        count = await _get_distraction_count("sess-ac7-miss", redis=redis, supabase=supabase)
+
+    assert count == 2
+    supabase.table.assert_called()
+
+
+@pytest.mark.unit
+async def test_redis_hit_skips_db_reconstruction():
+    """AC7: when Redis returns a value, _get_distraction_count skips the DB entirely."""
+    from app.modules.assessment.service import _get_distraction_count  # noqa: PLC0415
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(return_value="2")  # Redis hit
+
+    supabase = MagicMock()  # Must NOT be called
+
+    count = await _get_distraction_count("sess-ac7-hit", redis=redis, supabase=supabase)
+
+    assert count == 2
+    supabase.table.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # AC8 -- frustration_tolerance decrements when count = 2

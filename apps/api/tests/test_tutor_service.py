@@ -57,12 +57,11 @@ def _settings_mock(threshold: float = 0.5) -> MagicMock:
     s = MagicMock()
     s.ces_threshold = threshold
     s.ces_cadence_seconds = 5  # D4: gap tolerance = 2 * 5 = 10 s
-    # Story 5-18: use calibrated config.py defaults (not PRD §11 values)
-    s.ces_weight_quiz = 0.40
+    s.ces_weight_quiz = 0.35
     s.ces_weight_teachback = 0.25
-    s.ces_weight_behavioral = 0.15
-    s.ces_weight_head_pose = 0.13
-    s.ces_weight_blink = 0.07
+    s.ces_weight_behavioral = 0.20
+    s.ces_weight_head_pose = 0.12
+    s.ces_weight_blink = 0.08
     return s
 
 
@@ -371,13 +370,11 @@ async def test_cesresult_fields(mocker) -> None:
 
     assert isinstance(result, CesResult)
     assert result.session_id == "sess-1"
-    # Pinned to the real formula; _EXPECTED_CES ≈ 75.6 for _VALID_PAYLOAD with calibrated weights.
+    # Pinned to the real formula (0.5 stub is gone); _EXPECTED_CES ≈ 75.733 for _VALID_PAYLOAD.
     assert result.ces == _EXPECTED_CES
     # Concrete literal anchor so this is NOT circular: a compute_ces regression would move
-    # _EXPECTED_CES with the code, but not this calibrated value (Story 5-18).
-    # Derivation: quiz=0.8,behavioral=0.9,head_pose=0.7,blink=0.3,teachback=None
-    # weights sum=0.75 -> CES=(0.8*0.40+0.9*0.15+0.7*0.13+0.3*0.07)/0.75*100=75.6
-    assert result.ces == pytest.approx(75.6, abs=0.01)
+    # _EXPECTED_CES with the code, but not this hard-coded §11 value.
+    assert result.ces == pytest.approx(75.733, abs=0.01)
 
 
 # ── Intervention selection + delivery (s2-5) ──────────────────────────────────

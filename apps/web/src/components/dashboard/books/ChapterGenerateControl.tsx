@@ -84,7 +84,7 @@ export function ChapterGenerateControl({
         setPhase({ kind: "chapter-form", tier });
     }
 
-    async function handleGenerate(tier: LearnerTier, force = false) {
+    async function handleGenerate(tier: LearnerTier) {
         // The single tier mapping. There is no second copy of this anywhere.
         const backendTier = LEARNER_TIER_TO_BACKEND[tier];
         setPhase({ kind: "submitting" });
@@ -93,7 +93,6 @@ export function ChapterGenerateControl({
                 bookId,
                 chapter.chapter_id,
                 backendTier,
-                force || undefined,
             );
             setPhase({ kind: created ? "created" : "existing", lesson });
             // Revalidate on BOTH success paths: a 200 means the server already
@@ -169,7 +168,7 @@ export function ChapterGenerateControl({
                     <ChapterContextForm
                         bookId={bookId}
                         chapterId={chapter.chapter_id}
-                        onGenerate={(force) => handleGenerate(phase.tier, force)}
+                        onGenerate={() => handleGenerate(phase.tier)}
                         onSkip={() => handleGenerate(phase.tier)}
                     />
                 </div>

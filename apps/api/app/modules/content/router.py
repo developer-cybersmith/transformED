@@ -99,8 +99,8 @@ _TRUNCATION_WARN_PAGES: int = 40
 _CONCURRENCY_RETRY_AFTER_S: int = 60
 
 # Story 2-47 (S4-06): safety ceiling on ChapterResponse.lessons, NOT a derived
-# natural bound -- the realistic range is 1-3 (one per tier; Story 5-17 wires
-# `force=true` into the UI, so a student can re-generate), but D54's idempotency check only blocks a
+# natural bound -- the realistic range is 1-3 (one per tier; the UI has no path
+# to `force=true` regeneration), but D54's idempotency check only blocks a
 # retry while an existing (chapter_id, tier) lesson is generating/ready, so a
 # repeatedly-failing tier can accumulate one row per retry with no hard cap
 # found anywhere in this flow. The underlying `_CHAPTER_COLUMNS` embed itself
