@@ -244,18 +244,18 @@ describe('QuizOverlay', () => {
     expect(submitQuizMock).not.toHaveBeenCalled();
   });
 
-  it('shows the score summary feedback using the real backend field names (is_correct/explanation, not correct/message) (S2-11 review fix)', async () => {
+  it('shows the aggregate score summary (correct_count/total_count/score) using the real backend field names (S2-11 review fix)', async () => {
     render(<QuizOverlay questions={[QUESTIONS[0]]} />);
 
     await userEvent.click(screen.getByText(QUESTIONS[0].options[0]));
     await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
-    // result (and its feedback list) renders once submitQuiz resolves, on the
-    // last question's Submit -- no need to click Continue to see it.
-    await waitFor(() => expect(screen.getByText('Nice work.')).not.toBeNull());
+    // result renders once submitQuiz resolves, on the last question's Submit
+    // -- no need to click Continue to see it.
+    await waitFor(() => expect(screen.getByText('2/2 correct')).not.toBeNull());
   });
 
-  it('styles score summary feedback by is_correct -- emerald for correct, red for incorrect (review fix)', async () => {
+  it('does NOT repeat any question explanation inside the score summary (review fix -- was cluttering the modal by re-listing every question\'s already-shown explanation)', async () => {
     submitQuizMock.mockResolvedValue({
       session_id: 'sess_1', score: 50, correct_count: 1, total_count: 2, ces_contribution: 0.1,
       feedback: [
@@ -279,10 +279,12 @@ describe('QuizOverlay', () => {
     await userEvent.click(screen.getByText(QUESTIONS[1].options[0]));
     await userEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
-    await waitFor(() => {
-      expect(screen.getByText('Correct feedback.').className).toMatch(/text-emerald-700/);
-      expect(screen.getByText('Incorrect feedback.').className).toMatch(/text-red-700/);
-    });
+    // The last question's own per-question explanation IS shown (unchanged,
+    // real-time feedback) -- but the backend's per-question feedback array
+    // must not ALSO be dumped into the aggregate summary block.
+    await waitFor(() => expect(screen.getByText('1/2 correct')).not.toBeNull());
+    expect(screen.queryByText('Correct feedback.')).toBeNull();
+    expect(screen.queryByText('Incorrect feedback.')).toBeNull();
   });
 
   it('Continue exits the quiz even when the API call fails — never blocks progress', async () => {

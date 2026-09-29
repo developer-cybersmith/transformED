@@ -194,20 +194,19 @@ export function QuizOverlay({ questions }: QuizOverlayProps) {
           )}
         </div>
 
-        {/* Score summary — shown after last question API returns */}
+        {/* Score summary — shown after last question API returns. Aggregate
+            only: each question's own explanation was already shown one at a
+            time via the role="status" block above as the student answered
+            it — re-listing every explanation here again duplicated content
+            the student just read and cluttered the modal (review fix). */}
         {result && (
-          <div className="mx-6 mb-4 px-4 py-3 rounded-xl bg-neutral-50 border border-neutral-200 text-sm space-y-1">
+          <div className="mx-6 mb-4 px-4 py-3 rounded-xl bg-neutral-50 border border-neutral-200 text-sm">
             <p className="text-neutral-900 font-semibold">
               {result.correct_count}/{result.total_count} correct
               <span className="text-neutral-500 font-normal ml-2">
                 ({Math.round(result.score)}%)
               </span>
             </p>
-            {result.feedback.map((f) => (
-              <p key={f.question_id} className={f.is_correct ? 'text-emerald-700' : 'text-red-700'}>
-                {f.explanation}
-              </p>
-            ))}
           </div>
         )}
 
