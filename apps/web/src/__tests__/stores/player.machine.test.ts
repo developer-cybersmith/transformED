@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { usePlayerStore } from '@/stores/player.machine';
+import { usePlayerStore, DEFAULT_PLAYBACK_RATE } from '@/stores/player.machine';
 import type { LessonPackage } from '@hie/shared/types/lesson';
 
 // ── Fixture ─────────────────────────────────────────────────────────────────
@@ -82,6 +82,7 @@ beforeEach(() => {
     audioRetryCount: 0,
     activeIntervention: null,
     cesScore: null,
+    playbackRate: DEFAULT_PLAYBACK_RATE,
   });
   localStorage.clear();
 });
@@ -130,6 +131,13 @@ describe('loadLesson', () => {
     usePlayerStore.setState({ sessionId: 'stale-session-from-a-previous-lesson' });
     usePlayerStore.getState().loadLesson(makeLesson());
     expect(usePlayerStore.getState().sessionId).toBe('');
+  });
+
+  it('AC1 (default-playback-speed-0.8x): resets playbackRate to DEFAULT_PLAYBACK_RATE (0.8) -- the "1x" UI label maps to a real rate of 0.8, not 1.0', () => {
+    usePlayerStore.setState({ playbackRate: 2.0 });
+    usePlayerStore.getState().loadLesson(makeLesson());
+    expect(usePlayerStore.getState().playbackRate).toBe(DEFAULT_PLAYBACK_RATE);
+    expect(usePlayerStore.getState().playbackRate).toBe(0.8);
   });
 });
 
