@@ -2888,6 +2888,12 @@ _MAX_SLIDES_PER_SEGMENT = 8
 # SYNC: if this value changes, tests/evals/scoring.py's _MAX_BULLET_CHARS
 # must change with it, or the harness scores against a threshold this node
 # no longer enforces.
+#
+# Product decision (2026-09-29): this remains a MAXIMUM-only ceiling (D125's
+# "wall of text" protection, unchanged) — the prompt below no longer tells
+# the LLM to avoid a full sentence (it now requires one complete sentence
+# per bullet, roughly one-two lines), but the outer safety bound and its
+# post-generation truncation guard are deliberately untouched by that change.
 _MAX_SLIDE_BULLET_CHARS = 200
 
 # D133: the prompt line format `segment_id={id}: {title} — {summary}` teaches
@@ -3057,13 +3063,17 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         "Produce a slide deck from the lesson plan segments below. "
         "Each segment specifies its own slide-count range — respect "
         "it exactly. Each slide has a short title and a list of "
-        "bullet points. Each bullet must be a single concise point "
-        f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
-        "a full sentence or paragraph; split a longer idea into "
-        "multiple bullets instead. Return EXACTLY one slide-set per "
-        "segment provided, echoing back each segment's segment_id "
-        "UNCHANGED — do not invent, merge, split, omit, or reorder "
-        "segment_ids." + _UNTRUSTED_CONTENT_GUARD
+        "bullet points. Each bullet must be a complete, well-formed "
+        "sentence that fully explains one point in natural, spoken "
+        "language — roughly one to two lines long (about 60-160 "
+        "characters), not a short fragment, label, or keyword phrase. "
+        "Write exactly one sentence per bullet, no more than "
+        f"{_MAX_SLIDE_BULLET_CHARS} characters total — if an idea "
+        "needs more than that, split it into a second bullet instead "
+        "of writing a run-on or multi-sentence bullet. Return EXACTLY "
+        "one slide-set per segment provided, echoing back each "
+        "segment's segment_id UNCHANGED — do not invent, merge, "
+        "split, omit, or reorder segment_ids." + _UNTRUSTED_CONTENT_GUARD
     )
     _slide_system_prompt, _slide_onboarding_ctx_truncated = merge_onboarding_context(
         _slide_base_prompt, _slide_onboarding_context

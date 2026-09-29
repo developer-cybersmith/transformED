@@ -64,6 +64,28 @@ belongs to. Longer bullets (still capped at 200 chars) do not change LLM pricing
 (same call, marginally more output tokens within the existing budget) and do not introduce any new
 unbounded read/write.
 
+## Completion notes
+
+Implemented exactly as designed. Reworded `slide_generator_node`'s system prompt in
+`apps/api/app/modules/content/pipeline/graph.py` to require one complete, well-formed sentence per
+bullet (roughly one-two lines, ~60-160 characters), removing the "not a full sentence or paragraph"
+instruction entirely. `_MAX_SLIDE_BULLET_CHARS = 200` and its post-generation truncation guard are
+untouched — added a comment there clarifying it remains a maximum-only ceiling (D125).
+
+Added `test_slide_prompt_requires_complete_sentences_not_fragments` next to the existing
+`test_slide_prompt_states_the_bullet_length_limit` in `test_slide_generator_node.py`, asserting the
+old discouraging language is gone and the new complete-sentence/one-to-two-line instruction is
+present. The existing test (AC4) needed no changes — it only asserts the numeric ceiling appears in
+the prompt, which is unchanged.
+
+Verified: `test_slide_generator_node.py` 33/33, adjacent regression suite (`test_phase1_economy_nodes.py`,
+`test_package_builder_node.py`, `test_lesson_planner_node.py`, `test_node_return_shape.py`,
+`test_unbounded_queries.py`) 165/165, `ruff check`/`ruff format --check`/`mypy` all clean. Full
+backend suite: 52 pre-existing failures, confirmed unrelated (teachback-endpoint tests lost their
+fix along with the just-reverted PR #267; the rest are the same recurring environment-dependent
+failures — missing local Redis/tesseract, no OpenAI API key — seen throughout this session, none
+touching `slide_generator_node` or this diff).
+
 ## Out of scope
 
 - `CaptionOverlay`'s narration captions (bottom bar) — already sentence-based server-side, not

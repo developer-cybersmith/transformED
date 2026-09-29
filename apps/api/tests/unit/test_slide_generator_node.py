@@ -799,6 +799,35 @@ async def test_slide_prompt_states_the_bullet_length_limit() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_slide_prompt_requires_complete_sentences_not_fragments() -> None:
+    """Product decision (2026-09-29): bullets were reading as 4-5-word
+    fragments because the prompt explicitly told the LLM NOT to write a full
+    sentence. The prompt must no longer discourage complete sentences, and
+    must instead positively require one complete, well-formed sentence per
+    bullet with a one-to-two-line length target — while the D125 max-length
+    ceiling (_MAX_SLIDE_BULLET_CHARS, covered by the sibling test above)
+    stays exactly as it was."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await slide_generator_node(_base_state())
+
+    sent_system_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    assert "not a full sentence" not in sent_system_prompt
+    assert "complete" in sent_system_prompt.lower()
+    assert "sentence" in sent_system_prompt.lower()
+    assert "one to two lines" in sent_system_prompt.lower()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_malformed_lesson_plan_segment_raises_contextual_error() -> None:
     """Review finding (Blind Hunter + Edge Case Hunter + Acceptance Auditor):
     a lesson_plan segment missing segment_id/title/summary raises a
