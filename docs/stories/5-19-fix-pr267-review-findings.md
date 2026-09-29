@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 baseline_commit: "8de117d"
 ---
 
@@ -92,11 +92,11 @@ D207-D213 renaming (commit `5049c77`).
 ## Tasks
 
 - [x] Write this story file and create story-first commit
-- [ ] Fix Finding #1: implement `isDirty` / `savedContext` pattern in `ChapterContextForm.tsx`
-- [ ] Fix Finding #2: update `test_d187_force_wiring_guard.py` for `isDirty` pattern (AC2)
-- [ ] Fix Finding #3: update `test_s5_4_duration_budget.py` line 49 D206 → D213 (AC3)
-- [ ] Fix Finding #4: update `docs/stories/5-18-fix-dev3-advisory-ci-failures.md` (AC4)
-- [ ] Run guard tests and ruff — confirm all pass (AC5)
+- [x] Fix Finding #1: implement `isDirty` / `savedContext` pattern in `ChapterContextForm.tsx`
+- [x] Fix Finding #2: update `test_d187_force_wiring_guard.py` for `isDirty` pattern (AC2)
+- [x] Fix Finding #3: update `test_s5_4_duration_budget.py` line 49 D206 → D213 (AC3)
+- [x] Fix Finding #4: update `docs/stories/5-18-fix-dev3-advisory-ci-failures.md` (AC4)
+- [x] Run guard tests and ruff — confirm all pass (AC5)
 
 ## Scale & Load
 

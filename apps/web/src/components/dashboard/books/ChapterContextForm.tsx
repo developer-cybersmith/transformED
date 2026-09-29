@@ -115,7 +115,8 @@ const EMPTY_FORM: FormState = {
 interface ChapterContextFormProps {
     bookId: string;
     chapterId: string;
-    /** Called when the student clicks "Generate Now" — after saving context. force is always true. */
+    /** Called when the student clicks "Generate Now" — after saving context.
+     *  force is true only when form context changed since last fetch/generation (isDirty). */
     onGenerate: (force: boolean) => void;
     /** Called when the student clicks "Skip" — no save, just generate. */
     onSkip: () => void;
@@ -128,6 +129,11 @@ export function ChapterContextForm({
     onSkip,
 }: ChapterContextFormProps) {
     const [form, setForm] = useState<FormState>(EMPTY_FORM);
+    // savedContext tracks the last values that were fetched from the server (or
+    // successfully PUT). null means no context has been fetched yet (new chapter
+    // or fetch failed). Used to compute isDirty so we only send force:true when
+    // context actually changed since the last generation.
+    const [savedContext, setSavedContext] = useState<FormState | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
 
@@ -151,13 +157,15 @@ export function ChapterContextForm({
                 clearTimeout(timeoutId);
                 if (cancelled) return;
                 if (row) {
-                    setForm({
+                    const fetched: FormState = {
                         depth_duration: (row.depth_duration as DepthDurationValue) ?? null,
                         learning_need: (row.learning_need as LearningNeedValue) ?? null,
                         specific_doubt: row.specific_doubt ?? "",
                         goal_and_skip: row.goal_and_skip ?? "",
                         prerequisites_done: row.prerequisites_done ?? null,
-                    });
+                    };
+                    setForm(fetched);
+                    setSavedContext(fetched);
                 }
             } catch {
                 // Abort (timeout), network failure, or parse error — all non-fatal:
@@ -178,6 +186,16 @@ export function ChapterContextForm({
 
     async function handleGenerateNow() {
         setSaving(true);
+        // isDirty: true when context changed from what the backend last saw.
+        // savedContext===null means no prior context exists (new chapter or fetch
+        // failed) — always treat as dirty so generation proceeds with force:true.
+        const isDirty =
+            savedContext === null ||
+            form.depth_duration !== savedContext.depth_duration ||
+            form.learning_need !== savedContext.learning_need ||
+            (form.specific_doubt || null) !== (savedContext.specific_doubt || null) ||
+            (form.goal_and_skip || null) !== (savedContext.goal_and_skip || null) ||
+            form.prerequisites_done !== savedContext.prerequisites_done;
         const body: ChapterContextRequest = {
             depth_duration: form.depth_duration,
             learning_need: form.learning_need,
@@ -187,12 +205,17 @@ export function ChapterContextForm({
         };
         try {
             await booksService.putChapterContext(bookId, chapterId, body);
+            // PUT succeeded — update savedContext so the next Generate Now click
+            // without further edits correctly sends force:false (no redundant regen).
+            setSavedContext({ ...form });
         } catch {
             // Save failure is non-fatal — lesson generation still proceeds.
+            // savedContext is NOT updated: the backend still has the old context,
+            // so isDirty remains correct on the next click.
             console.warn("[ChapterContextForm] putChapterContext failed — continuing with generate");
         }
         setSaving(false);
-        onGenerate(true);
+        onGenerate(isDirty);
     }
 
     if (loading) {

@@ -49,10 +49,28 @@ def test_chapter_context_form_on_generate_takes_boolean():
     )
 
 
-def test_handle_generate_now_calls_on_generate_true():
-    """AC4: handleGenerateNow must call onGenerate(true)."""
-    assert "onGenerate(true)" in _FORM, (
-        "D187: handleGenerateNow() in ChapterContextForm.tsx must call onGenerate(true)"
+def test_handle_generate_now_calls_on_generate_with_is_dirty():
+    """AC4 (updated S5-19): handleGenerateNow must call onGenerate(isDirty), not onGenerate(true).
+
+    Hardcoding true bypassed Gate 5 idempotency on every click regardless of whether
+    the student changed anything — ~$60/hr/user in redundant regeneration (Finding #1,
+    PR #267 8-layer BMAD review). The fix: compute isDirty from savedContext and pass it.
+    """
+    assert "onGenerate(isDirty)" in _FORM, (
+        "D187 (S5-19): handleGenerateNow() must call onGenerate(isDirty)"
+        " — not onGenerate(true) — to avoid forcing regeneration when context is unchanged"
+    )
+    assert "savedContext" in _FORM, (
+        "D187 (S5-19): ChapterContextForm must track savedContext state"
+        " to compute whether context changed since last generation"
+    )
+    assert "isDirty" in _FORM, (
+        "D187 (S5-19): ChapterContextForm must compute isDirty"
+        " (form differs from savedContext) before calling onGenerate"
+    )
+    assert "onGenerate(true)" not in _FORM, (
+        "D187 (S5-19): onGenerate(true) hardcoded is the cost-exposure bug — must be removed;"
+        " use onGenerate(isDirty) instead"
     )
 
 

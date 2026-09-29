@@ -26,10 +26,16 @@ Root causes fall into six clusters:
 | `test_s3_42_ces_breakdown_accuracy.py` | 1 | Hardcoded absolute Windows path `D:/intern/…/router.py`; fails on Linux CI |
 | `test_s2_48_teachback_detail.py` | 1 | Source-scan asserts `.limit(50)` but `get_session_report` was deliberately widened to `.limit(200)` after F2-2 added skip/fallback rows |
 
-**Total: 30 failures addressed in this story.** The remaining 8 advisory failures belong to Dev 4
-(`test_tutor_graph.py` 3 — fatigue guard broken; `test_lesson_ready_pubsub.py` 3 — real-Supabase
-called, Dev 4 owns pubsub per CLAUDE.md §21) and Dev 1 (`test_llm_provider_smoke.py` 2 — no API
-key on CI runner, Dev 1 owns LLM provider infra).
+**Total: 30 failures addressed in this story.** The remaining 11 advisory failures (updated from
+8 — Story 5-19 named the 2 previously unnamed pre-existing tests):
+
+| Test | Count | Owner | Root cause |
+|------|-------|-------|------------|
+| `test_tutor_graph.py` | 3 | Dev 4 | Fatigue guard broken — state machine fires INTERVENING instead of staying TEACHING |
+| `test_lesson_ready_pubsub.py` | 3 | Dev 4 | Real Supabase called on CI (connection refused) — mock not isolating DB call |
+| `test_llm_provider_smoke.py` | 2 | Dev 1 | No OpenAI API key on CI runner — smoke test hits real endpoint |
+| `test_s3_48_lua_distraction_cap.py::test_process_attention_signal_no_dispatch_when_guard_returns_false` | 1 | Dev 4 | Lua distraction cap guard test failure — pre-existing on main before this branch |
+| `test_phase1_economy_nodes.py::TestAC0GraphOrdering::test_lesson_planner_does_not_require_raw_text_or_chunks` | 1 | Dev 1 | Lesson planner graph ordering test — pre-existing on main before this branch |
 
 ---
 
