@@ -49,6 +49,23 @@ describe('ChapterRow — AC3, the Watch gate', () => {
 });
 
 /**
+ * Story: chapter-tier-regeneration. Backend already supports a lesson per
+ * tier on one chapter (no UNIQUE constraint, Gate 5 keyed on
+ * chapter+tier+user) -- but ChapterRow previously stopped mounting
+ * ChapterGenerateControl the instant any tier reached 'ready', making its
+ * already-working tier picker permanently unreachable on reload.
+ */
+describe('ChapterRow — a ready lesson does not retire the Generate control', () => {
+    it('renders a "Generate another tier" button ALONGSIDE the Watch link once a lesson is ready', () => {
+        renderRow(CHAPTER_LESSON_READY);
+
+        expect(screen.getByRole('link', { name: /watch/i })).not.toBeNull();
+        const button = screen.getByRole('button', { name: /generate another tier/i });
+        expect((button as HTMLButtonElement).disabled).toBe(false);
+    });
+});
+
+/**
  * W2 asserted these two buttons were DISABLED with a "next release" reason,
  * because nothing behind them existed (W2 AC10: never enabled-and-inert). W3 IS
  * that next release — `POST .../chapters/{id}/lessons` is now wired — so the
