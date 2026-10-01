@@ -270,6 +270,19 @@ class PipelineState(TypedDict, total=False):
     # returns this key, for the identical Send()-concurrency reason.
     onboarding_context_truncated: bool
 
+    # PR #270 review finding (AkshayDev2905, 2026-09-29): D125's per-bullet
+    # _MAX_SLIDE_BULLET_CHARS truncation guard was previously only a
+    # logger.warning nobody reads — the exact "silent truncation" pattern
+    # CLAUDE.md names, same class Story 3-39 already fixed for
+    # section_truncations. slide_generator_node runs ONCE, sequentially (not
+    # Send()-dispatched), so this is a plain last-write-wins list, same shape
+    # discipline as section_truncations but without needing its
+    # Annotated[..., operator.add] reducer — there is only ever one writer.
+    # Always written (empty list = none), never a missing key. Consumed by
+    # package_builder_node, persisted into lesson_jobs.node_outputs for
+    # admin visibility.
+    slide_bullet_truncations: list[dict[str, Any]]  # [{segment_id, slide_title, original_chars}]
+
     # Set by the Send() fan-out router for each dispatched Phase 1 node call —
     # NOT part of the accumulated/reduced state, just the single-section payload
     # for that one dispatched invocation.
@@ -2889,6 +2902,12 @@ _MAX_SLIDES_PER_SEGMENT = 8
 # SYNC: if this value changes, tests/evals/scoring.py's _MAX_BULLET_CHARS
 # must change with it, or the harness scores against a threshold this node
 # no longer enforces.
+#
+# Product decision (2026-09-29): this remains a MAXIMUM-only ceiling (D125's
+# "wall of text" protection, unchanged) — the prompt below no longer tells
+# the LLM to avoid a full sentence (it now requires one complete sentence
+# per bullet, roughly one-two lines), but the outer safety bound and its
+# post-generation truncation guard are deliberately untouched by that change.
 _MAX_SLIDE_BULLET_CHARS = 200
 
 # D133: the prompt line format `segment_id={id}: {title} — {summary}` teaches
@@ -3070,13 +3089,17 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         "Produce a slide deck from the lesson plan segments below. "
         "Each segment specifies its own slide-count range — respect "
         "it exactly. Each slide has a short title and a list of "
-        "bullet points. Each bullet must be a single concise point "
-        f"— no more than {_MAX_SLIDE_BULLET_CHARS} characters — not "
-        "a full sentence or paragraph; split a longer idea into "
-        "multiple bullets instead. Return EXACTLY one slide-set per "
-        "segment provided, echoing back each segment's segment_id "
-        "UNCHANGED — do not invent, merge, split, omit, or reorder "
-        "segment_ids." + _UNTRUSTED_CONTENT_GUARD
+        "bullet points. Each bullet must be a complete, well-formed "
+        "sentence that fully explains one point in natural, spoken "
+        "language — roughly one to two lines long (about 60-160 "
+        "characters), not a short fragment, label, or keyword phrase. "
+        "Write exactly one sentence per bullet, no more than "
+        f"{_MAX_SLIDE_BULLET_CHARS} characters total — if an idea "
+        "needs more than that, split it into a second bullet instead "
+        "of writing a run-on or multi-sentence bullet. Return EXACTLY "
+        "one slide-set per segment provided, echoing back each "
+        "segment's segment_id UNCHANGED — do not invent, merge, "
+        "split, omit, or reorder segment_ids." + _UNTRUSTED_CONTENT_GUARD
     )
     _slide_system_prompt, _slide_onboarding_ctx_truncated = merge_onboarding_context(
         _slide_base_prompt, _slide_onboarding_context
@@ -3181,6 +3204,12 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
             f"segment_id(s) in {response_ids}"
         )
 
+    # PR #270 review finding: this node's own truncation of an over-length
+    # bullet (below) previously only logged a warning — never persisted
+    # anywhere a caller/admin could see it. Mirrors section_truncations'
+    # existing {segment_id, ...} entry shape (Story 3-39).
+    bullet_truncations: list[dict[str, Any]] = []
+
     for seg in response.segments:
         # S2-LM4: validate against THIS segment's own slide_budget (falls
         # back to the fixed 1-8 band when absent), not a single global band
@@ -3251,6 +3280,13 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
                 if len(stripped) > _MAX_SLIDE_BULLET_CHARS:
                     new_bullets.append(stripped[: _MAX_SLIDE_BULLET_CHARS - 1].rstrip() + "…")
                     truncated_any = True
+                    bullet_truncations.append(
+                        {
+                            "segment_id": seg.segment_id,
+                            "slide_title": slide.title,
+                            "original_chars": len(stripped),
+                        }
+                    )
                 else:
                     new_bullets.append(stripped)
             if truncated_any:
@@ -3302,6 +3338,7 @@ async def slide_generator_node(state: PipelineState) -> PipelineState:
         "book_context_truncated": _slide_ctx_truncated,
         "chapter_context_truncated": _slide_chapter_ctx_truncated,
         "onboarding_context_truncated": _slide_onboarding_ctx_truncated,
+        "slide_bullet_truncations": bullet_truncations,
     }
 
 
@@ -7775,6 +7812,13 @@ async def package_builder_node(state: PipelineState) -> PipelineState:
                 # docs handoff (2026-09-28): same convention, onboarding_context's
                 # own 5,500-char budget.
                 "onboarding_context_truncated": state.get("onboarding_context_truncated", False),
+                # PR #270 review finding (AkshayDev2905, 2026-09-29): sibling
+                # of section_truncations above — D125's per-bullet 200-char
+                # guard was previously only a logger.warning. Always written
+                # (empty list = none), never a missing key. See D201 for the
+                # one known gap (not restored on slide_generator_node's own
+                # cache-hit path).
+                "slide_bullet_truncations": state.get("slide_bullet_truncations", []),
             },
         }
     ).eq("lesson_id", lesson_id).execute()

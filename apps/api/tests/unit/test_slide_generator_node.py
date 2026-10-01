@@ -700,6 +700,76 @@ async def test_over_length_bullet_is_truncated_not_rejected() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_truncated_bullet_is_recorded_in_slide_bullet_truncations() -> None:
+    """PR #270 review finding (AkshayDev2905): D125's truncation guard was
+    previously only a logger.warning — a silent-truncation gap CLAUDE.md
+    forbids. The node must now persist WHICH bullet(s) it truncated so an
+    admin can see it, mirroring section_truncations' existing pattern
+    (Story 3-39). This asserts the actual OUTCOME (the returned record), not
+    just the prompt text — closing the "asserts what we told the LLM, not
+    what came back" gap the same reviewer named as a non-blocking note."""
+    from app.modules.content.pipeline.graph import (
+        _MAX_SLIDE_BULLET_CHARS,
+        slide_generator_node,
+    )
+
+    long_bullet = "X" * (_MAX_SLIDE_BULLET_CHARS + 50)
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response(
+        segments=[
+            {"segment_id": "sec_0", "slides": [{"title": "Welcome", "bullets": [long_bullet]}]},
+            {"segment_id": "sec_1", "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}]},
+            {"segment_id": "sec_2", "slides": [{"title": "Example", "bullets": ["Case A"]}]},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(_base_state())
+
+    truncations = result["slide_bullet_truncations"]
+    assert len(truncations) == 1
+    entry = truncations[0]
+    assert entry["segment_id"] == "sec_0"
+    assert entry["slide_title"] == "Welcome"
+    assert entry["original_chars"] == len(long_bullet)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_no_truncation_reports_empty_slide_bullet_truncations() -> None:
+    """Always-written, never-missing-key discipline (matches
+    section_truncations) — an empty list, not an absent key, is the
+    no-truncation-occurred signal."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response(
+        segments=[
+            {
+                "segment_id": "sec_0",
+                "slides": [{"title": "Welcome", "bullets": ["A short bullet."]}],
+            },
+            {"segment_id": "sec_1", "slides": [{"title": "Mechanics", "bullets": ["Step 1"]}]},
+            {"segment_id": "sec_2", "slides": [{"title": "Example", "bullets": ["Case A"]}]},
+        ]
+    )
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        result = await slide_generator_node(_base_state())
+
+    assert result["slide_bullet_truncations"] == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_bullet_one_char_over_the_limit_is_truncated_to_exactly_the_limit() -> None:
     """D125 review finding (Dev 2, PR #151): the smallest input that should
     still trigger truncation — pins the exact edge the off-by-one bug lived
@@ -795,6 +865,35 @@ async def test_slide_prompt_states_the_bullet_length_limit() -> None:
 
     sent_system_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
     assert str(_MAX_SLIDE_BULLET_CHARS) in sent_system_prompt
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_slide_prompt_requires_complete_sentences_not_fragments() -> None:
+    """Product decision (2026-09-29): bullets were reading as 4-5-word
+    fragments because the prompt explicitly told the LLM NOT to write a full
+    sentence. The prompt must no longer discourage complete sentences, and
+    must instead positively require one complete, well-formed sentence per
+    bullet with a one-to-two-line length target — while the D125 max-length
+    ceiling (_MAX_SLIDE_BULLET_CHARS, covered by the sibling test above)
+    stays exactly as it was."""
+    from app.modules.content.pipeline.graph import slide_generator_node
+
+    mock_provider = AsyncMock()
+    mock_provider.complete_structured.return_value = _deck_response()
+    sb = _mock_supabase()
+
+    with (
+        patch("app.core.db.get_supabase", return_value=sb),
+        patch("app.providers.llm.openai.OpenAILLMProvider", return_value=mock_provider),
+    ):
+        await slide_generator_node(_base_state())
+
+    sent_system_prompt = mock_provider.complete_structured.call_args.args[0][0]["content"]
+    assert "not a full sentence" not in sent_system_prompt
+    assert "complete" in sent_system_prompt.lower()
+    assert "sentence" in sent_system_prompt.lower()
+    assert "one to two lines" in sent_system_prompt.lower()
 
 
 @pytest.mark.unit
