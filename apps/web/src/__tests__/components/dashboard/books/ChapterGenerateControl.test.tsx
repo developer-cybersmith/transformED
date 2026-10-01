@@ -27,6 +27,7 @@ import {
 import {
     BOOK_PROCESSING,
     BOOK_READY,
+    CHAPTER_LESSON_READY,
     CHAPTER_NO_LESSON,
     CHAPTER_NO_TRUNCATION,
     CHAPTER_RATE_LIMITED,
@@ -356,5 +357,56 @@ describe('ChapterGenerateControl — a failed-only chapter offers Generate (AC7)
 
         await waitFor(() => expect(screen.getByText(/we've started building/i)).not.toBeNull());
         expect(onGenerated).toHaveBeenCalledTimes(1);
+    });
+});
+
+/**
+ * Story: chapter-tier-regeneration. ChapterRow now mounts this control
+ * ALONGSIDE the Watch link once a lesson is ready, instead of replacing it --
+ * the control itself was already correct; it was just unreachable. These
+ * tests exercise it from that newly-reachable starting state.
+ */
+describe('ChapterGenerateControl — reachable again once a lesson is already ready', () => {
+    it('reads "Generate another tier", not bare "Generate", when a ready lesson already exists', () => {
+        renderRow(CHAPTER_LESSON_READY);
+
+        expect(screen.getByRole('button', { name: /generate another tier/i })).not.toBeNull();
+        expect(screen.queryByRole('button', { name: /^generate$/i })).toBeNull();
+    });
+
+    it('generating a DIFFERENT tier from a ready chapter still reaches the real 202 path', async () => {
+        // CHAPTER_LESSON_READY's latest_lesson is T3 (Refresher) — pick a
+        // different tier (Deep/T1) and prove the full flow still works
+        // end to end from this starting state, not just that the button renders.
+        const { user, onGenerated } = renderRow(CHAPTER_LESSON_READY);
+
+        await chooseTier(user, 'Deep');
+
+        await waitFor(() => expect(screen.getByText(/we've started building/i)).not.toBeNull());
+        expect(onGenerated).toHaveBeenCalledTimes(1);
+    });
+
+    it('re-picking the SAME tier that is already ready reaches the 200/already-ready path, not a duplicate', async () => {
+        server.use(
+            http.post(`${API_BASE}/content/books/:bookId/chapters/:chapterId/lessons`, () =>
+                HttpResponse.json(
+                    {
+                        lesson_id: CHAPTER_LESSON_READY.latest_lesson!.lesson_id,
+                        chapter_id: CHAPTER_LESSON_READY.chapter_id,
+                        tier: 'T3',
+                        status: 'ready',
+                        job_id: null,
+                        truncation_expected: false,
+                    },
+                    { status: 200 }
+                )
+            )
+        );
+        const { user } = renderRow(CHAPTER_LESSON_READY);
+
+        await chooseTier(user, 'Refresher');
+
+        await waitFor(() => expect(screen.getByText(/ready to watch/i)).not.toBeNull());
+        expect(screen.queryByText(/we've started building/i)).toBeNull();
     });
 });

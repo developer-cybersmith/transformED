@@ -77,6 +77,13 @@ export function ChapterGenerateControl({
     // Watch gate (`watchableLessonId`) is untouched by this story (AC7).
     const isRetry = chapter.latest_lesson?.status === "failed";
 
+    // Story: chapter-tier-regeneration. `ready` and `failed` are mutually
+    // exclusive statuses, so this never collides with isRetry above. Mounted
+    // ALONGSIDE the Watch link now (ChapterRow no longer replaces it), so the
+    // idle button must read as "generate something new," not "regenerate
+    // what's already playing."
+    const hasReadyLesson = chapter.latest_lesson?.status === "ready";
+
     // S5-3: tier selection now transitions to the chapter-form phase instead of
     // immediately calling the generation API. The actual API call lives in
     // handleGenerate so both "Generate Now" and "Skip" share the same path.
@@ -121,7 +128,13 @@ export function ChapterGenerateControl({
                         className="inline-flex items-center gap-2 rounded-full border border-neutral-200 px-4 py-2 text-sm text-neutral-700 transition-colors hover:border-[var(--accent-primary)] hover:text-[var(--accent-primary)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
                     >
                         <Sparkles className="h-4 w-4" />
-                        {phase.kind === "error" ? "Try again" : isRetry ? "Retry" : "Generate"}
+                        {phase.kind === "error"
+                            ? "Try again"
+                            : isRetry
+                              ? "Retry"
+                              : hasReadyLesson
+                                ? "Generate another tier"
+                                : "Generate"}
                     </button>
                 ) : phase.kind === "choosing" || phase.kind === "chapter-form" ? (
                     <button

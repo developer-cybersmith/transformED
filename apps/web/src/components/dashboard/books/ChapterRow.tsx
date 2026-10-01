@@ -153,15 +153,23 @@ export function ChapterRow({ chapter, bookId, onGenerated }: ChapterRowProps) {
             </div>
 
             {readyLessonId != null ? (
-                <div className="flex shrink-0 items-center gap-2">
-                    <Link
-                        href={`/lesson/${readyLessonId}`}
-                        className="inline-flex items-center gap-2 rounded-full bg-[var(--accent-primary)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-primary-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
-                    >
-                        <Play className="h-4 w-4" />
-                        Watch
-                    </Link>
-                </div>
+                <>
+                    <div className="flex shrink-0 items-center gap-2">
+                        <Link
+                            href={`/lesson/${readyLessonId}`}
+                            className="inline-flex items-center gap-2 rounded-full bg-[var(--accent-primary)] px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-[var(--accent-primary-hover)] focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent-primary)]"
+                        >
+                            <Play className="h-4 w-4" />
+                            Watch
+                        </Link>
+                    </div>
+                    {/* A ready lesson at one tier does not retire the chapter --
+                        the student can still generate it again at another depth.
+                        ChapterGenerateControl already supports this (its own
+                        "Generate at a different depth" phase); it was just never
+                        reachable again once this branch stopped mounting it. */}
+                    <ChapterGenerateControl bookId={bookId} chapter={chapter} onGenerated={onGenerated} />
+                </>
             ) : isGenerating ? (
                 <div className="flex shrink-0 items-center gap-2">
                     <span className="inline-flex items-center gap-2 rounded-full bg-neutral-100 px-4 py-2 text-sm text-neutral-500">
