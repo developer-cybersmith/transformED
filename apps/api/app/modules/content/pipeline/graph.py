@@ -7862,7 +7862,7 @@ _FAN_OUT_STATE_KEYS: tuple[str, ...] = (
     # same single fetch already done in lesson_planner_node, now also
     # reaching narration_generator_node.
     "onboarding_context",
-    # D206 (2026-09-25): narration_generator_node's own truncation-warning
+    # D192 (2026-09-25): narration_generator_node's own truncation-warning
     # suppression (`if ... and not state.get("book_context_truncated")`)
     # was dead code without these two keys -- the Send() payload built from
     # this tuple never carried them, so `state.get(...)` inside the
@@ -7987,7 +7987,7 @@ async def _fan_out_phase1_economy_nodes(state: PipelineState) -> list[Send]:
     # consistency reasoning — Phase-1 runs before lesson_planner_node's
     # fetch, kept for shape consistency, not because any Phase-1 node reads it.
     base.setdefault("onboarding_context", "")
-    # D206: same payload-shape-consistency reasoning as book_context/
+    # D192: same payload-shape-consistency reasoning as book_context/
     # chapter_context above — lesson_planner_node hasn't set either
     # *_truncated flag yet at Phase-1 dispatch time, so `if k in state` alone
     # would omit them here (test_fan_out_state_keys.py's
@@ -8143,7 +8143,7 @@ async def _fan_out_narration_after_planning(state: PipelineState) -> list[Send]:
     # docs handoff (2026-09-28): onboarding_context, same reasoning —
     # narration_generator_node actually merges this one too.
     base.setdefault("onboarding_context", "")
-    # D206: lesson_planner_node (which runs before this dispatch) normally
+    # D192: lesson_planner_node (which runs before this dispatch) normally
     # already sets both *_truncated flags in state, so these setdefaults are
     # a safety net rather than the common path -- but guaranteeing presence
     # (default False) matches book_context/chapter_context's own idiom above

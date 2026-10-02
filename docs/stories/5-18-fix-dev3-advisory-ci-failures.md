@@ -26,8 +26,8 @@ Root causes fall into six clusters:
 | `test_s3_42_ces_breakdown_accuracy.py` | 1 | Hardcoded absolute Windows path `D:/intern/…/router.py`; fails on Linux CI |
 | `test_s2_48_teachback_detail.py` | 1 | Source-scan asserts `.limit(50)` but `get_session_report` was deliberately widened to `.limit(200)` after F2-2 added skip/fallback rows |
 
-**Total: 30 failures addressed in this story.** The remaining 11 advisory failures (updated from
-8 — Story 5-19 named the 2 previously unnamed pre-existing tests):
+**Total: 30 failures addressed in this story.** The remaining 10 advisory failures (updated from
+8 — Story 5-19 named the 2 previously unnamed pre-existing tests; 8+2=10 not 11 — arithmetic corrected Story 5-20):
 
 | Test | Count | Owner | Root cause |
 |------|-------|-------|------------|
