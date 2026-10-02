@@ -77,7 +77,7 @@ def _make_supabase_mock(
     """Build a mock Supabase client for process_onboarding tests.
 
     Uses side_effect on table() to return table-specific mocks so that
-    learner_dna SELECT, onboarding_answers_v2 UPSERT (D173: was INSERT — see
+    learner_dna SELECT, onboarding_answers_v2 UPSERT (D204: was INSERT — see
     service.py Step 5), and learner_dna UPSERT can be independently configured.
     """
     mock = MagicMock()
@@ -120,7 +120,7 @@ class _FakeOnboardingAnswersTable:
     """In-memory fake that actually enforces UNIQUE(user_id, question_id) semantics,
     unlike a MagicMock configured to unconditionally succeed. Used by
     test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint
-    below to prove the D173 fix (upsert, not insert) works against real
+    below to prove the D204 fix (upsert, not insert) works against real
     conflict behavior — a plain .insert() call here on a colliding key produces
     the same "duplicate key value violates unique constraint" error Postgres
     would, so a regression back to .insert() fails this test for a real reason,
@@ -305,7 +305,7 @@ async def test_existing_row_fetch_error_falls_back_to_first_time_write(caplog: A
 @pytest.mark.asyncio
 async def test_onboarding_answers_written_on_reassessment() -> None:
     """AC9: UPSERT to onboarding_answers_v2 runs on both first-time and reassessment
-    (D173: a plain INSERT here is exactly what dead-ends a legitimate reassessment
+    (D204: a plain INSERT here is exactly what dead-ends a legitimate reassessment
     resubmission against the table's own UNIQUE(user_id, question_id) constraint —
     see test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint
     below for a test that enforces that constraint itself rather than mocking around it)."""
@@ -357,12 +357,12 @@ async def test_reassessment_badge_labels_reflect_fresh_submission_only() -> None
     )
 
 
-# ── D173 regression guard — enforces the real constraint, doesn't mock around it ──
+# ── D204 regression guard — enforces the real constraint, doesn't mock around it ──
 
 
 @pytest.mark.asyncio
 async def test_reassessment_resubmission_succeeds_against_the_actual_unique_constraint() -> None:
-    """D173: a genuine reassessment resubmission must not dead-end on
+    """D204: a genuine reassessment resubmission must not dead-end on
     onboarding_answers_v2's own UNIQUE(user_id, question_id) constraint. Every
     other test in this file mocks the table's write to unconditionally succeed,
     which would pass identically whether process_onboarding used insert or
@@ -421,7 +421,7 @@ async def test_reassessment_resubmission_succeeds_against_the_actual_unique_cons
         assert len(store) == 30
 
         # Reassessment resubmission: identical 30 (user_id, question_id) keys.
-        # Pre-D173-fix (a plain .insert()), this raises the same duplicate-key
+        # Pre-D204-fix (a plain .insert()), this raises the same duplicate-key
         # error Postgres's real UNIQUE constraint would, which process_onboarding
         # would surface as an HTTPException — the resubmission would never reach
         # this assertion. Post-fix (.upsert()), it must succeed and overwrite.
