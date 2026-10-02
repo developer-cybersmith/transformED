@@ -429,11 +429,13 @@ export const booksService = {
     putChapterContext: async (
         bookId: string,
         chapterId: string,
-        body: ChapterContextRequest
+        body: ChapterContextRequest,
+        signal?: AbortSignal
     ): Promise<ChapterContextResponse> => {
         const { data } = await api.put<ChapterContextResponse>(
             `content/books/${bookId}/chapters/${chapterId}/context`,
-            body
+            body,
+            { signal }
         );
         return data;
     },
