@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-28 (S5-18: Fix 30 Dev 3 advisory CI failures — 6 clusters across test_teachback_endpoint.py/test_intervention_event_persistence.py/test_tutor_service.py/.env.example/test_s3_42_ces_breakdown_accuracy.py/test_s2_48_teachback_detail.py — all tests pass, pushed to PR #267)
+**Last updated:** 2026-10-08 (S5-19/S5-20/S5-21: Fix PR #271 review findings — DEFECT-REGISTER ID collisions fixed, guard test 3/3, pushed to PR #271)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -22,9 +22,9 @@
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 14 | 13 | 0 | 1 |
 | Bug Resolution Sprint | Sep 2026 | 4 | 4 | 0 | 0 |
-| Sprint 5 | Sep 2026 | 1 | 1 | 0 | 0 |
+| Sprint 5 | Sep–Oct 2026 | 4 | 4 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **75** | **72** | **0** | **3** |
+| **Total** | | **78** | **75** | **0** | **3** |
 
 Update this table each time a task is checked off below.
 
@@ -1142,6 +1142,28 @@ These exist in the current `router.py` stubs and **must be corrected** before go
 ## Sprint 5 — Advisory CI Cleanup (Sep 2026)
 
 > **Goal:** Fix all Dev 3 advisory CI failures so PR #267 has a clean advisory bucket.
+
+- [x] **Story 5-19 — Fix PR #267 eight-layer BMAD review findings (ChapterContextForm, D187, graph.py, story count)** — ✓ 2026-10-08
+  - Branch: `sprint5/s5-19-fix-pr267-review-findings` | PR #271
+  - AC1 (behavioral test): ChapterContextForm isDirty=false path test added
+  - AC2 (graph.py comments): `# D206` → `# D192` restored (3 sites)
+  - AC3 (D187): Decision/Enforcement updated for `onGenerate(isDirty)` pattern
+  - AC4 (story count): "11" → "10" in story 5-18 header
+
+- [x] **Story 5-20 — Fix three PR #271 review findings (re-entrancy, unmount guard, PUT timeout)** — ✓ 2026-10-08
+  - Branch: `sprint5/s5-19-fix-pr267-review-findings` | PR #271
+  - Re-entrancy guard (`generatingRef`): double-click race prevented
+  - Unmount guard (`mountedRef`): state updates gated on mounted status
+  - PUT timeout (AbortController, 10s): prevents infinite UI hang on hung PUT
+
+- [x] **Story 5-21 — Fix DEFECT-REGISTER ID collision (PR #271 review finding)** — ✓ 2026-10-08
+  - Branch: `sprint5/s5-19-fix-pr267-review-findings` | PR #271
+  - Removed stale D200 (CaptionOverlay) / D201 (lesson_planner) rows from branch
+  - Removed wrong D214/D215 (Story 5-20's incorrect renaming artifacts)
+  - Renumbered duplicate cluster: D166→D216, D168→D217, D169→D218, D170→D219, D173→D220, D174 table→D221, D192 table→D222
+  - Added fifth-occurrence collision banner
+  - Restored D200/D201 in slide-bullets-complete-sentences.md
+  - Guard test `test_defect_register_no_duplicate_ids.py` 3/3 PASSED
 
 - [x] **Story 5-18 — Fix 30 Dev 3 advisory CI failures** — ✓ 2026-09-28
   - 6 clusters, no production code changes, test-only fixes:
