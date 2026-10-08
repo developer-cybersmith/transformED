@@ -78,7 +78,7 @@ questions, answered with real numbers instead of an assumption:
    and an estimated 3-5 bullets/slide (no hard per-slide bullet count exists), that is on the order
    of 10,000-40,000 completion tokens for bullets alone — a range that can plausibly reach a
    model's completion-token ceiling on the platform's largest targeted chapters. **Registered as
-   D214** (`docs/DEFECT-REGISTER.md`) rather than fixed here: batching segments across multiple
+   D200** (`docs/DEFECT-REGISTER.md`) rather than fixed here: batching segments across multiple
    calls, or adding an explicit `max_tokens` + degradation strategy, is a structural change to
    `slide_generator_node`'s single-call design, out of scope for a prompt-wording story (binding
    rule 6). What happens today if the cap is hit: OpenAI's structured-output `parse()` helper
@@ -93,7 +93,7 @@ questions, answered with real numbers instead of an assumption:
    Supabase write it already made.
 5. **Inherited caps re-derived**: `_MAX_SLIDE_BULLET_CHARS` = 200 (D125) was re-checked, not
    re-derived — it remains a maximum-only ceiling and is unchanged by this story (AC3). The
-   *frequency* at which real generations approach it is now higher, which is exactly what D214
+   *frequency* at which real generations approach it is now higher, which is exactly what D200
    records.
 6. **Check-then-act under concurrency**: N/A — a single sequential LLM call per lesson generation,
    no new concurrent access pattern.
@@ -105,7 +105,7 @@ returns a `slide_bullet_truncations` list (`{segment_id, slide_title, original_c
 truncated bullet), persisted by `package_builder_node` into `lesson_jobs.node_outputs` for admin
 visibility, mirroring `section_truncations`' existing pattern (Story 3-39). The one remaining gap —
 this new field is not restored on `slide_generator_node`'s own ARQ-retry cache-hit path — is the
-same gap class already registered as D191 for a sibling node; registered here as **D215** rather
+same gap class already registered as D191 for a sibling node; registered here as **D201** rather
 than fixed opportunistically in this story.
 
 Original (superseded) reasoning, kept for the record: "a pure prompt-wording change ... marginally
