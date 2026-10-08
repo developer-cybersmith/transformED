@@ -358,3 +358,123 @@ describe('ChapterGenerateControl — a failed-only chapter offers Generate (AC7)
         expect(onGenerated).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('ChapterGenerateControl — Generate Now sends force: true, Skip does not (D187)', () => {
+    it('Generate Now path sends force: true when context is dirty (no prior savedContext)', async () => {
+        let seenBody: unknown = null;
+        server.use(
+            http.post(
+                `${API_BASE}/content/books/:bookId/chapters/:chapterId/lessons`,
+                async ({ request }) => {
+                    seenBody = await request.json();
+                    return HttpResponse.json(
+                        {
+                            lesson_id: 'l-force-1',
+                            chapter_id: CHAPTER_NO_LESSON.chapter_id,
+                            tier: 'T2',
+                            status: 'queued',
+                            job_id: 'j-force-1',
+                            truncation_expected: false,
+                        },
+                        { status: 202 }
+                    );
+                }
+            )
+        );
+        const { user } = renderRow(CHAPTER_NO_LESSON);
+
+        await user.click(screen.getByRole('button', { name: /generate|retry|try again/i }));
+        await user.click(screen.getByRole('button', { name: /Balanced/i }));
+
+        // Wait for ChapterContextForm to finish loading (default GET returns 204 — no
+        // saved context — so savedContext stays null, isDirty=true), then click Generate Now.
+        const generateNowBtn = await screen.findByRole('button', { name: /generate now/i });
+        await user.click(generateNowBtn);
+
+        await waitFor(() => expect(seenBody).toEqual({ tier: 'T2', force: true }));
+    });
+
+    it('Generate Now path sends no force when context is unchanged (isDirty=false path)', async () => {
+        // Override GET to return existing context. ChapterContextForm sets savedContext to
+        // this fetched row. Clicking Generate Now without editing any field means
+        // isDirty=false → onGenerate(false) → force||undefined = undefined → no force in body.
+        server.use(
+            http.get(
+                `${API_BASE}/content/books/:bookId/chapters/:chapterId/context`,
+                () =>
+                    HttpResponse.json(
+                        {
+                            chapter_id: CHAPTER_NO_LESSON.chapter_id,
+                            depth_duration: 'standard_30_45m',
+                            learning_need: 'adaptive_mix',
+                            specific_doubt: null,
+                            goal_and_skip: null,
+                            prerequisites_done: true,
+                            updated_at: '2026-10-01T10:00:00Z',
+                        },
+                        { status: 200 }
+                    )
+            )
+        );
+        let seenBody: unknown = null;
+        server.use(
+            http.post(
+                `${API_BASE}/content/books/:bookId/chapters/:chapterId/lessons`,
+                async ({ request }) => {
+                    seenBody = await request.json();
+                    return HttpResponse.json(
+                        {
+                            lesson_id: 'l-nodirty-1',
+                            chapter_id: CHAPTER_NO_LESSON.chapter_id,
+                            tier: 'T2',
+                            status: 'queued',
+                            job_id: 'j-nodirty-1',
+                            truncation_expected: false,
+                        },
+                        { status: 202 }
+                    );
+                }
+            )
+        );
+        const { user } = renderRow(CHAPTER_NO_LESSON);
+
+        await user.click(screen.getByRole('button', { name: /generate|retry|try again/i }));
+        await user.click(screen.getByRole('button', { name: /Balanced/i }));
+
+        // Wait for ChapterContextForm to finish loading. Because GET returned data,
+        // savedContext is populated and form matches it — isDirty=false.
+        const generateNowBtn = await screen.findByRole('button', { name: /generate now/i });
+        await user.click(generateNowBtn);
+
+        // No edits made: isDirty=false → force omitted from POST body.
+        await waitFor(() => expect(seenBody).toEqual({ tier: 'T2' }));
+    });
+
+    it('Skip path omits force from the POST body (AC2)', async () => {
+        let seenBody: unknown = null;
+        server.use(
+            http.post(
+                `${API_BASE}/content/books/:bookId/chapters/:chapterId/lessons`,
+                async ({ request }) => {
+                    seenBody = await request.json();
+                    return HttpResponse.json(
+                        {
+                            lesson_id: 'l-skip-1',
+                            chapter_id: CHAPTER_NO_LESSON.chapter_id,
+                            tier: 'T2',
+                            status: 'queued',
+                            job_id: 'j-skip-1',
+                            truncation_expected: false,
+                        },
+                        { status: 202 }
+                    );
+                }
+            )
+        );
+        const { user } = renderRow(CHAPTER_NO_LESSON);
+
+        await chooseTier(user, 'Balanced');
+
+        await waitFor(() => expect(seenBody).toEqual({ tier: 'T2' }));
+    });
+});

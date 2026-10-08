@@ -1,4 +1,4 @@
-# Sprint 4 — Dev 3 Brutal Audit Report
+﻿# Sprint 4 — Dev 3 Brutal Audit Report
 **Date:** 2026-09-07
 **Auditor:** Live terminal — no documentation relied upon, all findings backed by real command output
 **Scope:** Sprint 4 tasks, Dev 3 only
@@ -194,7 +194,7 @@ A `TypeError: '>' not supported between instances of 'MagicMock' and 'float'` in
 | Finding | Story | Branch | Status |
 |---------|-------|--------|--------|
 | 10-test regression (T5/T6) | Story 4-35 | `sprint4/s4-35-fix-ema-mock-regression` | PR open — Dev 2 reviewing |
-| Zero CI tests for DNA checker (T4) | Story 4-36 | `sprint4/s4-36-dna-checker-ci-tests` | PR open — Dev 2 reviewing; 6-layer BMAD review complete; D166 registered |
+| Zero CI tests for DNA checker (T4) | Story 4-36 | `sprint4/s4-36-dna-checker-ci-tests` | PR open — Dev 2 reviewing; 6-layer BMAD review complete; D200 registered |
 | Railway CES weights not set (T3) | Story 4-32 | Manual Railway update | Completed by developer |
 
 **Remaining open items (not blockers for these PRs):**
@@ -202,7 +202,7 @@ A `TypeError: '>' not supported between instances of 'MagicMock' and 'float'` in
 1. **PostHog `POSTHOG_API_KEY`** — still not set in Fly.io env vars; PostHog funnel is data-dark. Must be set before any real session is captured.
 2. **D162 Upstash Redis quota** — free-tier 500k request limit was exhausted (2026-09-07). D163/D164 hotfixes deployed; underlying quota still open. Monitor and upgrade plan before launch.
 3. **Real Supabase session insertion (T1)** — blocked by Dev 2's `?? null` fix (PR #161) and the `sessions_open_unique` migration needing manual apply.
-4. **D166** — `scripts/dna_profile_quality_check.py` `.limit(500)` silent truncation. Deferred; no action in Sprint 4.
+4. **D200** — `scripts/dna_profile_quality_check.py` `.limit(500)` silent truncation. Deferred; no action in Sprint 4.
 
 **Sprint 4 Dev 3 test health after fixes:**
 

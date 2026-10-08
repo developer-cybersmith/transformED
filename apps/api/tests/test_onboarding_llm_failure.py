@@ -55,7 +55,7 @@ def _make_onboarding_answers():
 
 
 def _supabase_insert_ok():
-    """Supabase mock whose .upsert().execute() (onboarding_answers_v2, D173) returns
+    """Supabase mock whose .upsert().execute() (onboarding_answers_v2, D204) returns
     success (no error). Note: every test using this helper patches
     asyncio.to_thread directly with an ordered side_effect list, so this table
     wiring is never actually exercised — the lambdas built around .upsert() in
@@ -106,7 +106,7 @@ async def test_onboarding_llm_failure_raises_503_for_router_cleanup():
         patch("app.modules.assessment.service.OpenAILLMProvider"),
     ):
         # to_thread call order: dna_select (_fetch_existing_dna), then Step 5 upsert.
-        # No rollback-delete call anymore (PR #239 review) -- Step 5's upsert (D173)
+        # No rollback-delete call anymore (PR #239 review) -- Step 5's upsert (D204)
         # is idempotent, so a failure after it needs no cleanup before a retry.
         mock_thread.side_effect = [
             MagicMock(error=None, data=None),  # dna_select: no prior row
@@ -169,7 +169,7 @@ async def test_onboarding_llm_failure_returns_503():
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_onboarding_llm_failure_does_not_delete_rows():
-    """PR #239 review (Dev 3): after Step 5 became an upsert (D173), the old
+    """PR #239 review (Dev 3): after Step 5 became an upsert (D204), the old
     rollback-delete-on-LLM-failure behavior is no longer needed -- a retry
     re-upserts the same 30 rows cleanly with no conflict -- and is actively
     harmful on a reassessment, since Step 5 has already overwritten the
@@ -214,7 +214,7 @@ async def test_onboarding_retry_after_llm_failure_succeeds():
 
     Simulates: first call fails at LLM (Step 5's onboarding_answers_v2 rows are
     NOT rolled back, per PR #239 review) → second call re-upserts the same 30
-    rows cleanly (D173: Step 5 is .upsert(), idempotent) → succeeds.
+    rows cleanly (D204: Step 5 is .upsert(), idempotent) → succeeds.
 
     # MOCK-CONTRACT: This test verifies at service layer that process_onboarding()
     # returns a valid result on the second call. The full AC3 requirements —

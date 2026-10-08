@@ -1,4 +1,4 @@
----
+﻿---
 id: "4-36"
 title: "CI tests for dna_profile_quality_check.py + fix banned-term false positive"
 status: "done"
@@ -137,7 +137,7 @@ No TOCTOU concern.
 
 Layers run: Story Quality | Blind Hunter | Test Coverage | AC Completeness | Process Integrity | Scale & Load Hunter
 
-- [x] [Review][Defer] `.limit(500)` silently excludes `learner_dna` profiles #501–N from quality report [scripts/dna_profile_quality_check.py:181] — deferred, pre-existing from Story 4-33; **D166** registered; needs re-derive before real-student launch. Owner: Dev 3. Trigger: student count approaches 500.
+- [x] [Review][Defer] `.limit(500)` silently excludes `learner_dna` profiles #501–N from quality report [scripts/dna_profile_quality_check.py:181] — deferred, pre-existing from Story 4-33; **D200** registered; needs re-derive before real-student launch. Owner: Dev 3. Trigger: student count approaches 500.
 
 ## Dev Notes
 

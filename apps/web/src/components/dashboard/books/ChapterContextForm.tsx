@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import {
     booksService,
@@ -115,8 +115,9 @@ const EMPTY_FORM: FormState = {
 interface ChapterContextFormProps {
     bookId: string;
     chapterId: string;
-    /** Called when the student clicks "Generate Now" — after saving context. */
-    onGenerate: () => void;
+    /** Called when the student clicks "Generate Now" — after saving context.
+     *  force is true only when form context changed since last fetch/generation (isDirty). */
+    onGenerate: (force: boolean) => void;
     /** Called when the student clicks "Skip" — no save, just generate. */
     onSkip: () => void;
 }
@@ -128,8 +129,28 @@ export function ChapterContextForm({
     onSkip,
 }: ChapterContextFormProps) {
     const [form, setForm] = useState<FormState>(EMPTY_FORM);
+    // savedContext tracks the last values that were fetched from the server (or
+    // successfully PUT). null means no context has been fetched yet (new chapter
+    // or fetch failed). Used to compute isDirty so we only send force:true when
+    // context actually changed since the last generation.
+    const [savedContext, setSavedContext] = useState<FormState | null>(null);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    // generatingRef: re-entrancy guard — prevents a double-click race where two
+    // near-simultaneous clicks both read the pre-PUT savedContext, both compute
+    // isDirty=true, and both fire force:true (landing on the unguarded D45 gate).
+    const generatingRef = useRef(false);
+    // mountedRef: unmount guard — prevents calling onGenerate or setting state
+    // after the component unmounts (e.g. the student navigates away while the
+    // PUT is in flight).
+    const mountedRef = useRef(true);
+
+    // Set mountedRef to false on unmount so in-flight PUT callbacks are no-ops.
+    useEffect(() => {
+        return () => {
+            mountedRef.current = false;
+        };
+    }, []);
 
     // Pre-populate from existing chapter context on mount.
     useEffect(() => {
@@ -151,13 +172,15 @@ export function ChapterContextForm({
                 clearTimeout(timeoutId);
                 if (cancelled) return;
                 if (row) {
-                    setForm({
+                    const fetched: FormState = {
                         depth_duration: (row.depth_duration as DepthDurationValue) ?? null,
                         learning_need: (row.learning_need as LearningNeedValue) ?? null,
                         specific_doubt: row.specific_doubt ?? "",
                         goal_and_skip: row.goal_and_skip ?? "",
                         prerequisites_done: row.prerequisites_done ?? null,
-                    });
+                    };
+                    setForm(fetched);
+                    setSavedContext(fetched);
                 }
             } catch {
                 // Abort (timeout), network failure, or parse error — all non-fatal:
@@ -177,7 +200,22 @@ export function ChapterContextForm({
     }
 
     async function handleGenerateNow() {
+        // Re-entrancy guard: drop any double-click that arrives while a PUT is in
+        // flight (disabled={saving} is React state and can race on rapid clicks).
+        if (generatingRef.current) return;
+        generatingRef.current = true;
         setSaving(true);
+
+        // isDirty: true when context changed from what the backend last saw.
+        // savedContext===null means no prior context exists (new chapter or fetch
+        // failed) — always treat as dirty so generation proceeds with force:true.
+        const isDirty =
+            savedContext === null ||
+            form.depth_duration !== savedContext.depth_duration ||
+            form.learning_need !== savedContext.learning_need ||
+            (form.specific_doubt || null) !== (savedContext.specific_doubt || null) ||
+            (form.goal_and_skip || null) !== (savedContext.goal_and_skip || null) ||
+            form.prerequisites_done !== savedContext.prerequisites_done;
         const body: ChapterContextRequest = {
             depth_duration: form.depth_duration,
             learning_need: form.learning_need,
@@ -185,14 +223,28 @@ export function ChapterContextForm({
             goal_and_skip: form.goal_and_skip || null,
             prerequisites_done: form.prerequisites_done,
         };
+        // AbortController lets us cancel the PUT if it hangs (10 s timeout).
+        const controller = new AbortController();
+        const putTimeoutId = setTimeout(() => controller.abort(), 10_000);
         try {
-            await booksService.putChapterContext(bookId, chapterId, body);
+            await booksService.putChapterContext(bookId, chapterId, body, controller.signal);
+            clearTimeout(putTimeoutId);
+            // PUT succeeded — update savedContext so the next Generate Now click
+            // without further edits correctly sends force:false (no redundant regen).
+            if (mountedRef.current) setSavedContext({ ...form });
         } catch {
-            // Save failure is non-fatal — lesson generation still proceeds.
-            console.warn("[ChapterContextForm] putChapterContext failed — continuing with generate");
+            clearTimeout(putTimeoutId);
+            // Save failure or PUT timeout is non-fatal — lesson generation still
+            // proceeds. savedContext is NOT updated: the backend still has the old
+            // context, so isDirty remains correct on the next click.
+            if (mountedRef.current) {
+                console.warn("[ChapterContextForm] putChapterContext failed — continuing with generate");
+            }
+        } finally {
+            if (mountedRef.current) setSaving(false);
+            generatingRef.current = false;
         }
-        setSaving(false);
-        onGenerate();
+        if (mountedRef.current) onGenerate(isDirty);
     }
 
     if (loading) {

@@ -3,7 +3,7 @@
 **Owner:** Dev 3 (tannmayygupta) · developer@cybersmithsecure.com
 **Domain:** Quiz API · Teachback Scorer · CES Formula · Learner DNA · Session Reports · Analytics
 **PRD version:** 1.0 Final (2026-06-10) — CLAUDE.md is the single source of truth
-**Last updated:** 2026-09-11 (S4-34: 35 synthetic sessions + 37-test CI suite done; "Analyse 20+" partial → done; S4-35 EMA MagicMock regression fixed — 10 tests restored, 58/58 pass; S4-32 CES weights applied to Fly.io env vars; S4-36 DNA quality checker CI tests + false-positive fix, 20/20 pass; S4-37 player slide 75/25 split layout — 34/34 tests pass, 6-layer BMAD review done)
+**Last updated:** 2026-10-08 (S5-19/S5-20/S5-21: Fix PR #271 review findings — DEFECT-REGISTER ID collisions fixed, guard test 3/3, pushed to PR #271)
 **Sprint 0 status — COMPLETE + BMAD AUDITED 2026-06-27:** All 7 tasks done and merged to main. Post-merge BMAD quality audit passed (4 parallel agents — backend accuracy, test quality, Dev 2 integration, story completeness). Audit fixes applied on `sprint0/s0-8-audit-test-fixes`: analytics migration tests rewritten with table-scoped assertions (D→B rating), teachback scoring boundary tests added (score=89/90), CES weight @model_validator wired in config.py, onboarding content tests updated to new path, `jsonschema` added to dev deps. Story 3.7 closed. 120 unit tests pass.
 
 > **Cross-team note (2026-07-13):** Dev 1's Sprint 1 backend content-ingestion pipeline merged to `main` (PR #72). Dev 1's Sprint 2 backend work (11 lesson-generation nodes, ending in `package_builder`) starts now — real `LessonPackage` JSONB is not available yet. Keep building/testing against existing mocks/fixtures until `package_builder` (S2-11) lands; do not stand up a parallel real-content path. Ping Dev 1 first if a mock is blocking progress. See `docs/master-tracker.md` for the full note.
@@ -22,8 +22,9 @@
 | Demo Sprint | Aug 2026 | 7 | 7 | 0 | 0 |
 | Sprint 4 | Weeks 8–9 | 14 | 13 | 0 | 1 |
 | Bug Resolution Sprint | Sep 2026 | 4 | 4 | 0 | 0 |
+| Sprint 5 | Sep–Oct 2026 | 4 | 4 | 0 | 0 |
 | Week 10 | Launch | 2 | 0 | 0 | 2 |
-| **Total** | | **74** | **71** | **0** | **3** |
+| **Total** | | **78** | **75** | **0** | **3** |
 
 Update this table each time a task is checked off below.
 
@@ -1027,7 +1028,7 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - Fixed bug in `check_profile()`: DPDP disclaimer stripped before banned-term scan — "clinical" in disclaimer no longer triggers FAIL on criterion 2
   - Removed dead `suspicious` variable (F841); ruff I001 import order fixed; unused `Client` import removed (F401)
   - 20/20 unit tests GREEN in `apps/api/tests/test_s4_36_dna_quality_check.py` (2.73s, zero Supabase calls)
-  - BMAD 6-layer review complete (2026-09-07): 0 patch findings, 1 defer finding (D166 registered)
+  - BMAD 6-layer review complete (2026-09-07): 0 patch findings, 1 defer finding (D200 registered)
   - Branch: `sprint4/s4-36-dna-checker-ci-tests` | Story: `docs/stories/4-36-dna-checker-ci-tests.md`
 
 - [x] **Learner Mode tier label verify (Story F2-3)** — ✓ 2026-09-04
@@ -1135,6 +1136,45 @@ These exist in the current `router.py` stubs and **must be corrected** before go
   - 10/10 unit tests GREEN after patches
   - Branch: `feature2/f2-4-voice-teachback-stt`
   - Story: `docs/stories/f2-4-voice-teachback-stt.md` — status: done
+
+---
+
+## Sprint 5 — Advisory CI Cleanup (Sep 2026)
+
+> **Goal:** Fix all Dev 3 advisory CI failures so PR #267 has a clean advisory bucket.
+
+- [x] **Story 5-19 — Fix PR #267 eight-layer BMAD review findings (ChapterContextForm, D187, graph.py, story count)** — ✓ 2026-10-08
+  - Branch: `sprint5/s5-19-fix-pr267-review-findings` | PR #271
+  - AC1 (behavioral test): ChapterContextForm isDirty=false path test added
+  - AC2 (graph.py comments): `# D206` → `# D192` restored (3 sites)
+  - AC3 (D187): Decision/Enforcement updated for `onGenerate(isDirty)` pattern
+  - AC4 (story count): "11" → "10" in story 5-18 header
+
+- [x] **Story 5-20 — Fix three PR #271 review findings (re-entrancy, unmount guard, PUT timeout)** — ✓ 2026-10-08
+  - Branch: `sprint5/s5-19-fix-pr267-review-findings` | PR #271
+  - Re-entrancy guard (`generatingRef`): double-click race prevented
+  - Unmount guard (`mountedRef`): state updates gated on mounted status
+  - PUT timeout (AbortController, 10s): prevents infinite UI hang on hung PUT
+
+- [x] **Story 5-21 — Fix DEFECT-REGISTER ID collision (PR #271 review finding)** — ✓ 2026-10-08
+  - Branch: `sprint5/s5-19-fix-pr267-review-findings` | PR #271
+  - Removed stale D200 (CaptionOverlay) / D201 (lesson_planner) rows from branch
+  - Removed wrong D214/D215 (Story 5-20's incorrect renaming artifacts)
+  - Renumbered duplicate cluster: D166→D216, D168→D217, D169→D218, D170→D219, D173→D220, D174 table→D221, D192 table→D222
+  - Added fifth-occurrence collision banner
+  - Restored D200/D201 in slide-bullets-complete-sentences.md
+  - Guard test `test_defect_register_no_duplicate_ids.py` 3/3 PASSED
+
+- [x] **Story 5-18 — Fix 30 Dev 3 advisory CI failures** — ✓ 2026-09-28
+  - 6 clusters, no production code changes, test-only fixes:
+  - **Cluster 1 (22):** `test_teachback_endpoint.py` — reorder `_build_supabase_tb` side_effect from `[session, lesson, count, insert]` → `[session, count, lesson, insert]` to match F2-2 `grade_teachback` R2 call order (count query now before lesson load). Also rewrote 2 `_502` tests → `_fallback` to verify graceful fallback (`score_source="fallback"`) instead of HTTP 502. 6 inline side_effect lists fixed. 45/45 pass.
+  - **Cluster 2 (2):** `test_intervention_event_persistence.py` — deleted 2 orphaned AC7 tests that imported `_get_distraction_count` (removed by S3-53/D63). 16/16 pass.
+  - **Cluster 3 (3):** `test_tutor_service.py` — updated `_settings_mock` CES weights (quiz 0.35→0.40, behavioral 0.20→0.15, head_pose 0.12→0.13, blink 0.08→0.07) to match calibrated `config.py` defaults; updated concrete literal anchor from 75.733 to 75.6. 67/67 pass.
+  - **Cluster 4 (1):** `.env.example` — align CES weight examples with `config.py` calibrated defaults. 4/4 consistency tests pass.
+  - **Cluster 5 (1):** `test_s3_42_ces_breakdown_accuracy.py` — replace hardcoded Windows path `D:/intern/...` with portable `Path(__file__).resolve().parents[1]`. 1/1 pass.
+  - **Cluster 6 (1):** `test_s2_48_teachback_detail.py` — update source-scan assertion from `.limit(50)` to `.limit(200)` (widened by F2-2 for skip/fallback rows). 1/1 pass.
+  - Guard tests (`test_get_distraction_count_removed`, `test_node_return_shape`, `test_unbounded_queries`) all pass. ruff format+check clean.
+  - Branch: `sprint5/dev3-sprint5-batch` | PR #267 | Story: `docs/stories/5-18-fix-dev3-advisory-ci-failures.md`
 
 ---
 

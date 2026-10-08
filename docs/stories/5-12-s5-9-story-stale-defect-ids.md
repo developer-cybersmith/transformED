@@ -1,4 +1,4 @@
----
+﻿---
 baseline_commit: ""
 ---
 
@@ -14,14 +14,14 @@ baseline_commit: ""
 ## Story
 
 As a developer reviewing PR #244, I need every cross-reference to DEFECT-REGISTER.md
-IDs in the S5-9 story file to use the correct post-renumbering IDs (D174–D178), so
+IDs in the S5-9 story file to use the correct post-renumbering IDs (D205–D178), so
 that the register remains internally consistent after merge and reviewers can trace
 findings to the correct register entries.
 
 ## Background
 
 Story 5-11 renumbered 6 colliding DEFECT-REGISTER entries (D154–D158, D167 →
-D174–D179) and updated two cross-reference sites:
+D205–D179) and updated two cross-reference sites:
 1. `docs/DEFECT-REGISTER.md` heading entries — ✅ updated
 2. `docs/stories/S5-1-book-context-form.md` F12 line — ✅ updated
 
@@ -47,15 +47,15 @@ No Supabase migration is required — this is a documentation-only fix.
 
 After fix:
 - `grep "D15[4-8]" docs/stories/5-9-book-context-processing-ux.md` → zero matches
-- Lines 75, 133, 146, 161 all reference D174–D178 (or the appropriate individual IDs)
+- Lines 75, 133, 146, 161 all reference D205–D178 (or the appropriate individual IDs)
 
 ### AC2 — New IDs are correct and internally consistent
 
 The replacements follow the mapping established in Story 5-11:
-- D154 → D174, D155 → D175, D156 → D176, D157 → D177, D158 → D178
+- D154 → D205, D155 → D175, D156 → D176, D157 → D177, D158 → D178
 
 After fix:
-- Every occurrence of `D174`–`D178` in the S5-9 story matches the corresponding
+- Every occurrence of `D205`–`D178` in the S5-9 story matches the corresponding
   DEFECT-REGISTER.md heading descriptions (Langfuse DPDP, TestClient tests, branch
   stacking, rate limiting, DB CHECK constraints — same order, same label text)
 

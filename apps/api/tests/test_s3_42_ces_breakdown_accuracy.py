@@ -360,8 +360,8 @@ def test_router_passes_redis_to_get_session_report():
     """AC6: router.py get_session_report_endpoint imports get_redis and passes redis kwarg."""
     import pathlib
 
-    router_src = pathlib.Path(
-        "D:/intern/transformED/transformED/apps/api/app/modules/assessment/router.py"
+    router_src = (
+        pathlib.Path(__file__).resolve().parents[1] / "app" / "modules" / "assessment" / "router.py"
     ).read_text(encoding="utf-8")
 
     # Verify get_redis import is present in the endpoint function
